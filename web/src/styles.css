@@ -1,0 +1,133 @@
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body {
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  color: #1a2233;
+  background: #f5f7fa;
+}
+
+.app { display: flex; flex-direction: column; height: 100%; }
+.loading { display: grid; place-items: center; height: 100%; color: #667; }
+
+/* Toolbar */
+.toolbar {
+  display: flex; align-items: center; gap: 16px;
+  padding: 8px 16px; background: #fff; border-bottom: 1px solid #e2e6ee;
+  flex-shrink: 0;
+}
+.brand { font-weight: 700; font-size: 15px; }
+.view-switcher { display: flex; gap: 4px; background: #eef1f6; border-radius: 8px; padding: 3px; }
+.view-switcher button {
+  border: none; background: transparent; padding: 5px 12px; border-radius: 6px;
+  cursor: pointer; font-size: 13px; color: #445;
+}
+.view-switcher button.active { background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.12); color: #111; font-weight: 600; }
+.toolbar-right { margin-left: auto; display: flex; gap: 8px; }
+.toolbar-right button {
+  border: 1px solid #d5dae4; background: #fff; padding: 5px 12px; border-radius: 6px;
+  cursor: pointer; font-size: 13px;
+}
+.toolbar-right button.active { background: #e8eefc; border-color: #99b3ee; }
+
+/* Banner / toast */
+.readonly-banner {
+  display: flex; align-items: center; gap: 12px; justify-content: center;
+  background: #fff5d6; border-bottom: 1px solid #eadb9e; padding: 6px 16px; font-size: 13px;
+}
+.readonly-banner button {
+  border: 1px solid #d9c778; background: #fffbeb; border-radius: 6px; padding: 3px 10px; cursor: pointer; font-size: 12px;
+}
+.error-toast {
+  position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+  background: #b3261e; color: #fff; padding: 10px 18px; border-radius: 8px;
+  cursor: pointer; z-index: 100; font-size: 13px; box-shadow: 0 4px 12px rgba(0,0,0,.25);
+}
+
+/* Layout */
+.main-area { display: flex; flex: 1; min-height: 0; }
+.canvas-area { flex: 1; min-width: 0; }
+
+/* Node card */
+.node-card {
+  position: relative; background: #fff; border: 2px solid #c9d2e0; border-radius: 10px;
+  padding: 8px 12px; min-width: 160px; max-width: 240px; font-size: 13px;
+  box-shadow: 0 1px 4px rgba(20,30,60,.08);
+}
+.node-card.selected { border-color: #3b6fe0; box-shadow: 0 0 0 3px rgba(59,111,224,.2); }
+.node-card.type-milestone { border-color: #9a6fd0; background: #faf6ff; }
+.node-card.type-idea { background: #fffbe8; }
+.node-card.type-feature { background: #f0f9f1; }
+.node-card.status-done { opacity: .65; }
+.node-card-head { display: flex; gap: 6px; align-items: baseline; }
+.node-card-title { font-weight: 600; overflow-wrap: anywhere; }
+.node-card-meta { display: flex; gap: 6px; margin-top: 5px; align-items: center; }
+.status-pill { font-size: 10px; padding: 1px 7px; border-radius: 99px; background: #e8ecf3; color: #445; }
+.status-pill.status-in_progress { background: #dbe9ff; color: #1d4fb8; }
+.status-pill.status-done { background: #d9f2dc; color: #1e7a2e; }
+.commit-badge { font-size: 10px; color: #99a3b5; font-family: ui-monospace, monospace; }
+.add-child-btn {
+  position: absolute; right: -12px; top: 50%; transform: translateY(-50%);
+  width: 22px; height: 22px; border-radius: 50%; border: 1px solid #b7c3d8;
+  background: #fff; cursor: pointer; font-size: 14px; line-height: 1; color: #3b6fe0;
+  display: none; z-index: 5;
+}
+.node-card:hover .add-child-btn { display: block; }
+
+.react-flow__edge.hierarchy-edge path { stroke: #b3bfd4; stroke-width: 1.5; }
+.react-flow__edge.flow-edge path { stroke: #3b6fe0; stroke-width: 1.8; }
+
+/* Editor panel */
+.editor-panel {
+  width: 280px; flex-shrink: 0; background: #fff; border-left: 1px solid #e2e6ee;
+  padding: 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px;
+}
+.editor-panel header { display: flex; justify-content: space-between; align-items: center; }
+.editor-panel h3 { margin: 0; font-size: 14px; }
+.close-btn { border: none; background: none; font-size: 18px; cursor: pointer; color: #889; }
+.editor-panel label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #556; }
+.editor-panel input, .editor-panel textarea, .editor-panel select {
+  font: inherit; font-size: 13px; padding: 6px 8px; border: 1px solid #d5dae4; border-radius: 6px;
+}
+.editor-meta { font-size: 11px; color: #99a3b5; }
+.danger-btn {
+  margin-top: auto; border: 1px solid #e0a9a5; background: #fdf1f0; color: #b3261e;
+  border-radius: 6px; padding: 7px; cursor: pointer; font-size: 13px;
+}
+
+/* History / timeline */
+.history-panel {
+  width: 340px; flex-shrink: 0; background: #fff; border-left: 1px solid #e2e6ee;
+  padding: 14px; overflow-y: auto;
+}
+.history-panel h3 { margin: 0 0 10px; font-size: 14px; }
+
+.timeline-view { height: 100%; overflow-y: auto; padding: 20px; max-width: 760px; margin: 0 auto; width: 100%; }
+.timeline-scrubber {
+  display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: #fff;
+  border: 1px solid #e2e6ee; border-radius: 10px; margin-bottom: 16px; font-size: 12px; color: #667;
+  position: sticky; top: 0; z-index: 10;
+}
+.timeline-scrubber input { flex: 1; }
+.scrubber-current { font-size: 14px; color: #1a2233; min-width: 40px; text-align: right; }
+
+.commit-list { display: flex; flex-direction: column; gap: 8px; }
+.commit-entry { background: #fff; border: 1px solid #e2e6ee; border-radius: 8px; padding: 8px 12px; }
+.commit-entry.viewing { border-color: #d9a92c; background: #fffdf2; }
+.commit-row { display: flex; gap: 8px; align-items: baseline; cursor: pointer; }
+.commit-seq { font-family: ui-monospace, monospace; font-size: 12px; color: #3b6fe0; font-weight: 700; }
+.commit-msg { font-size: 13px; flex: 1; overflow-wrap: anywhere; }
+.commit-time { font-size: 11px; color: #99a3b5; }
+.commit-sub { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; }
+.commit-summary { font-size: 11px; color: #99a3b5; }
+.commit-actions { display: flex; gap: 6px; }
+.commit-actions button {
+  border: 1px solid #d5dae4; background: #f8fafc; border-radius: 5px; padding: 2px 8px;
+  cursor: pointer; font-size: 11px; color: #445;
+}
+.commit-actions button:hover { background: #eef2f8; }
+.commit-diff { margin: 8px 0 2px; padding: 0 0 0 4px; list-style: none; font-family: ui-monospace, monospace; font-size: 11.5px; }
+.commit-diff li { padding: 1px 6px; border-radius: 4px; }
+.diff-add { color: #1e7a2e; background: #f0faf1; }
+.diff-del { color: #b3261e; background: #fdf3f2; }
+.diff-mod { color: #8a6d1a; background: #fdf9ec; }
+.empty-note { color: #99a3b5; font-size: 13px; }
