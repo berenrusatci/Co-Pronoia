@@ -43,4 +43,19 @@ export function registerAuthRoutes(app: FastifyInstance, prisma: PrismaClient): 
     if (!user) return reply.code(401).send({ error: 'oturum yok' });
     return { user };
   });
+
+  /** Password change (dashboard user settings). /api/auth/* skips the global hook, so resolve the session here. */
+  app.post<{ Body: { current?: string; next?: string } }>('/api/auth/password', async (req, reply) => {
+    const user = await resolveSession(prisma, sessionToken(req));
+    if (!user) return reply.code(401).send({ error: 'oturum yok' });
+    const next = req.body?.next ?? '';
+    if (next.length < 4) return reply.code(400).send({ error: 'yeni şifre en az 4 karakter olmalı' });
+    const row = await prisma.user.findUnique({ where: { id: user.id } });
+    if (!row || !(await verifyPassword(req.body?.current ?? '', row.passwordHash)))
+      return reply.code(401).send({ error: 'mevcut şifre hatalı' });
+    await prisma.user.update({ where: { id: user.id }, data: { passwordHash: await hashPassword(next) } });
+    // Other sessions are logged out; the current one stays.
+    await prisma.session.deleteMany({ where: { userId: user.id, id: { not: sessionToken(req)! } } });
+    return { ok: true };
+  });
 }

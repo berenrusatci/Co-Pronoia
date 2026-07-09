@@ -1,5 +1,6 @@
 import type {
-  BranchInfo, CanvasInfo, Commit, CommitSummary, EdgeDirection, EdgeKind, GraphState, NodeFields, NodeType, OpInput,
+  BranchInfo, CanvasInfo, Commit, CommitSummary, EdgeDirection, EdgeKind, GraphState,
+  MemberInfo, NodeFields, NodeType, OpInput, RegionInfo,
 } from '@treemapper/shared';
 
 export class ApiError extends Error {
@@ -34,13 +35,18 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-function post<T>(url: string, body?: unknown): Promise<T> {
-  return request(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body ?? {}),
-  });
+function withBody<T>(method: string) {
+  return (url: string, body?: unknown): Promise<T> =>
+    request(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body ?? {}),
+    });
 }
+const post = <T>(url: string, body?: unknown) => withBody<T>('POST')(url, body);
+const patch = <T>(url: string, body?: unknown) => withBody<T>('PATCH')(url, body);
+const put = <T>(url: string, body?: unknown) => withBody<T>('PUT')(url, body);
+const del = <T>(url: string) => request<T>(url, { method: 'DELETE' });
 
 export type CommitResult = { result: 'committed'; commit: Commit; state: GraphState };
 export type BranchedResult = { result: 'branched'; branch: BranchInfo; commit: Commit };
@@ -91,6 +97,20 @@ export const api = {
   getBranchState: (id: string) => request<GraphState>(`${base()}/branches/${id}/state`),
   mergeBranch: (id: string) => post<{ commit: Commit; state: GraphState }>(`${base()}/branches/${id}/merge`),
   discardBranch: (id: string) => post<{ branch: BranchInfo }>(`${base()}/branches/${id}/discard`),
+
+  getMembers: () => request<{ members: MemberInfo[] }>(`${base()}/members`),
+  setMemberRole: (userId: string, role: 'editor' | 'viewer') =>
+    patch<{ members: MemberInfo[] }>(`${base()}/members/${userId}`, { role }),
+  removeMember: (userId: string) => del<{ members: MemberInfo[] }>(`${base()}/members/${userId}`),
+
+  getRegions: () => request<{ regions: RegionInfo[] }>(`${base()}/regions`),
+  createRegion: (data: { name: string; x: number; y: number; width: number; height: number; color?: string }) =>
+    post<{ region: RegionInfo }>(`${base()}/regions`, data),
+  updateRegion: (id: string, data: Partial<{ name: string; x: number; y: number; width: number; height: number; color: string }>) =>
+    patch<{ region: RegionInfo }>(`${base()}/regions/${id}`, data),
+  deleteRegion: (id: string) => del<{ ok: boolean }>(`${base()}/regions/${id}`),
+  setRegionMembers: (id: string, userIds: string[]) =>
+    put<{ region: RegionInfo }>(`${base()}/regions/${id}/members`, { userIds }),
 };
 
 /** Dashboard-level endpoints (not canvas-scoped). */
@@ -101,4 +121,6 @@ export const canvasApi = {
   inviteInfo: (token: string) =>
     request<{ canvasName: string; invitedBy: string }>(`/api/invites/${encodeURIComponent(token)}`),
   acceptInvite: (token: string) => post<{ canvas: CanvasInfo }>(`/api/invites/${encodeURIComponent(token)}/accept`),
+  deleteCanvas: (canvasId: string) => del<{ ok: boolean }>(`/api/canvases/${canvasId}`),
+  changePassword: (current: string, next: string) => post<{ ok: boolean }>('/api/auth/password', { current, next }),
 };

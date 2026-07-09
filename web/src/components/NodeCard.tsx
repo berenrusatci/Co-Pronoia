@@ -1,6 +1,6 @@
 import { Handle, Position, type NodeProps, type Node } from '@xyflow/react';
 import type { NodeStatus, NodeType, PlanNode } from '@treemapper/shared';
-import { useGraphStore } from '../store/graphStore';
+import { useGraphStore, useReadOnly } from '../store/graphStore';
 
 export type FlowNodeData = { plan: PlanNode; showChildButton: boolean };
 export type FlowNode = Node<FlowNodeData, 'card'>;
@@ -11,7 +11,7 @@ const statusLabels: Record<NodeStatus, string> = { planned: 'planlandı', in_pro
 export function NodeCard({ data, selected }: NodeProps<FlowNode>) {
   const { plan, showChildButton } = data;
   const addNode = useGraphStore((s) => s.addNode);
-  const readOnly = useGraphStore((s) => s.viewingSeq !== null || s.viewingBranchId !== null);
+  const readOnly = useReadOnly();
 
   return (
     <div className={`node-card type-${plan.nodeType} status-${plan.status}${selected ? ' selected' : ''}`}>
@@ -22,7 +22,7 @@ export function NodeCard({ data, selected }: NodeProps<FlowNode>) {
       </div>
       <div className="node-card-meta">
         <span className={`status-pill status-${plan.status}`}>{statusLabels[plan.status]}</span>
-        <span className="commit-badge">#{plan.createdCommit}</span>
+        <span className="commit-badge">{plan.createdCommit === 0 ? 'yeni•' : `#${plan.createdCommit}`}</span>
       </div>
       {showChildButton && !readOnly && (
         <button

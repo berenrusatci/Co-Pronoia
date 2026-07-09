@@ -9,6 +9,17 @@ Giriş yaptıktan sonra **pano** açılır: kanvaslarınızı listeler, yeni kan
 - Her kanvasın verisi (düğümler, bağlantılar, commit geçmişi, dallar) tamamen ayrıdır; commit numaraları kanvas başına 1'den başlar.
 - Bir kanvasa başkasını eklemenin **tek yolu davet linkidir**: karttaki (veya kanvas içindeki araç çubuğundaki) **🔗 Davet linki** butonu `…/?davet=TOKEN` linkini panoya kopyalar. Linki açan kişi giriş/kayıt sonrası kanvasa otomatik üye olur ve doğrudan kanvasa düşer.
 - Üye olmayan kullanıcı kanvası göremez (API 404 döner).
+- Panoda **⚙ Kullanıcı ayarları** bölümünden şifre değiştirilir (diğer oturumlar kapatılır); sahibi olduğunuz kanvası **Sil** ile kalıcı olarak silersiniz — kanvası açık olan herkes anında panoya düşürülür.
+
+## Roller, üyeler ve bölgeler
+
+- **Roller**: kanvas sahibi (**sahip**) her şeyi yapar; **editör** (davetle katılan varsayılan) grafiği düzenler; **görüntüleyici** salt okunurdur. Üyeler panelinden sahip rol atar ve üye çıkarır; çıkarılan kullanıcının erişimi (ve WS bağlantısı) anında kesilir.
+- **Kimler aktif**: araç çubuğundaki baş harf çipleri ve Üyeler panelindeki yeşil noktalar kanvasa o an bağlı herkesi gösterir.
+- **Bölgeler**: sahip, akış görünümünde ad verip dikdörtgen bölgeler tanımlar (sürükleyip boyutlandırır) ve her bölgeye üye atar. Bölgenin **içindeki** düğümleri yalnızca o bölgeye atanan üyeler (ve sahip) değiştirebilir — düğüm ekleme/taşıma/silme ve o düğümlere kenar bağlama dahil; sunucu ihlalde Türkçe hata döndürür. Bölge dışı düğümler her editöre açıktır.
+
+## Push (değişiklikleri biriktirme)
+
+Düzenlemeler artık anında veritabanına yazılmaz: yaptığınız her şey yerelde birikir (kartlarda `yeni•` rozeti), araç çubuğundaki **⬆ Push (N)** butonu bekleyen değişiklik sayısını gösterir. Push'a basınca hepsi **tek numaralı commit** olarak gönderilir ve ancak o zaman geçmişe/zaman çizelgesine yazılır; **Vazgeç** bekleyenleri atar. Push sırasında araya başka commit girmişse bilinen kurallar işler: ayrıksa otomatik merge, çakışıyorsa dal.
 
 ## Görünümler
 

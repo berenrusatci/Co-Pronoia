@@ -394,7 +394,7 @@ describe('canvases & invites', () => {
 
     res = await app.inject({ method: 'POST', url: `/api/invites/${token}/accept`, cookies: c2 });
     expect(res.statusCode).toBe(200);
-    expect(res.json().canvas.role).toBe('member');
+    expect(res.json().canvas.role).toBe('editor');
     expect(res.json().canvas.memberCount).toBe(2);
 
     // accepting twice is idempotent
@@ -423,6 +423,129 @@ describe('canvases & invites', () => {
     expect(r.json().commit.seq).toBe(2);
     const aCommits = await app.inject({ method: 'GET', url: `/api/canvases/${a.id}/commits`, cookies: c1 });
     expect(aCommits.json().commits.map((c: { seq: number }) => c.seq)).toEqual([3, 2, 1]);
+  });
+});
+
+describe('roles, regions & owner tools', () => {
+  async function canvasWithTwo() {
+    const built = await fresh();
+    const reg1 = await built.app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'sahip', password: 'pass1' } });
+    const reg2 = await built.app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'uye', password: 'pass2' } });
+    const c1 = { tm_session: reg1.cookies.find((c) => c.name === 'tm_session')!.value };
+    const c2 = { tm_session: reg2.cookies.find((c) => c.name === 'tm_session')!.value };
+    const u2Id = reg2.json().user.id as string;
+    const canvas = (await built.app.inject({ method: 'POST', url: '/api/canvases', cookies: c1, payload: { name: 'Ekip' } })).json().canvas;
+    const token = (await built.app.inject({ method: 'POST', url: `/api/canvases/${canvas.id}/invites`, cookies: c1 })).json().token;
+    await built.app.inject({ method: 'POST', url: `/api/invites/${token}/accept`, cookies: c2 });
+    return { ...built, c1, c2, u2Id, base: `/api/canvases/${canvas.id}`, canvasId: canvas.id };
+  }
+
+  it('owner assigns roles; viewers are read-only; members can be removed', async () => {
+    const { app, c1, c2, u2Id, base } = await canvasWithTwo();
+
+    // joined as editor → can commit
+    let res = await app.inject({ method: 'POST', url: `${base}/commit`, cookies: c2, payload: { ops: [{ op: 'add_node', title: 'X' }] } });
+    expect(res.statusCode).toBe(200);
+
+    // non-owner cannot manage roles
+    res = await app.inject({ method: 'PATCH', url: `${base}/members/${u2Id}`, cookies: c2, payload: { role: 'viewer' } });
+    expect(res.statusCode).toBe(403);
+
+    // owner demotes u2 to viewer → all mutations blocked
+    res = await app.inject({ method: 'PATCH', url: `${base}/members/${u2Id}`, cookies: c1, payload: { role: 'viewer' } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().members.find((m: { userId: string }) => m.userId === u2Id).role).toBe('viewer');
+    res = await app.inject({ method: 'POST', url: `${base}/commit`, cookies: c2, payload: { ops: [{ op: 'add_node', title: 'Y' }] } });
+    expect(res.statusCode).toBe(403);
+    res = await app.inject({ method: 'POST', url: `${base}/invites`, cookies: c2 });
+    expect(res.statusCode).toBe(403);
+    // reading still works
+    res = await app.inject({ method: 'GET', url: `${base}/state`, cookies: c2 });
+    expect(res.statusCode).toBe(200);
+
+    // owner's own role is untouchable; owner cannot be removed
+    const ownerId = (await app.inject({ method: 'GET', url: '/api/auth/me', cookies: c1 })).json().user.id;
+    res = await app.inject({ method: 'PATCH', url: `${base}/members/${ownerId}`, cookies: c1, payload: { role: 'viewer' } });
+    expect(res.statusCode).toBe(400);
+    res = await app.inject({ method: 'DELETE', url: `${base}/members/${ownerId}`, cookies: c1 });
+    expect(res.statusCode).toBe(400);
+
+    // removing u2 revokes access entirely
+    res = await app.inject({ method: 'DELETE', url: `${base}/members/${u2Id}`, cookies: c1 });
+    expect(res.statusCode).toBe(200);
+    res = await app.inject({ method: 'GET', url: `${base}/state`, cookies: c2 });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('only the owner can delete the canvas; it disappears for everyone', async () => {
+    const { app, c1, c2, base } = await canvasWithTwo();
+    let res = await app.inject({ method: 'DELETE', url: base, cookies: c2 });
+    expect(res.statusCode).toBe(403);
+    res = await app.inject({ method: 'DELETE', url: base, cookies: c1 });
+    expect(res.statusCode).toBe(200);
+    res = await app.inject({ method: 'GET', url: `${base}/state`, cookies: c1 });
+    expect(res.statusCode).toBe(404);
+    res = await app.inject({ method: 'GET', url: '/api/canvases', cookies: c1 });
+    expect(res.json().canvases).toHaveLength(0);
+  });
+
+  it('regions restrict edits to their members; the owner bypasses', async () => {
+    const { app, c1, c2, u2Id, base } = await canvasWithTwo();
+    // a node inside the future region and one outside
+    await app.inject({
+      method: 'POST', url: `${base}/commit`, cookies: c1,
+      payload: { ops: [
+        { op: 'add_node', id: 'in', title: 'İçeride', x: 100, y: 100 },
+        { op: 'add_node', id: 'out', title: 'Dışarıda', x: 900, y: 900 },
+      ] },
+    });
+
+    // only owner defines regions
+    let res = await app.inject({ method: 'POST', url: `${base}/regions`, cookies: c2, payload: { name: 'Backend', x: 0, y: 0, width: 300, height: 300 } });
+    expect(res.statusCode).toBe(403);
+    res = await app.inject({ method: 'POST', url: `${base}/regions`, cookies: c1, payload: { name: 'Backend', x: 0, y: 0, width: 300, height: 300 } });
+    expect(res.statusCode).toBe(200);
+    const regionId = res.json().region.id;
+
+    // u2 (editor, not in region): inside blocked, outside fine, adding into the region blocked
+    res = await app.inject({ method: 'POST', url: `${base}/commit`, cookies: c2, payload: { ops: [{ op: 'update_node', id: 'in', fields: { title: 'Hack' } }] } });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error).toMatch(/Backend/);
+    res = await app.inject({ method: 'POST', url: `${base}/commit`, cookies: c2, payload: { ops: [{ op: 'move_node', id: 'out', x: 150, y: 150 }] } });
+    expect(res.statusCode).toBe(403); // moving INTO the region is also blocked
+    res = await app.inject({ method: 'POST', url: `${base}/commit`, cookies: c2, payload: { ops: [{ op: 'add_node', title: 'Sızma', x: 50, y: 50 }] } });
+    expect(res.statusCode).toBe(403);
+    res = await app.inject({ method: 'POST', url: `${base}/commit`, cookies: c2, payload: { ops: [{ op: 'update_node', id: 'out', fields: { title: 'Serbest' } }] } });
+    expect(res.statusCode).toBe(200);
+
+    // owner bypasses the region rule
+    res = await app.inject({ method: 'POST', url: `${base}/commit`, cookies: c1, payload: { ops: [{ op: 'update_node', id: 'in', fields: { status: 'done' } }] } });
+    expect(res.statusCode).toBe(200);
+
+    // assign u2 to the region → allowed now
+    res = await app.inject({ method: 'PUT', url: `${base}/regions/${regionId}/members`, cookies: c1, payload: { userIds: [u2Id] } });
+    expect(res.statusCode).toBe(200);
+    res = await app.inject({ method: 'POST', url: `${base}/commit`, cookies: c2, payload: { ops: [{ op: 'update_node', id: 'in', fields: { title: 'Artık yetkili' } }] } });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('password change verifies the current password and rotates sessions', async () => {
+    const { app } = await fresh();
+    const reg = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'ayar', password: 'eski1' } });
+    const cookies = { tm_session: reg.cookies.find((c) => c.name === 'tm_session')!.value };
+
+    let res = await app.inject({ method: 'POST', url: '/api/auth/password', cookies, payload: { current: 'yanlis', next: 'yeni1' } });
+    expect(res.statusCode).toBe(401);
+    res = await app.inject({ method: 'POST', url: '/api/auth/password', cookies, payload: { current: 'eski1', next: 'yeni1' } });
+    expect(res.statusCode).toBe(200);
+
+    res = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { username: 'ayar', password: 'eski1' } });
+    expect(res.statusCode).toBe(401);
+    res = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { username: 'ayar', password: 'yeni1' } });
+    expect(res.statusCode).toBe(200);
+    // the session used for the change stays valid
+    res = await app.inject({ method: 'GET', url: '/api/canvases', cookies });
+    expect(res.statusCode).toBe(200);
   });
 });
 

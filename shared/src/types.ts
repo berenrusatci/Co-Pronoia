@@ -70,14 +70,37 @@ export interface CommitSummary {
   author: string | null;
 }
 
+/** owner: tek kişi, her şeyi yapar · editor: grafiği düzenler · viewer: salt okunur */
+export type CanvasRole = 'owner' | 'editor' | 'viewer';
+
 export interface CanvasInfo {
   id: string;
   name: string;
   owner: string;
-  role: 'owner' | 'member';
+  role: CanvasRole;
   memberCount: number;
   headSeq: number;
   createdAt: string;
+}
+
+export interface MemberInfo {
+  userId: string;
+  username: string;
+  role: CanvasRole;
+  joinedAt: string;
+}
+
+/** Owner-defined rectangle: only its members (and the owner) may change nodes inside it. */
+export interface RegionInfo {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  color: string;
+  memberIds: string[];
+  memberNames: string[];
 }
 
 export interface GraphState {

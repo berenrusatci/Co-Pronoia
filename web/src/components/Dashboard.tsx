@@ -2,10 +2,12 @@ import { useEffect, useState, type FormEvent } from 'react';
 import type { CanvasInfo } from '@treemapper/shared';
 import { useCanvasStore } from '../store/canvasStore';
 import { useAuthStore } from '../store/authStore';
+import { canvasApi, ApiError } from '../api/client';
 
 function CanvasCard({ canvas }: { canvas: CanvasInfo }) {
   const open = useCanvasStore((s) => s.open);
   const inviteLink = useCanvasStore((s) => s.inviteLink);
+  const deleteCanvas = useCanvasStore((s) => s.deleteCanvas);
   const [copied, setCopied] = useState(false);
 
   const copyInvite = async () => {
@@ -38,7 +40,66 @@ function CanvasCard({ canvas }: { canvas: CanvasInfo }) {
         <button onClick={copyInvite} title="Bu kanvasa üye ekleme linki oluştur ve kopyala">
           {copied ? 'Kopyalandı ✓' : '🔗 Davet linki'}
         </button>
+        {canvas.role === 'owner' && (
+          <button
+            className="danger-sm"
+            title="Kanvası kalıcı olarak sil"
+            onClick={() =>
+              window.confirm(`"${canvas.name}" ve tüm geçmişi kalıcı olarak silinsin mi?`) && deleteCanvas(canvas.id)
+            }
+          >
+            Sil
+          </button>
+        )}
       </div>
+    </div>
+  );
+}
+
+function UserSettings() {
+  const [openSection, setOpenSection] = useState(false);
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setMsg(null);
+    try {
+      await canvasApi.changePassword(current, next);
+      setMsg({ ok: true, text: 'Şifreniz güncellendi (diğer oturumlar kapatıldı).' });
+      setCurrent('');
+      setNext('');
+    } catch (err) {
+      setMsg({ ok: false, text: err instanceof ApiError ? err.message : String(err) });
+    }
+    setBusy(false);
+  };
+
+  return (
+    <div className="user-settings">
+      <button className="settings-toggle" onClick={() => setOpenSection(!openSection)}>
+        ⚙ Kullanıcı ayarları {openSection ? '▴' : '▾'}
+      </button>
+      {openSection && (
+        <form className="settings-form" onSubmit={submit}>
+          <h4>Şifre değiştir</h4>
+          <input
+            type="password" placeholder="Mevcut şifre" value={current} autoComplete="current-password"
+            onChange={(e) => setCurrent(e.target.value)}
+          />
+          <input
+            type="password" placeholder="Yeni şifre (en az 4 karakter)" value={next} autoComplete="new-password"
+            onChange={(e) => setNext(e.target.value)}
+          />
+          <button type="submit" className="login-btn" disabled={busy || !current || next.length < 4}>
+            Şifreyi güncelle
+          </button>
+          {msg && <div className={msg.ok ? 'settings-ok' : 'login-error'}>{msg.text}</div>}
+        </form>
+      )}
     </div>
   );
 }
@@ -109,6 +170,7 @@ export function Dashboard() {
             ))}
           </div>
         )}
+        <UserSettings />
       </div>
       {error && (
         <div className="error-toast" onClick={clearError}>

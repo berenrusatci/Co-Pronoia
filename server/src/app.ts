@@ -6,18 +6,27 @@ import { PrismaBetterSqlite3 } from '@prisma/adapter-better-sqlite3';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { ServerMessage } from '@treemapper/shared';
+import type { CanvasRole, ServerMessage } from '@treemapper/shared';
 import { CommitService } from './commitService.js';
-import { isMember } from './canvasService.js';
+import { memberRole } from './canvasService.js';
 import { resolveSession, sessionToken } from './auth.js';
 import { registerRoutes } from './routes.js';
 import { registerAuthRoutes } from './authRoutes.js';
 import { registerCanvasRoutes } from './canvasRoutes.js';
 
+declare module 'fastify' {
+  interface FastifyRequest {
+    /** Requester's role on the canvas in the URL; set by the canvas-scope preHandler. */
+    memberRole: CanvasRole | null;
+  }
+}
+
 export interface WsClient {
-  socket: { send(data: string): void };
+  socket: { send(data: string): void; close(code?: number, reason?: string): void };
   clientId: string;
   canvasId: string;
+  userId: string;
+  username: string;
 }
 
 export async function buildApp(dbUrl: string) {
@@ -43,6 +52,7 @@ export async function buildApp(dbUrl: string) {
 
   // Session auth for every /api route except health and auth.
   app.decorateRequest('user', null);
+  app.decorateRequest('memberRole', null);
   app.addHook('preHandler', async (req, reply) => {
     if (!req.url.startsWith('/api')) return;
     if (req.url.startsWith('/api/auth/') || req.url === '/api/health') return;
@@ -63,35 +73,63 @@ export async function buildApp(dbUrl: string) {
     }
   };
 
+  const broadcastPresence = (canvasId: string) => {
+    const users = [...new Set([...wsClients].filter((c) => c.canvasId === canvasId).map((c) => c.username))];
+    broadcast(canvasId, { type: 'presence', users });
+  };
+
+  /** Notify + disconnect a canvas's sockets (all of them, or one removed user's). */
+  const kick = (canvasId: string, reason: 'deleted' | 'removed', userId?: string) => {
+    const gone = JSON.stringify({ type: 'canvas_gone', reason } satisfies ServerMessage);
+    for (const c of [...wsClients]) {
+      if (c.canvasId !== canvasId) continue;
+      if (userId !== undefined && c.userId !== userId) continue;
+      try {
+        c.socket.send(gone);
+        c.socket.close(4000, reason);
+      } catch {
+        /* already gone */
+      }
+      wsClients.delete(c);
+    }
+    broadcastPresence(canvasId);
+  };
+
   app.get('/api/health', async () => ({ ok: true }));
 
   app.register(async (scope) => {
     scope.get<{ Querystring: { canvas?: string } }>('/api/ws', { websocket: true }, async (socket, req) => {
       const canvasId = req.query.canvas ?? '';
-      if (!canvasId || !req.user || !(await isMember(prisma, canvasId, req.user.id))) {
+      const user = req.user;
+      if (!canvasId || !user || !(await memberRole(prisma, canvasId, user.id))) {
         socket.close(4403, 'kanvas erişimi yok');
         return;
       }
       const clientId = randomUUID();
-      const client: WsClient = { socket, clientId, canvasId };
+      const client: WsClient = { socket, clientId, canvasId, userId: user.id, username: user.username };
       wsClients.add(client);
       socket.send(JSON.stringify({ type: 'hello', clientId } satisfies ServerMessage));
-      socket.on('close', () => wsClients.delete(client));
+      broadcastPresence(canvasId);
+      socket.on('close', () => {
+        wsClients.delete(client);
+        broadcastPresence(canvasId);
+      });
     });
   });
 
   registerAuthRoutes(app, prisma);
-  registerCanvasRoutes(app, prisma, serviceFor);
+  registerCanvasRoutes(app, prisma, serviceFor, broadcast);
 
   // All graph routes live under a canvas and require membership.
   await app.register(
     async (scope) => {
       scope.addHook('preHandler', async (req, reply) => {
         const { canvasId } = req.params as { canvasId: string };
-        if (!(await isMember(prisma, canvasId, req.user!.id)))
-          return reply.code(404).send({ error: 'kanvas bulunamadı' });
+        const role = await memberRole(prisma, canvasId, req.user!.id);
+        if (!role) return reply.code(404).send({ error: 'kanvas bulunamadı' });
+        req.memberRole = role;
       });
-      registerRoutes(scope, prisma, serviceFor, broadcast);
+      registerRoutes(scope, prisma, serviceFor, broadcast, kick);
     },
     { prefix: '/api/canvases/:canvasId' },
   );

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useGraphStore, type ViewMode } from '../store/graphStore';
+import { useGraphStore, useReadOnly, type ViewMode } from '../store/graphStore';
 import { useAuthStore } from '../store/authStore';
 import { useCanvasStore } from '../store/canvasStore';
 
@@ -30,8 +30,12 @@ export function Toolbar() {
   const headSeq = useGraphStore((s) => s.headSeq);
   const edgeCount = useGraphStore((s) => s.edges.length);
   const branchCount = useGraphStore((s) => s.branches.length);
+  const pendingCount = useGraphStore((s) => s.pending.length);
+  const push = useGraphStore((s) => s.push);
+  const discardPending = useGraphStore((s) => s.discardPending);
+  const activeUsers = useGraphStore((s) => s.activeUsers);
   const wsConnected = useGraphStore((s) => s.wsConnected);
-  const readOnly = useGraphStore((s) => s.viewingSeq !== null || s.viewingBranchId !== null);
+  const readOnly = useReadOnly();
   const view = useGraphStore((s) => s.view);
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
@@ -39,6 +43,12 @@ export function Toolbar() {
   const closeCanvas = useCanvasStore((s) => s.close);
   const inviteLink = useCanvasStore((s) => s.inviteLink);
   const [copied, setCopied] = useState(false);
+
+  const leaveCanvas = () => {
+    if (pendingCount > 0 && !window.confirm(`${pendingCount} push edilmemiş değişiklik var — panoya dönersen kaybolur. Devam?`))
+      return;
+    closeCanvas();
+  };
 
   const copyInvite = async () => {
     if (!activeCanvas) return;
@@ -56,11 +66,32 @@ export function Toolbar() {
   return (
     <div className="toolbar">
       <span className="brand">🌳 TreeMapper</span>
-      <button className="pano-btn" onClick={closeCanvas} title="Kanvas listesine dön">
+      <button className="pano-btn" onClick={leaveCanvas} title="Kanvas listesine dön">
         ← Pano
       </button>
       <span className="canvas-title" title={activeCanvas?.name}>{activeCanvas?.name}</span>
       <ViewSwitcher />
+      {!readOnly && (
+        <span className="push-group">
+          <button
+            className={`push-btn${pendingCount > 0 ? ' has-pending' : ''}`}
+            disabled={pendingCount === 0}
+            onClick={push}
+            title="Bekleyen değişiklikleri tek commit olarak gönder"
+          >
+            ⬆ Push{pendingCount > 0 ? ` (${pendingCount})` : ''}
+          </button>
+          {pendingCount > 0 && (
+            <button
+              className="pano-btn"
+              onClick={() => window.confirm('Push edilmemiş tüm değişiklikler geri alınsın mı?') && discardPending()}
+              title="Bekleyen değişiklikleri at"
+            >
+              Vazgeç
+            </button>
+          )}
+        </span>
+      )}
       <div className="toolbar-right">
         {!readOnly && view !== 'timeline' && (
           <button onClick={() => addNode({ title: 'Yeni düğüm' })}>+ Düğüm</button>
@@ -74,6 +105,12 @@ export function Toolbar() {
         >
           ⑂ Dallar{branchCount > 0 ? ` (${branchCount})` : ''}
         </button>
+        <button className={sidePanel === 'members' ? 'active' : ''} onClick={() => togglePanel('members')}>
+          Üyeler
+        </button>
+        <button className={sidePanel === 'regions' ? 'active' : ''} onClick={() => togglePanel('regions')}>
+          Bölgeler
+        </button>
         <button className={sidePanel === 'history' ? 'active' : ''} onClick={() => togglePanel('history')}>
           Geçmiş (#{headSeq})
         </button>
@@ -81,6 +118,13 @@ export function Toolbar() {
           {copied ? 'Kopyalandı ✓' : '🔗 Davet'}
         </button>
         <span className={`ws-dot ${wsConnected ? 'on' : 'off'}`} title={wsConnected ? 'Canlı bağlantı aktif' : 'Canlı bağlantı kopuk'} />
+        <span className="presence-chips" title={`Şu an aktif: ${activeUsers.join(', ') || '—'}`}>
+          {activeUsers.map((u) => (
+            <span key={u} className={`presence-chip${u === user?.username ? ' me' : ''}`}>
+              {u.slice(0, 2).toUpperCase()}
+            </span>
+          ))}
+        </span>
         <span className="user-chip">{user?.username}</span>
         <button onClick={logout} title="Oturumu kapat">Çıkış</button>
       </div>
@@ -120,7 +164,17 @@ export function ReadOnlyBanner() {
       </div>
     );
   }
-  return null;
+  return <ViewerBanner />;
+}
+
+function ViewerBanner() {
+  const isViewer = useCanvasStore((s) => s.active?.role === 'viewer');
+  if (!isViewer) return null;
+  return (
+    <div className="readonly-banner">
+      <span>Bu kanvasta <strong>görüntüleyici</strong> rolündesiniz — salt okunur.</span>
+    </div>
+  );
 }
 
 export function ErrorToast() {

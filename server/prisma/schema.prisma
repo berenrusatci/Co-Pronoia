@@ -17,6 +17,7 @@ model User {
   ownedCanvases Canvas[]
   memberships  CanvasMember[]
   invites      Invite[]
+  regionMemberships RegionMember[]
 }
 
 model Session {
@@ -39,6 +40,7 @@ model Canvas {
   edges     Edge[]
   commits   Commit[]
   branches  Branch[]
+  regions   Region[]
 }
 
 model CanvasMember {
@@ -46,10 +48,35 @@ model CanvasMember {
   canvas   Canvas   @relation(fields: [canvasId], references: [id], onDelete: Cascade)
   userId   String
   user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  role     String   @default("member")
+  role     String   @default("editor")
   joinedAt DateTime @default(now())
 
   @@id([canvasId, userId])
+}
+
+model Region {
+  id        String         @id @default(cuid())
+  canvasId  String
+  canvas    Canvas         @relation(fields: [canvasId], references: [id], onDelete: Cascade)
+  name      String
+  x         Float
+  y         Float
+  width     Float
+  height    Float
+  color     String         @default("#3b6fe0")
+  createdAt DateTime       @default(now())
+  members   RegionMember[]
+
+  @@index([canvasId])
+}
+
+model RegionMember {
+  regionId String
+  region   Region @relation(fields: [regionId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([regionId, userId])
 }
 
 model Invite {

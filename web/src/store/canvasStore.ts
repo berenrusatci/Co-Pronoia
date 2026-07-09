@@ -16,6 +16,8 @@ interface CanvasStore {
   /** Mints an invite token and returns the shareable URL. */
   inviteLink: (canvasId: string) => Promise<string | null>;
   joinByToken: (token: string) => Promise<CanvasInfo | null>;
+  /** Owner-only: deletes the canvas and everything in it. */
+  deleteCanvas: (canvasId: string) => Promise<void>;
   clearError: () => void;
   reset: () => void;
 }
@@ -77,6 +79,18 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     } catch (err) {
       set({ error: err instanceof ApiError ? err.message : String(err) });
       return null;
+    }
+  },
+
+  deleteCanvas: async (canvasId) => {
+    try {
+      await canvasApi.deleteCanvas(canvasId);
+      set((s) => ({
+        canvases: s.canvases.filter((c) => c.id !== canvasId),
+        active: s.active?.id === canvasId ? null : s.active,
+      }));
+    } catch (err) {
+      set({ error: err instanceof ApiError ? err.message : String(err) });
     }
   },
 

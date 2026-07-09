@@ -4,12 +4,17 @@ import {
   type Connection, type NodeChange, applyNodeChanges,
 } from '@xyflow/react';
 import { useGraphStore, useDisplayedGraph } from '../store/graphStore';
+import { useCanvasStore } from '../store/canvasStore';
 import { NodeCard, type FlowNode } from '../components/NodeCard';
+import { RegionNode, type RegionFlowNode } from '../components/RegionNode';
 import { CurvedEdge, type CurvedFlowEdge } from '../components/CurvedEdge';
 import { kindStyles } from '../components/CurvedEdge';
 
-const nodeTypes = { card: NodeCard };
+const nodeTypes = { card: NodeCard, region: RegionNode };
 const edgeTypes = { curved: CurvedEdge };
+
+type CanvasNode = FlowNode | RegionFlowNode;
+const REGION_PREFIX = 'region:';
 
 /** Fallback grid placement for nodes never dragged in flow view (x/y null). */
 function fallbackPosition(index: number): { x: number; y: number } {
@@ -18,14 +23,28 @@ function fallbackPosition(index: number): { x: number; y: number } {
 
 export function FlowView() {
   const { nodes, edges, readOnly } = useDisplayedGraph();
+  const regions = useGraphStore((s) => s.regions);
   const moveNode = useGraphStore((s) => s.moveNode);
+  const updateRegion = useGraphStore((s) => s.updateRegion);
   const connect = useGraphStore((s) => s.connect);
   const select = useGraphStore((s) => s.select);
   const selectedNodeId = useGraphStore((s) => s.selectedNodeId);
+  const isOwner = useCanvasStore((s) => s.active?.role === 'owner');
 
-  const initialNodes = useMemo<FlowNode[]>(() => {
+  const initialNodes = useMemo<CanvasNode[]>(() => {
+    const regionNodes: RegionFlowNode[] = regions.map((region) => ({
+      id: `${REGION_PREFIX}${region.id}`,
+      type: 'region' as const,
+      position: { x: region.x, y: region.y },
+      width: region.width,
+      height: region.height,
+      data: { region },
+      draggable: isOwner && !readOnly,
+      selectable: isOwner && !readOnly,
+      zIndex: -10,
+    }));
     let unplaced = 0;
-    return nodes.map((plan) => ({
+    const cardNodes: FlowNode[] = nodes.map((plan) => ({
       id: plan.id,
       type: 'card' as const,
       position:
@@ -33,10 +52,11 @@ export function FlowView() {
       data: { plan, showChildButton: false },
       selected: plan.id === selectedNodeId,
     }));
-  }, [nodes, selectedNodeId]);
+    return [...regionNodes, ...cardNodes];
+  }, [nodes, regions, selectedNodeId, isOwner, readOnly]);
 
   // Local copy so dragging is smooth; server state re-syncs it after each commit.
-  const [rfNodes, setRfNodes] = useState<FlowNode[]>(initialNodes);
+  const [rfNodes, setRfNodes] = useState<CanvasNode[]>(initialNodes);
   useEffect(() => setRfNodes(initialNodes), [initialNodes]);
 
   const rfEdges = useMemo<CurvedFlowEdge[]>(() => {
@@ -74,7 +94,7 @@ export function FlowView() {
   }, [edges]);
 
   const onNodesChange = useCallback(
-    (changes: NodeChange<FlowNode>[]) => setRfNodes((ns) => applyNodeChanges(changes, ns)),
+    (changes: NodeChange<CanvasNode>[]) => setRfNodes((ns) => applyNodeChanges(changes, ns)),
     [],
   );
 
@@ -85,6 +105,17 @@ export function FlowView() {
     [connect],
   );
 
+  const onNodeDragStop = useCallback(
+    (_: unknown, node: CanvasNode) => {
+      if (readOnly) return;
+      const x = Math.round(node.position.x);
+      const y = Math.round(node.position.y);
+      if (node.type === 'region') updateRegion(node.id.slice(REGION_PREFIX.length), { x, y });
+      else moveNode(node.id, x, y);
+    },
+    [readOnly, moveNode, updateRegion],
+  );
+
   return (
     <ReactFlow
       nodes={rfNodes}
@@ -93,8 +124,8 @@ export function FlowView() {
       edgeTypes={edgeTypes}
       onNodesChange={onNodesChange}
       onConnect={readOnly ? undefined : onConnect}
-      onNodeDragStop={(_, node) => !readOnly && moveNode(node.id, Math.round(node.position.x), Math.round(node.position.y))}
-      onNodeClick={(_, node) => select(node.id)}
+      onNodeDragStop={onNodeDragStop}
+      onNodeClick={(_, node) => node.type !== 'region' && select(node.id)}
       onPaneClick={() => select(null)}
       nodesDraggable={!readOnly}
       nodesConnectable={!readOnly}

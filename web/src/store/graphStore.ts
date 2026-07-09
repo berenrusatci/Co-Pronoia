@@ -2,25 +2,39 @@ import { create } from 'zustand';
 import {
   summarizeOps,
   type BranchInfo, type Commit, type CommitSummary, type EdgeDirection, type EdgeKind,
-  type GraphState, type NodeFields, type NodeType, type PlanEdge, type PlanNode, type ServerMessage,
+  type GraphState, type MemberInfo, type NodeFields, type NodeType, type OpInput,
+  type PlanEdge, type PlanNode, type RegionInfo, type ServerMessage,
 } from '@treemapper/shared';
 import { api, ApiError, type CommitOutcome } from '../api/client';
+import { applyIntents, genId, pushIntent } from './applyIntents';
+import { useCanvasStore } from './canvasStore';
+import { useAuthStore } from './authStore';
 
 export type ViewMode = 'flow' | 'mindmap' | 'timeline';
 
 interface GraphStore {
+  /** Canonical state from the server (pushed commits only). */
+  serverNodes: PlanNode[];
+  serverEdges: PlanEdge[];
+  /** Preview = server state + pending intents. Every view reads these. */
   nodes: PlanNode[];
   edges: PlanEdge[];
+  /** Staged intents; nothing hits the DB or the timeline until push(). */
+  pending: OpInput[];
   headSeq: number;
   commits: CommitSummary[];
   branches: BranchInfo[];
+  members: MemberInfo[];
+  regions: RegionInfo[];
+  /** Usernames connected to this canvas right now (WS presence). */
+  activeUsers: string[];
   loaded: boolean;
   error: string | null;
   notice: string | null;
 
   view: ViewMode;
   selectedNodeId: string | null;
-  sidePanel: 'none' | 'history' | 'connections' | 'branches';
+  sidePanel: 'none' | 'history' | 'connections' | 'branches' | 'members' | 'regions';
 
   /** WS identity: commits we POST carry this id so our own broadcasts are skipped. */
   clientId: string | null;
@@ -38,17 +52,21 @@ interface GraphStore {
   reset: () => void;
   setView: (view: ViewMode) => void;
   select: (id: string | null) => void;
-  togglePanel: (panel: 'history' | 'connections' | 'branches') => void;
+  togglePanel: (panel: 'history' | 'connections' | 'branches' | 'members' | 'regions') => void;
   clearError: () => void;
   clearNotice: () => void;
 
-  addNode: (fields: { title: string; parentId?: string | null; x?: number; y?: number; nodeType?: NodeType }) => Promise<void>;
-  updateNode: (id: string, fields: Partial<NodeFields>, message?: string) => Promise<void>;
-  deleteNode: (id: string) => Promise<void>;
-  moveNode: (id: string, x: number, y: number) => Promise<void>;
-  connect: (sourceId: string, targetId: string, kind?: EdgeKind) => Promise<void>;
-  updateEdge: (id: string, fields: { kind: EdgeKind; direction: EdgeDirection; label: string }) => Promise<void>;
-  deleteEdge: (id: string) => Promise<void>;
+  // Staged mutations (local only until push)
+  addNode: (fields: { title: string; parentId?: string | null; x?: number; y?: number; nodeType?: NodeType }) => void;
+  updateNode: (id: string, fields: Partial<NodeFields>) => void;
+  deleteNode: (id: string) => void;
+  moveNode: (id: string, x: number, y: number) => void;
+  connect: (sourceId: string, targetId: string, kind?: EdgeKind) => void;
+  updateEdge: (id: string, fields: { kind: EdgeKind; direction: EdgeDirection; label: string }) => void;
+  deleteEdge: (id: string) => void;
+  /** Sends everything staged as ONE commit. */
+  push: () => Promise<void>;
+  discardPending: () => void;
 
   viewAt: (seq: number) => Promise<void>;
   viewBranch: (id: string) => Promise<void>;
@@ -57,10 +75,20 @@ interface GraphStore {
   restore: (seq: number) => Promise<void>;
   mergeBranch: (id: string) => Promise<void>;
   discardBranch: (id: string) => Promise<void>;
+
+  // Owner tools
+  setMemberRole: (userId: string, role: 'editor' | 'viewer') => Promise<void>;
+  removeMember: (userId: string) => Promise<void>;
+  createRegion: (data: { name: string; x: number; y: number; width: number; height: number; color?: string }) => Promise<void>;
+  updateRegion: (id: string, data: Partial<{ name: string; x: number; y: number; width: number; height: number; color: string }>) => Promise<void>;
+  deleteRegion: (id: string) => Promise<void>;
+  setRegionMembers: (id: string, userIds: string[]) => Promise<void>;
 }
 
 let ws: WebSocket | null = null;
 let wsRetry: ReturnType<typeof setTimeout> | null = null;
+/** Incremented on every (re)connect/disconnect so a stale socket's onclose can't schedule a rogue retry. */
+let wsGen = 0;
 
 function initialView(): ViewMode {
   const v = new URLSearchParams(window.location.search).get('view');
@@ -76,10 +104,17 @@ export const useGraphStore = create<GraphStore>((set, get) => {
     author: commit.author,
   });
 
+  /** Recompute the preview after server state or pending changed. */
+  const withPreview = (s: { serverNodes: PlanNode[]; serverEdges: PlanEdge[] }, pending: OpInput[]) => {
+    const preview = applyIntents(s.serverNodes, s.serverEdges, pending);
+    return { pending, nodes: preview.nodes, edges: preview.edges };
+  };
+
   const applyState = (state: GraphState, commit?: Commit) => {
     set((s) => ({
-      nodes: state.nodes,
-      edges: state.edges,
+      serverNodes: state.nodes,
+      serverEdges: state.edges,
+      ...withPreview({ serverNodes: state.nodes, serverEdges: state.edges }, s.pending),
       headSeq: state.headSeq,
       commits: commit && !s.commits.some((c) => c.seq === commit.seq) ? [toSummary(commit), ...s.commits] : s.commits,
       viewingSeq: null,
@@ -100,8 +135,32 @@ export const useGraphStore = create<GraphStore>((set, get) => {
     }
   };
 
-  const guard = async (fn: () => Promise<void>) => {
-    if (get().viewingSeq !== null || get().viewingBranchId !== null) return; // read-only mode
+  const isViewer = () => useCanvasStore.getState().active?.role === 'viewer';
+
+  /** Staged mutations: read-only in time-travel/branch view and for viewers. */
+  const stage = (intents: OpInput[]) => {
+    if (get().viewingSeq !== null || get().viewingBranchId !== null) return;
+    if (isViewer()) {
+      set({ error: 'Görüntüleyici rolündesiniz — değişiklik yapamazsınız.' });
+      return;
+    }
+    set((s) => {
+      let pending = s.pending;
+      for (const it of intents) pending = pushIntent(pending, it);
+      return withPreview(s, pending);
+    });
+  };
+
+  /** Direct server ops (revert/restore/merge…) are blocked while changes are staged. */
+  const direct = async (fn: () => Promise<void>) => {
+    if (get().viewingSeq === null && get().viewingBranchId === null && isViewer()) {
+      set({ error: 'Görüntüleyici rolündesiniz — değişiklik yapamazsınız.' });
+      return;
+    }
+    if (get().pending.length > 0) {
+      set({ error: 'Bekleyen değişiklikleriniz var — önce Push edin veya vazgeçin.' });
+      return;
+    }
     try {
       await fn();
     } catch (err) {
@@ -109,14 +168,18 @@ export const useGraphStore = create<GraphStore>((set, get) => {
     }
   };
 
-  const ctx = (message?: string) => ({ baseSeq: get().headSeq, clientId: get().clientId, message });
-
   return {
+    serverNodes: [],
+    serverEdges: [],
     nodes: [],
     edges: [],
+    pending: [],
     headSeq: 0,
     commits: [],
     branches: [],
+    members: [],
+    regions: [],
+    activeUsers: [],
     loaded: false,
     error: null,
     notice: null,
@@ -131,12 +194,23 @@ export const useGraphStore = create<GraphStore>((set, get) => {
 
     load: async () => {
       try {
-        const [state, { commits }, { branches }] = await Promise.all([
+        const [state, { commits }, { branches }, { members }, { regions }] = await Promise.all([
           api.getState(),
           api.getCommits(),
           api.getBranches(),
+          api.getMembers(),
+          api.getRegions(),
         ]);
-        set({ nodes: state.nodes, edges: state.edges, headSeq: state.headSeq, commits, branches, loaded: true });
+        set({
+          serverNodes: state.nodes,
+          serverEdges: state.edges,
+          nodes: state.nodes,
+          edges: state.edges,
+          pending: [],
+          headSeq: state.headSeq,
+          commits, branches, members, regions,
+          loaded: true,
+        });
       } catch (err) {
         set({ error: err instanceof ApiError ? err.message : String(err), loaded: true });
       }
@@ -146,9 +220,11 @@ export const useGraphStore = create<GraphStore>((set, get) => {
       if (ws) return;
       const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
       const open = () => {
+        const gen = ++wsGen;
         ws = new WebSocket(`${proto}://${window.location.host}/api/ws?canvas=${canvasId}`);
         ws.onopen = () => set({ wsConnected: true });
         ws.onclose = () => {
+          if (gen !== wsGen) return; // superseded or deliberately closed
           set({ wsConnected: false, clientId: null });
           ws = null;
           wsRetry = setTimeout(() => get().connectWs(canvasId), 2000);
@@ -163,8 +239,9 @@ export const useGraphStore = create<GraphStore>((set, get) => {
               if (msg.clientId !== null && msg.clientId === get().clientId) break; // own commit, already applied
               if (msg.state.headSeq <= get().headSeq) break;
               set((s) => ({
-                nodes: msg.state.nodes,
-                edges: msg.state.edges,
+                serverNodes: msg.state.nodes,
+                serverEdges: msg.state.edges,
+                ...withPreview({ serverNodes: msg.state.nodes, serverEdges: msg.state.edges }, s.pending),
                 headSeq: msg.state.headSeq,
                 commits: s.commits.some((c) => c.seq === msg.commit.seq) ? s.commits : [toSummary(msg.commit), ...s.commits],
               }));
@@ -183,12 +260,38 @@ export const useGraphStore = create<GraphStore>((set, get) => {
               set((s) => ({ branches: s.branches.filter((b) => b.id !== msg.branchId) }));
               if (msg.commit && msg.state && msg.state.headSeq > get().headSeq) {
                 set((s) => ({
-                  nodes: msg.state!.nodes,
-                  edges: msg.state!.edges,
+                  serverNodes: msg.state!.nodes,
+                  serverEdges: msg.state!.edges,
+                  ...withPreview({ serverNodes: msg.state!.nodes, serverEdges: msg.state!.edges }, s.pending),
                   headSeq: msg.state!.headSeq,
                   commits: s.commits.some((c) => c.seq === msg.commit!.seq) ? s.commits : [toSummary(msg.commit!), ...s.commits],
                 }));
               }
+              break;
+            case 'presence':
+              set({ activeUsers: msg.users });
+              break;
+            case 'members': {
+              set({ members: msg.members });
+              // Own role may have changed — reflect it on the active canvas immediately.
+              const active = useCanvasStore.getState().active;
+              const me = useAuthStore.getState().user;
+              if (active && me) {
+                const mine = msg.members.find((m) => m.userId === me.id);
+                if (mine && mine.role !== active.role) {
+                  useCanvasStore.setState({ active: { ...active, role: mine.role } });
+                }
+              }
+              break;
+            }
+            case 'regions':
+              set({ regions: msg.regions });
+              break;
+            case 'canvas_gone':
+              useCanvasStore.setState({
+                error: msg.reason === 'deleted' ? 'Kanvas, sahibi tarafından silindi.' : 'Bu kanvastan çıkarıldınız.',
+              });
+              useCanvasStore.getState().close();
               break;
           }
         };
@@ -197,6 +300,7 @@ export const useGraphStore = create<GraphStore>((set, get) => {
     },
 
     disconnectWs: () => {
+      wsGen++;
       if (wsRetry) clearTimeout(wsRetry);
       wsRetry = null;
       const sock = ws;
@@ -207,8 +311,9 @@ export const useGraphStore = create<GraphStore>((set, get) => {
 
     reset: () =>
       set({
-        nodes: [], edges: [], headSeq: 0, commits: [], branches: [], loaded: false,
-        error: null, notice: null, selectedNodeId: null, sidePanel: 'none',
+        serverNodes: [], serverEdges: [], nodes: [], edges: [], pending: [],
+        headSeq: 0, commits: [], branches: [], members: [], regions: [], activeUsers: [],
+        loaded: false, error: null, notice: null, selectedNodeId: null, sidePanel: 'none',
         viewingSeq: null, viewingBranchId: null, viewingState: null,
       }),
 
@@ -218,23 +323,39 @@ export const useGraphStore = create<GraphStore>((set, get) => {
     clearError: () => set({ error: null }),
     clearNotice: () => set({ notice: null }),
 
-    addNode: (fields) => guard(async () => handleOutcome(await api.addNode(fields, ctx()))),
-    updateNode: (id, fields, message) => guard(async () => handleOutcome(await api.updateNode(id, fields, ctx(message)))),
-    deleteNode: (id) =>
-      guard(async () => {
-        handleOutcome(await api.deleteNode(id, ctx()));
-        if (get().selectedNodeId === id) set({ selectedNodeId: null });
-      }),
-    moveNode: (id, x, y) => guard(async () => handleOutcome(await api.moveNode(id, x, y, ctx()))),
-    connect: (sourceId, targetId, kind) =>
-      guard(async () => handleOutcome(await api.connect({ sourceId, targetId, kind }, ctx()))),
-    updateEdge: (id, fields) =>
-      guard(async () => {
-        const edge = get().edges.find((e) => e.id === id);
-        if (!edge) return;
-        handleOutcome(await api.updateEdge(id, { sourceId: edge.sourceId, targetId: edge.targetId, ...fields }, ctx()));
-      }),
-    deleteEdge: (id) => guard(async () => handleOutcome(await api.deleteEdge(id, ctx()))),
+    addNode: (fields) => stage([{ op: 'add_node', id: genId(), ...fields }]),
+    updateNode: (id, fields) => stage([{ op: 'update_node', id, fields }]),
+    deleteNode: (id) => {
+      stage([{ op: 'delete_node', id }]);
+      if (get().selectedNodeId === id) set({ selectedNodeId: null });
+    },
+    moveNode: (id, x, y) => stage([{ op: 'move_node', id, x, y }]),
+    connect: (sourceId, targetId, kind) => stage([{ op: 'add_edge', id: genId(), sourceId, targetId, kind }]),
+    updateEdge: (id, fields) => {
+      const edge = get().edges.find((e) => e.id === id);
+      if (!edge) return;
+      stage([
+        { op: 'delete_edge', id },
+        { op: 'add_edge', id, sourceId: edge.sourceId, targetId: edge.targetId, ...fields },
+      ]);
+    },
+    deleteEdge: (id) => stage([{ op: 'delete_edge', id }]),
+
+    push: async () => {
+      const { pending, headSeq, clientId } = get();
+      if (pending.length === 0) return;
+      try {
+        const outcome = await api.commit(pending, { baseSeq: headSeq, clientId });
+        set({ pending: [] });
+        handleOutcome(outcome);
+      } catch (err) {
+        // Keep the staged changes so the user can fix or discard them.
+        set({ error: err instanceof ApiError ? err.message : String(err) });
+      }
+    },
+
+    discardPending: () =>
+      set((s) => ({ pending: [], nodes: s.serverNodes, edges: s.serverEdges, selectedNodeId: null })),
 
     viewAt: async (seq) => {
       try {
@@ -254,41 +375,78 @@ export const useGraphStore = create<GraphStore>((set, get) => {
     },
     backToLatest: () => set({ viewingSeq: null, viewingBranchId: null, viewingState: null }),
 
-    revert: async (seq) => {
-      set({ viewingSeq: null, viewingBranchId: null, viewingState: null });
-      try {
+    revert: (seq) =>
+      direct(async () => {
+        set({ viewingSeq: null, viewingBranchId: null, viewingState: null });
         const r = await api.revert(seq, get().clientId);
         applyState(r.state, r.commit);
-      } catch (err) {
-        set({ error: err instanceof ApiError ? err.message : String(err) });
-      }
-    },
-    restore: async (seq) => {
-      set({ viewingSeq: null, viewingBranchId: null, viewingState: null });
-      try {
+      }),
+    restore: (seq) =>
+      direct(async () => {
+        set({ viewingSeq: null, viewingBranchId: null, viewingState: null });
         const r = await api.restore(seq, get().clientId);
         applyState(r.state, r.commit);
-      } catch (err) {
-        set({ error: err instanceof ApiError ? err.message : String(err) });
-      }
-    },
-    mergeBranch: async (id) => {
-      try {
+      }),
+    mergeBranch: (id) =>
+      direct(async () => {
         const r = await api.mergeBranch(id);
         set((s) => ({ branches: s.branches.filter((b) => b.id !== id) }));
         applyState(r.state, r.commit);
-      } catch (err) {
-        set({ error: err instanceof ApiError ? err.message : String(err) });
-      }
-    },
-    discardBranch: async (id) => {
-      try {
+      }),
+    discardBranch: (id) =>
+      direct(async () => {
         await api.discardBranch(id);
         set((s) => ({
           branches: s.branches.filter((b) => b.id !== id),
           viewingBranchId: s.viewingBranchId === id ? null : s.viewingBranchId,
           viewingState: s.viewingBranchId === id ? null : s.viewingState,
         }));
+      }),
+
+    setMemberRole: async (userId, role) => {
+      try {
+        const { members } = await api.setMemberRole(userId, role);
+        set({ members });
+      } catch (err) {
+        set({ error: err instanceof ApiError ? err.message : String(err) });
+      }
+    },
+    removeMember: async (userId) => {
+      try {
+        const { members } = await api.removeMember(userId);
+        set({ members });
+      } catch (err) {
+        set({ error: err instanceof ApiError ? err.message : String(err) });
+      }
+    },
+    createRegion: async (data) => {
+      try {
+        await api.createRegion(data);
+        set({ regions: (await api.getRegions()).regions });
+      } catch (err) {
+        set({ error: err instanceof ApiError ? err.message : String(err) });
+      }
+    },
+    updateRegion: async (id, data) => {
+      try {
+        await api.updateRegion(id, data);
+        set({ regions: (await api.getRegions()).regions });
+      } catch (err) {
+        set({ error: err instanceof ApiError ? err.message : String(err) });
+      }
+    },
+    deleteRegion: async (id) => {
+      try {
+        await api.deleteRegion(id);
+        set((s) => ({ regions: s.regions.filter((r) => r.id !== id) }));
+      } catch (err) {
+        set({ error: err instanceof ApiError ? err.message : String(err) });
+      }
+    },
+    setRegionMembers: async (id, userIds) => {
+      try {
+        const { region } = await api.setRegionMembers(id, userIds);
+        set((s) => ({ regions: s.regions.map((r) => (r.id === id ? region : r)) }));
       } catch (err) {
         set({ error: err instanceof ApiError ? err.message : String(err) });
       }
@@ -296,10 +454,17 @@ export const useGraphStore = create<GraphStore>((set, get) => {
   };
 });
 
-/** The graph currently displayed: live state, or historical/branch state in read-only mode. */
+/** True when the UI must not allow edits: time-travel, branch view, or viewer role. */
+export function useReadOnly(): boolean {
+  const viewing = useGraphStore((s) => s.viewingSeq !== null || s.viewingBranchId !== null);
+  const viewer = useCanvasStore((s) => s.active?.role === 'viewer');
+  return viewing || viewer;
+}
+
+/** The graph currently displayed: preview (server + staged), or historical/branch state in read-only mode. */
 export function useDisplayedGraph(): { nodes: PlanNode[]; edges: PlanEdge[]; readOnly: boolean } {
   const nodes = useGraphStore((s) => (s.viewingState ? s.viewingState.nodes : s.nodes));
   const edges = useGraphStore((s) => (s.viewingState ? s.viewingState.edges : s.edges));
-  const readOnly = useGraphStore((s) => s.viewingSeq !== null || s.viewingBranchId !== null);
+  const readOnly = useReadOnly();
   return { nodes, edges, readOnly };
 }

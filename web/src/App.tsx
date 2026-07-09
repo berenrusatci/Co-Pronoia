@@ -12,6 +12,8 @@ import { NodeEditorPanel } from './components/NodeEditorPanel';
 import { CommitList } from './components/CommitList';
 import { ConnectionsPanel } from './components/ConnectionsPanel';
 import { BranchPanel } from './components/BranchPanel';
+import { MembersPanel } from './components/MembersPanel';
+import { RegionsPanel } from './components/RegionsPanel';
 import { LoginView } from './components/LoginView';
 import { Dashboard } from './components/Dashboard';
 import { Toolbar, ReadOnlyBanner, ErrorToast } from './components/Chrome';
@@ -107,6 +109,8 @@ export default function App() {
         )}
         {sidePanel === 'connections' && <ConnectionsPanel />}
         {sidePanel === 'branches' && <BranchPanel />}
+        {sidePanel === 'members' && <MembersPanel />}
+        {sidePanel === 'regions' && <RegionsPanel />}
       </div>
     </div>
   );

@@ -27,6 +27,12 @@ All graph data is scoped to a **Canvas** (`Canvas`/`CanvasMember`/`Invite` model
 
 `buildApp` keeps a `Map<canvasId, CommitService>` (`serviceFor`) — one instance per canvas so the commit mutex serializes **per canvas**. Commit numbering is per-canvas: `Commit` has `@@id([canvasId, seq])` and `nextSeq()` computes max+1 under the mutex (no autoincrement). Node/Edge PKs are `@@id([canvasId, id])`.
 
+### Roles & regions
+
+Member roles are `owner | editor | viewer` (`CanvasMember.role`, default `editor` on invite accept). The canvas-scope preHandler sets `req.memberRole`; `requireEditor` 403s viewers on every mutating route, `requireOwner` gates member management (`PATCH/DELETE .../members/:userId`), canvas deletion (`DELETE /api/canvases/:canvasId`), and all region writes. The owner role never changes hands and the owner can't be removed.
+
+**Regions** (`Region`/`RegionMember`) are owner-drawn rectangles on flow-view coordinates — config, NOT part of the event-sourced graph. `regionGuard.ts` enforces at `POST .../commit` (owner bypasses): a node inside a region may only be touched by that region's members; `move_node` checks source AND target points, `delete_node` checks the whole subtree, edge ops check both endpoints; nodes with null x/y are outside every region. Region/member/canvas changes broadcast `regions`/`members`/`canvas_gone` WS messages; `kick()` in app.ts force-closes sockets of removed users / deleted canvases.
+
 ### Event sourcing is the core invariant
 
 The `Commit` table (append-only JSON op arrays) is the **source of truth** for main; `Node`/`Edge` tables are a materialized cache of replaying main-branch commits. `CommitService.rebuildCheck()` asserts they never diverge — tests use it as the oracle. Never write `Node`/`Edge` outside a commit. Branch commits (`branchId != null`) do NOT touch the materialized tables; branch state is always computed by replay (`branchState()`).
@@ -43,18 +49,22 @@ Clients send `baseSeq` (the head they saw) with each commit. If head moved: re-e
 
 Session cookie (`tm_session`) auth: scrypt hashes in `server/src/auth.ts`, routes in `authRoutes.ts`, a global preHandler hook 401s every `/api` route except `/api/auth/*` and `/api/health`. Commits record `authorId` (a null author renders as "sistem").
 
-WS (`/api/ws?canvas=<id>`, broadcast-only — mutations stay on HTTP): the handler closes the socket unless the session user is a member of that canvas; broadcasts go only to clients on the same canvas. Server assigns a `clientId` on connect; clients echo it in commit POSTs; broadcasts carry the originator's `clientId` so the originator skips its own `commit` message (it already applied the HTTP response). Message types in `shared/src/wsMessages.ts`.
+WS (`/api/ws?canvas=<id>`, broadcast-only — mutations stay on HTTP): the handler closes the socket unless the session user is a member of that canvas; broadcasts go only to clients on the same canvas. Server assigns a `clientId` on connect; clients echo it in commit POSTs; broadcasts carry the originator's `clientId` so the originator skips its own `commit` message (it already applied the HTTP response). Connect/disconnect broadcasts `presence` (active usernames, shown as toolbar chips + green dots in the members panel). Message types in `shared/src/wsMessages.ts`. Password change: `POST /api/auth/password` (revokes other sessions).
 
 ### Frontend: dashboard → canvas; one graph store, three views + panels
 
 Login lands on the **dashboard** (`web/src/components/Dashboard.tsx` + `store/canvasStore.ts`): list/create canvases, copy invite links (`{origin}/?davet=<token>`). Opening a canvas sets the API base via `setActiveCanvasId` (in `api/client.ts`) and mounts the graph UI; `← Pano` returns and resets `graphStore`. A `?davet=` URL param is accepted right after login/register in `App.tsx`, then stripped from the URL.
+
+**Push/staging**: mutations do NOT hit the server immediately. `graphStore` keeps `serverNodes/serverEdges` (canonical) plus `pending: OpInput[]`; every view reads the preview (`nodes/edges` = `applyIntents(server, pending)` from `store/applyIntents.ts`, which mirrors server cascade semantics and generates client-side ids). The toolbar **Push** button sends all pending intents as ONE commit (`baseSeq` = current head, so the normal auto-merge/branch rules apply); **Vazgeç** drops them. Direct server ops (revert/restore/merge/discard) are blocked while anything is pending. Staged-only entities render with `createdCommit: 0` ("yeni•" badge).
 
 `web/src/store/graphStore.ts` holds canonical state and the WS connection; views derive React Flow props:
 
 - **FlowView** uses persisted `x`/`y`; custom edge component `web/src/components/CurvedEdge.tsx` renders kind styles (flow solid blue, loop orange, dependency dashed purple, relation dotted gray), self-loops (arc over the node), and parallel edges (perpendicular offset by index within the unordered node pair), bidirectional = arrowheads both ends.
 - **MindMapView** ignores `x`/`y` — layout computed by `web/src/layout/mindmapLayout.ts` (d3-hierarchy), never persisted. Hierarchy lives in `parentId` on nodes; only free-form connections are `Edge` rows.
 - **TimelineView** reuses `CommitList` + scrubber.
-- Side panels (`sidePanel` in store): history, connections (textual edge list with edit/delete), branches (view/merge/discard).
+- **FlowView also renders regions** as React Flow nodes (type `region`, `zIndex: -10`, id prefix `region:`): translucent rectangles the owner can drag and resize (`NodeResizer` in `RegionNode.tsx`); non-owners see them read-only.
+- Side panels (`sidePanel` in store): history, connections (textual edge list with edit/delete), branches (view/merge/discard), members (roles/remove for owner, presence dots), regions (owner: create + per-region member checkboxes).
+- Read-only is `useReadOnly()` = time-travel ∨ branch view ∨ viewer role; `stage()` blocks staging accordingly.
 
 Read-only mode is shared by time-travel (`viewingSeq`) and branch viewing (`viewingBranchId`): both load into `viewingState`, `useDisplayedGraph()` picks the right source, `guard()` blocks mutations. `?view=flow|mindmap|timeline` deep-links a view.
 

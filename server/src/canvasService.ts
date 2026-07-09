@@ -1,6 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import { nanoid } from 'nanoid';
-import type { CanvasInfo } from '@treemapper/shared';
+import type { CanvasInfo, CanvasRole, MemberInfo, RegionInfo } from '@treemapper/shared';
 import type { CommitService } from './commitService.js';
 
 export type ServiceFor = (canvasId: string) => CommitService;
@@ -59,10 +59,151 @@ export async function createCanvas(
 }
 
 export async function isMember(prisma: PrismaClient, canvasId: string, userId: string): Promise<boolean> {
+  return (await memberRole(prisma, canvasId, userId)) !== null;
+}
+
+export async function memberRole(prisma: PrismaClient, canvasId: string, userId: string): Promise<CanvasRole | null> {
   const row = await prisma.canvasMember.findUnique({
     where: { canvasId_userId: { canvasId, userId } },
   });
-  return row !== null;
+  return (row?.role as CanvasRole) ?? null;
+}
+
+// ---------- Members & roles (owner-managed) ----------
+
+export async function listMembers(prisma: PrismaClient, canvasId: string): Promise<MemberInfo[]> {
+  const rows = await prisma.canvasMember.findMany({
+    where: { canvasId },
+    orderBy: { joinedAt: 'asc' },
+    include: { user: { select: { username: true } } },
+  });
+  return rows.map((m) => ({
+    userId: m.userId,
+    username: m.user.username,
+    role: m.role as CanvasRole,
+    joinedAt: m.joinedAt.toISOString(),
+  }));
+}
+
+/** Owner assigns editor/viewer to other members; the owner role itself never changes hands here. */
+export async function setMemberRole(
+  prisma: PrismaClient,
+  canvasId: string,
+  targetUserId: string,
+  role: 'editor' | 'viewer',
+): Promise<MemberInfo[] | { error: string }> {
+  const target = await prisma.canvasMember.findUnique({ where: { canvasId_userId: { canvasId, userId: targetUserId } } });
+  if (!target) return { error: 'üye bulunamadı' };
+  if (target.role === 'owner') return { error: 'kanvas sahibinin rolü değiştirilemez' };
+  await prisma.canvasMember.update({
+    where: { canvasId_userId: { canvasId, userId: targetUserId } },
+    data: { role },
+  });
+  return listMembers(prisma, canvasId);
+}
+
+export async function removeMember(
+  prisma: PrismaClient,
+  canvasId: string,
+  targetUserId: string,
+): Promise<MemberInfo[] | { error: string }> {
+  const target = await prisma.canvasMember.findUnique({ where: { canvasId_userId: { canvasId, userId: targetUserId } } });
+  if (!target) return { error: 'üye bulunamadı' };
+  if (target.role === 'owner') return { error: 'kanvas sahibi çıkarılamaz' };
+  await prisma.$transaction([
+    prisma.canvasMember.delete({ where: { canvasId_userId: { canvasId, userId: targetUserId } } }),
+    prisma.regionMember.deleteMany({ where: { userId: targetUserId, region: { canvasId } } }),
+  ]);
+  return listMembers(prisma, canvasId);
+}
+
+/** Owner-only. Removes the canvas and everything scoped to it. */
+export async function deleteCanvas(prisma: PrismaClient, canvasId: string): Promise<void> {
+  await prisma.$transaction([
+    prisma.commit.deleteMany({ where: { canvasId } }),
+    prisma.branch.deleteMany({ where: { canvasId } }),
+    prisma.edge.deleteMany({ where: { canvasId } }),
+    prisma.node.deleteMany({ where: { canvasId } }),
+    prisma.regionMember.deleteMany({ where: { region: { canvasId } } }),
+    prisma.region.deleteMany({ where: { canvasId } }),
+    prisma.invite.deleteMany({ where: { canvasId } }),
+    prisma.canvasMember.deleteMany({ where: { canvasId } }),
+    prisma.canvas.delete({ where: { id: canvasId } }),
+  ]);
+}
+
+// ---------- Regions ----------
+
+const toRegionInfo = (r: {
+  id: string; name: string; x: number; y: number; width: number; height: number; color: string;
+  members: { userId: string; user: { username: string } }[];
+}): RegionInfo => ({
+  id: r.id, name: r.name, x: r.x, y: r.y, width: r.width, height: r.height, color: r.color,
+  memberIds: r.members.map((m) => m.userId),
+  memberNames: r.members.map((m) => m.user.username),
+});
+
+const regionInclude = { members: { include: { user: { select: { username: true } } } } } as const;
+
+export async function listRegions(prisma: PrismaClient, canvasId: string): Promise<RegionInfo[]> {
+  const rows = await prisma.region.findMany({
+    where: { canvasId },
+    orderBy: { createdAt: 'asc' },
+    include: regionInclude,
+  });
+  return rows.map(toRegionInfo);
+}
+
+export async function createRegion(
+  prisma: PrismaClient,
+  canvasId: string,
+  data: { name: string; x: number; y: number; width: number; height: number; color?: string },
+): Promise<RegionInfo> {
+  const row = await prisma.region.create({
+    data: { canvasId, ...data },
+    include: regionInclude,
+  });
+  return toRegionInfo(row);
+}
+
+export async function updateRegion(
+  prisma: PrismaClient,
+  canvasId: string,
+  regionId: string,
+  data: Partial<{ name: string; x: number; y: number; width: number; height: number; color: string }>,
+): Promise<RegionInfo | null> {
+  const existing = await prisma.region.findFirst({ where: { id: regionId, canvasId } });
+  if (!existing) return null;
+  const row = await prisma.region.update({ where: { id: regionId }, data, include: regionInclude });
+  return toRegionInfo(row);
+}
+
+export async function deleteRegion(prisma: PrismaClient, canvasId: string, regionId: string): Promise<boolean> {
+  const existing = await prisma.region.findFirst({ where: { id: regionId, canvasId } });
+  if (!existing) return false;
+  await prisma.region.delete({ where: { id: regionId } });
+  return true;
+}
+
+/** Replaces a region's member list (only canvas members are accepted). */
+export async function setRegionMembers(
+  prisma: PrismaClient,
+  canvasId: string,
+  regionId: string,
+  userIds: string[],
+): Promise<RegionInfo | null> {
+  const existing = await prisma.region.findFirst({ where: { id: regionId, canvasId } });
+  if (!existing) return null;
+  const canvasMembers = await prisma.canvasMember.findMany({ where: { canvasId, userId: { in: userIds } } });
+  const valid = canvasMembers.map((m) => m.userId);
+  await prisma.$transaction([
+    prisma.regionMember.deleteMany({ where: { regionId } }),
+    ...(valid.length > 0
+      ? [prisma.regionMember.createMany({ data: valid.map((userId) => ({ regionId, userId })) })]
+      : []),
+  ]);
+  const row = await prisma.region.findUnique({ where: { id: regionId }, include: regionInclude });
+  return row ? toRegionInfo(row) : null;
 }
 
 export async function createInvite(prisma: PrismaClient, canvasId: string, userId: string): Promise<string> {
