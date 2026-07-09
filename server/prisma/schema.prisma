@@ -7,13 +7,16 @@ datasource db {
 }
 
 model User {
-  id           String    @id @default(cuid())
-  username     String    @unique
+  id           String         @id @default(cuid())
+  username     String         @unique
   passwordHash String
-  createdAt    DateTime  @default(now())
+  createdAt    DateTime       @default(now())
   sessions     Session[]
   commits      Commit[]
   branches     Branch[]
+  ownedCanvases Canvas[]
+  memberships  CanvasMember[]
+  invites      Invite[]
 }
 
 model Session {
@@ -24,8 +27,44 @@ model Session {
   expiresAt DateTime
 }
 
+model Canvas {
+  id        String         @id @default(cuid())
+  name      String
+  ownerId   String
+  owner     User           @relation(fields: [ownerId], references: [id])
+  createdAt DateTime       @default(now())
+  members   CanvasMember[]
+  invites   Invite[]
+  nodes     Node[]
+  edges     Edge[]
+  commits   Commit[]
+  branches  Branch[]
+}
+
+model CanvasMember {
+  canvasId String
+  canvas   Canvas   @relation(fields: [canvasId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role     String   @default("member")
+  joinedAt DateTime @default(now())
+
+  @@id([canvasId, userId])
+}
+
+model Invite {
+  token     String   @id
+  canvasId  String
+  canvas    Canvas   @relation(fields: [canvasId], references: [id], onDelete: Cascade)
+  createdBy String
+  creator   User     @relation(fields: [createdBy], references: [id])
+  createdAt DateTime @default(now())
+}
+
 model Node {
-  id            String  @id
+  canvasId      String
+  canvas        Canvas  @relation(fields: [canvasId], references: [id], onDelete: Cascade)
+  id            String
   parentId      String?
   title         String
   description   String  @default("")
@@ -35,20 +74,28 @@ model Node {
   y             Float?
   createdCommit Int
   updatedCommit Int
+
+  @@id([canvasId, id])
 }
 
 model Edge {
-  id            String @id
+  canvasId      String
+  canvas        Canvas @relation(fields: [canvasId], references: [id], onDelete: Cascade)
+  id            String
   sourceId      String
   targetId      String
   kind          String @default("flow")
   direction     String @default("directed")
   label         String @default("")
   createdCommit Int
+
+  @@id([canvasId, id])
 }
 
 model Commit {
-  seq       Int      @id @default(autoincrement())
+  canvasId  String
+  canvas    Canvas   @relation(fields: [canvasId], references: [id], onDelete: Cascade)
+  seq       Int
   message   String
   createdAt DateTime @default(now())
   ops       String
@@ -57,11 +104,14 @@ model Commit {
   branchId  String?
   branch    Branch?  @relation(fields: [branchId], references: [id])
 
-  @@index([branchId, seq])
+  @@id([canvasId, seq])
+  @@index([canvasId, branchId, seq])
 }
 
 model Branch {
   id        String   @id @default(cuid())
+  canvasId  String
+  canvas    Canvas   @relation(fields: [canvasId], references: [id], onDelete: Cascade)
   name      String
   baseSeq   Int
   status    String   @default("open")
@@ -69,4 +119,6 @@ model Branch {
   creator   User     @relation(fields: [createdBy], references: [id])
   createdAt DateTime @default(now())
   commits   Commit[]
+
+  @@index([canvasId, status])
 }

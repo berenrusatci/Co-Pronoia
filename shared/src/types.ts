@@ -70,6 +70,16 @@ export interface CommitSummary {
   author: string | null;
 }
 
+export interface CanvasInfo {
+  id: string;
+  name: string;
+  owner: string;
+  role: 'owner' | 'member';
+  memberCount: number;
+  headSeq: number;
+  createdAt: string;
+}
+
 export interface GraphState {
   nodes: PlanNode[];
   edges: PlanEdge[];

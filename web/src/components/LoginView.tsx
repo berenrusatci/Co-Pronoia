@@ -22,6 +22,11 @@ export function LoginView() {
       <form className="login-card" onSubmit={submit}>
         <h1>🌳 TreeMapper</h1>
         <p className="login-sub">Plan ağacınızı birlikte kurun — her değişiklik commit olarak kaydedilir.</p>
+        {new URLSearchParams(window.location.search).has('davet') && (
+          <p className="login-invite-note">
+            🔗 Bir kanvas davet linkiyle geldiniz — giriş yapınca (veya kayıt olunca) kanvasa otomatik ekleneceksiniz.
+          </p>
+        )}
         <label>
           Kullanıcı adı
           <input value={username} onChange={(e) => setUsername(e.target.value)} autoFocus autoComplete="username" />

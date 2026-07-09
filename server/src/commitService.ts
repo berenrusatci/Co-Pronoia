@@ -59,7 +59,8 @@ export class CommitService {
    */
   private queue: Promise<unknown> = Promise.resolve();
 
-  constructor(private prisma: PrismaClient) {}
+  /** One instance per canvas (see `serviceFor` in app.ts) so the mutex serializes per canvas. */
+  constructor(private prisma: PrismaClient, private canvasId: string) {}
 
   private locked<T>(fn: () => Promise<T>): Promise<T> {
     const run = this.queue.then(fn, fn);
@@ -71,21 +72,24 @@ export class CommitService {
 
   async getState(): Promise<GraphState> {
     const [nodes, edges, headSeq] = await Promise.all([
-      this.prisma.node.findMany(),
-      this.prisma.edge.findMany(),
+      this.prisma.node.findMany({ where: { canvasId: this.canvasId } }),
+      this.prisma.edge.findMany({ where: { canvasId: this.canvasId } }),
       this.headSeq(),
     ]);
     return { nodes: nodes.map(rowToNode), edges: edges.map(rowToEdge), headSeq };
   }
 
   async headSeq(): Promise<number> {
-    const agg = await this.prisma.commit.aggregate({ _max: { seq: true }, where: { branchId: null } });
+    const agg = await this.prisma.commit.aggregate({
+      _max: { seq: true },
+      where: { canvasId: this.canvasId, branchId: null },
+    });
     return agg._max.seq ?? 0;
   }
 
   async getCommit(seq: number): Promise<Commit | null> {
     const row = await this.prisma.commit.findUnique({
-      where: { seq },
+      where: { canvasId_seq: { canvasId: this.canvasId, seq } },
       include: { author: { select: { username: true } } },
     });
     if (!row) return null;
@@ -97,7 +101,7 @@ export class CommitService {
 
   async listCommits(limit = 50, before?: number, branchId: string | null = null): Promise<CommitSummary[]> {
     const rows = await this.prisma.commit.findMany({
-      where: { branchId, ...(before !== undefined ? { seq: { lt: before } } : {}) },
+      where: { canvasId: this.canvasId, branchId, ...(before !== undefined ? { seq: { lt: before } } : {}) },
       orderBy: { seq: 'desc' },
       take: limit,
       include: { author: { select: { username: true } } },
@@ -117,13 +121,13 @@ export class CommitService {
   private async replayGraph(uptoSeq: number, branchId: string | null = null, branchBase?: number): Promise<Graph> {
     const graph = emptyGraph();
     const mainRows = await this.prisma.commit.findMany({
-      where: { branchId: null, seq: { lte: branchId === null ? uptoSeq : branchBase! } },
+      where: { canvasId: this.canvasId, branchId: null, seq: { lte: branchId === null ? uptoSeq : branchBase! } },
       orderBy: { seq: 'asc' },
     });
     for (const row of mainRows) for (const op of JSON.parse(row.ops) as Op[]) applyOp(graph, op, row.seq);
     if (branchId !== null) {
       const branchRows = await this.prisma.commit.findMany({
-        where: { branchId, seq: { lte: uptoSeq } },
+        where: { canvasId: this.canvasId, branchId, seq: { lte: uptoSeq } },
         orderBy: { seq: 'asc' },
       });
       for (const row of branchRows) for (const op of JSON.parse(row.ops) as Op[]) applyOp(graph, op, row.seq);
@@ -135,7 +139,7 @@ export class CommitService {
 
   async listBranches(status = 'open'): Promise<BranchSummary[]> {
     const rows = await this.prisma.branch.findMany({
-      where: status === 'all' ? {} : { status },
+      where: { canvasId: this.canvasId, ...(status === 'all' ? {} : { status }) },
       orderBy: { createdAt: 'desc' },
       include: { creator: { select: { username: true } } },
     });
@@ -146,8 +150,7 @@ export class CommitService {
   }
 
   async branchState(branchId: string): Promise<GraphState> {
-    const branch = await this.prisma.branch.findUnique({ where: { id: branchId } });
-    if (!branch) throw new ValidationError(`branch ${branchId} does not exist`);
+    const branch = await this.findBranch(branchId);
     const graph = await this.replayGraph(Number.MAX_SAFE_INTEGER, branchId, branch.baseSeq);
     return { nodes: [...graph.nodes.values()], edges: [...graph.edges.values()], headSeq: branch.baseSeq };
   }
@@ -155,8 +158,7 @@ export class CommitService {
   /** Merge = take the branch's state wholesale as one new main commit (diff-based). */
   mergeBranch(branchId: string, authorId?: string | null): Promise<{ commit: Commit; state: GraphState }> {
     return this.locked(async () => {
-      const branch = await this.prisma.branch.findUnique({ where: { id: branchId } });
-      if (!branch) throw new ValidationError(`branch ${branchId} does not exist`);
+      const branch = await this.findBranch(branchId);
       if (branch.status !== 'open') throw new ValidationError(`branch '${branch.name}' is not open`);
       const target = await this.branchState(branchId);
       const current = await this.getState();
@@ -175,8 +177,7 @@ export class CommitService {
 
   discardBranch(branchId: string): Promise<BranchSummary> {
     return this.locked(async () => {
-      const branch = await this.prisma.branch.findUnique({ where: { id: branchId } });
-      if (!branch) throw new ValidationError(`branch ${branchId} does not exist`);
+      const branch = await this.findBranch(branchId);
       if (branch.status !== 'open') throw new ValidationError(`branch '${branch.name}' is not open`);
       await this.prisma.branch.update({ where: { id: branchId }, data: { status: 'discarded' } });
       const list = await this.listBranches('all');
@@ -212,7 +213,7 @@ export class CommitService {
       }
       if (ops !== null) {
         const intervening = await this.prisma.commit.findMany({
-          where: { branchId: null, seq: { gt: baseSeq, lte: head } },
+          where: { canvasId: this.canvasId, branchId: null, seq: { gt: baseSeq, lte: head } },
         });
         const interveningOps = intervening.flatMap((c) => JSON.parse(c.ops) as Op[]);
         if (!opsConflict(ops, interveningOps)) {
@@ -233,11 +234,11 @@ export class CommitService {
       const name = await this.uniqueBranchName(`${username}/cakisma-${head}`);
       const created = await this.prisma.$transaction(async (tx) => {
         const branch = await tx.branch.create({
-          data: { name, baseSeq, createdBy: authorId ?? (await this.systemUserId(tx)) },
+          data: { canvasId: this.canvasId, name, baseSeq, createdBy: authorId ?? (await this.systemUserId(tx)) },
         });
         await tx.commit.create({
           data: {
-            seq, message: message ?? autoMessage(branchOps, titleOf),
+            canvasId: this.canvasId, seq, message: message ?? autoMessage(branchOps, titleOf),
             ops: JSON.stringify(branchOps), authorId, branchId: branch.id,
           },
         });
@@ -277,14 +278,23 @@ export class CommitService {
 
   // ---------- Internals ----------
 
+  /** Branches must exist AND belong to this canvas — never leak another canvas's branch. */
+  private async findBranch(branchId: string) {
+    const branch = await this.prisma.branch.findFirst({ where: { id: branchId, canvasId: this.canvasId } });
+    if (!branch) throw new ValidationError(`branch ${branchId} does not exist`);
+    return branch;
+  }
+
+  /** Per-canvas numbering (incl. branch commits); safe because the mutex serializes writes. */
   private async nextSeq(): Promise<number> {
-    const agg = await this.prisma.commit.aggregate({ _max: { seq: true } });
+    const agg = await this.prisma.commit.aggregate({ _max: { seq: true }, where: { canvasId: this.canvasId } });
     return (agg._max.seq ?? 0) + 1;
   }
 
   private async uniqueBranchName(base: string): Promise<string> {
     let name = base;
-    for (let i = 2; await this.prisma.branch.findFirst({ where: { name } }); i++) name = `${base}-${i}`;
+    for (let i = 2; await this.prisma.branch.findFirst({ where: { canvasId: this.canvasId, name } }); i++)
+      name = `${base}-${i}`;
     return name;
   }
 
@@ -309,7 +319,7 @@ export class CommitService {
 
     await this.prisma.$transaction(async (tx) => {
       for (const op of ops) await this.applyToTables(tx, op, seq);
-      await tx.commit.create({ data: { seq, message, ops: JSON.stringify(ops), authorId } });
+      await tx.commit.create({ data: { canvasId: this.canvasId, seq, message, ops: JSON.stringify(ops), authorId } });
     });
     const commit = (await this.getCommit(seq))!;
     return { commit, state: await this.getState() };
@@ -319,25 +329,31 @@ export class CommitService {
     switch (op.op) {
       case 'add_node': {
         const { createdCommit: _c, updatedCommit: _u, ...n } = op.node;
-        await tx.node.create({ data: { ...n, createdCommit: seq, updatedCommit: seq } });
+        await tx.node.create({ data: { ...n, canvasId: this.canvasId, createdCommit: seq, updatedCommit: seq } });
         break;
       }
       case 'update_node':
-        await tx.node.update({ where: { id: op.id }, data: { ...op.after, updatedCommit: seq } });
+        await tx.node.update({
+          where: { canvasId_id: { canvasId: this.canvasId, id: op.id } },
+          data: { ...op.after, updatedCommit: seq },
+        });
         break;
       case 'delete_node':
-        await tx.node.delete({ where: { id: op.node.id } });
+        await tx.node.delete({ where: { canvasId_id: { canvasId: this.canvasId, id: op.node.id } } });
         break;
       case 'move_node':
-        await tx.node.update({ where: { id: op.id }, data: { x: op.after.x, y: op.after.y, updatedCommit: seq } });
+        await tx.node.update({
+          where: { canvasId_id: { canvasId: this.canvasId, id: op.id } },
+          data: { x: op.after.x, y: op.after.y, updatedCommit: seq },
+        });
         break;
       case 'add_edge': {
         const { createdCommit: _c, ...e } = op.edge;
-        await tx.edge.create({ data: { ...e, createdCommit: seq } });
+        await tx.edge.create({ data: { ...e, canvasId: this.canvasId, createdCommit: seq } });
         break;
       }
       case 'delete_edge':
-        await tx.edge.delete({ where: { id: op.edge.id } });
+        await tx.edge.delete({ where: { canvasId_id: { canvasId: this.canvasId, id: op.edge.id } } });
         break;
     }
   }
@@ -417,8 +433,9 @@ export class CommitService {
 
   private async loadGraph(): Promise<Graph> {
     const graph = emptyGraph();
-    for (const row of await this.prisma.node.findMany()) graph.nodes.set(row.id, rowToNode(row));
-    for (const row of await this.prisma.edge.findMany()) graph.edges.set(row.id, rowToEdge(row));
+    const where = { canvasId: this.canvasId };
+    for (const row of await this.prisma.node.findMany({ where })) graph.nodes.set(row.id, rowToNode(row));
+    for (const row of await this.prisma.edge.findMany({ where })) graph.edges.set(row.id, rowToEdge(row));
     return graph;
   }
 

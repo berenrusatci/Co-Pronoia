@@ -11,7 +11,7 @@ Requires Node 22+ (a user-local install lives at `~/.local/opt/node22/bin`; add 
 - `npm run test -w server` — one workspace; add `-- -t "name"` for a single test
 - `npm run build` — `prisma generate` + typecheck all workspaces + `vite build`. In prod, Fastify serves `web/dist` if it exists.
 
-Database: SQLite via **Prisma 7** (driver adapter `@prisma/adapter-better-sqlite3`). Connection URL comes from `server/.env` (`DATABASE_URL`) read by `server/prisma.config.ts` — Prisma 7 does not read the URL from schema.prisma. Dev DB at `server/data/treemapper.db` (gitignored); delete it to reset — the server seeds a root node on first boot. No migration files: schema changes go through `prisma db push`.
+Database: SQLite via **Prisma 7** (driver adapter `@prisma/adapter-better-sqlite3`). Connection URL comes from `server/.env` (`DATABASE_URL`) read by `server/prisma.config.ts` — Prisma 7 does not read the URL from schema.prisma. Dev DB at `server/data/treemapper.db` (gitignored); delete it to reset. There is no boot-time seed: each canvas gets its root-node seed commit when it is created. No migration files: schema changes go through `prisma db push`.
 
 Tests get isolated DBs from `server/src/testDb.ts`: one `prisma db push` into a template file per suite, then a cheap file copy per test (`testDbFactory().fresh()`), consumed by `await buildApp(url)` from `server/src/app.ts`.
 
@@ -21,25 +21,33 @@ TreeMapper is a collaborative development-planning app with an **in-app commit s
 
 npm-workspaces monorepo: `shared/` (types + op engine + WS message types), `server/` (Fastify + Prisma), `web/` (Vite + React + React Flow + zustand).
 
+### Multi-canvas & invites
+
+All graph data is scoped to a **Canvas** (`Canvas`/`CanvasMember`/`Invite` models; `canvasId` on Node/Edge/Commit/Branch). Membership is the only access rule: every `/api/canvases/:canvasId/*` route sits behind a preHandler that 404s non-members (`isMember` in `server/src/canvasService.ts`), and joining someone else's canvas is **only** possible via an invite link (`POST .../invites` → token → `POST /api/invites/:token/accept`, idempotent). Canvas creation (`createCanvas`) writes the owner membership and a seed root-node commit named after the canvas.
+
+`buildApp` keeps a `Map<canvasId, CommitService>` (`serviceFor`) — one instance per canvas so the commit mutex serializes **per canvas**. Commit numbering is per-canvas: `Commit` has `@@id([canvasId, seq])` and `nextSeq()` computes max+1 under the mutex (no autoincrement). Node/Edge PKs are `@@id([canvasId, id])`.
+
 ### Event sourcing is the core invariant
 
 The `Commit` table (append-only JSON op arrays) is the **source of truth** for main; `Node`/`Edge` tables are a materialized cache of replaying main-branch commits. `CommitService.rebuildCheck()` asserts they never diverge — tests use it as the oracle. Never write `Node`/`Edge` outside a commit. Branch commits (`branchId != null`) do NOT touch the materialized tables; branch state is always computed by replay (`branchState()`).
 
 - `shared/src/ops.ts` — op vocabulary (`add_node`…`delete_edge`), `applyOp`, `invertOp`. Ops carry before+after / full snapshots → time-travel, revert, diffs. New op types must satisfy `apply(invert(apply(g, op)))` ≡ identity (tested).
 - `server/src/commitService.ts` — expands intents into ops (fills `before`, computes delete cascades), validates via trial replay, applies in a `$transaction`. **A promise-chain mutex (`locked()`) serializes all mutating paths — it is load-bearing**: the service is async, and without it interleaved commits corrupt head numbering. Edge edits are `delete_edge`+`add_edge` with the same id in one commit — there is deliberately no `update_edge` op.
-- All mutations go through `POST /api/commit`; no per-entity write endpoints.
+- All mutations go through `POST /api/canvases/:canvasId/commit`; no per-entity write endpoints.
 
 ### Co-op, branching, conflict rules
 
-Clients send `baseSeq` (the head they saw) with each commit. If head moved: re-expand against current state and compare target sets against intervening commits' ops (`opsConflict()` in commitService — node add/delete are wildcards, updates/moves conflict per-field, edges per-id). Disjoint → auto-merge onto main as a normal commit. Overlapping (or re-expansion throws) → a `Branch` row is created (`{username}/cakisma-{head}`) and the commit lands there, expanded against `stateAt(baseSeq)`. Merge = `diffStates(main, branchState)` as one main commit ("take branch wholesale"); discard just flips status — branch commits stay in the table, filtered out of main replay by `branchId: null`. `seq` is one global autoincrement shared by main and branches, so main numbering has gaps where branch commits exist — expected.
+Clients send `baseSeq` (the head they saw) with each commit. If head moved: re-expand against current state and compare target sets against intervening commits' ops (`opsConflict()` in commitService — node add/delete are wildcards, updates/moves conflict per-field, edges per-id). Disjoint → auto-merge onto main as a normal commit. Overlapping (or re-expansion throws) → a `Branch` row is created (`{username}/cakisma-{head}`) and the commit lands there, expanded against `stateAt(baseSeq)`. Merge = `diffStates(main, branchState)` as one main commit ("take branch wholesale"); discard just flips status — branch commits stay in the table, filtered out of main replay by `branchId: null`. `seq` is one per-canvas counter shared by that canvas's main and branches, so main numbering has gaps where branch commits exist — expected.
 
 ### Auth & WebSocket
 
-Session cookie (`tm_session`) auth: scrypt hashes in `server/src/auth.ts`, routes in `authRoutes.ts`, a global preHandler hook 401s every `/api` route except `/api/auth/*` and `/api/health`. Commits record `authorId`; the seed commit's author is null (shown as "sistem").
+Session cookie (`tm_session`) auth: scrypt hashes in `server/src/auth.ts`, routes in `authRoutes.ts`, a global preHandler hook 401s every `/api` route except `/api/auth/*` and `/api/health`. Commits record `authorId` (a null author renders as "sistem").
 
-WS (`/api/ws`, broadcast-only — mutations stay on HTTP): server assigns a `clientId` on connect; clients echo it in commit POSTs; broadcasts carry the originator's `clientId` so the originator skips its own `commit` message (it already applied the HTTP response). Message types in `shared/src/wsMessages.ts`.
+WS (`/api/ws?canvas=<id>`, broadcast-only — mutations stay on HTTP): the handler closes the socket unless the session user is a member of that canvas; broadcasts go only to clients on the same canvas. Server assigns a `clientId` on connect; clients echo it in commit POSTs; broadcasts carry the originator's `clientId` so the originator skips its own `commit` message (it already applied the HTTP response). Message types in `shared/src/wsMessages.ts`.
 
-### Frontend: one store, three views + panels
+### Frontend: dashboard → canvas; one graph store, three views + panels
+
+Login lands on the **dashboard** (`web/src/components/Dashboard.tsx` + `store/canvasStore.ts`): list/create canvases, copy invite links (`{origin}/?davet=<token>`). Opening a canvas sets the API base via `setActiveCanvasId` (in `api/client.ts`) and mounts the graph UI; `← Pano` returns and resets `graphStore`. A `?davet=` URL param is accepted right after login/register in `App.tsx`, then stripped from the URL.
 
 `web/src/store/graphStore.ts` holds canonical state and the WS connection; views derive React Flow props:
 

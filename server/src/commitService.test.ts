@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from './app.js';
 import { testDbFactory } from './testDb.js';
 import { hashPassword, verifyPassword } from './auth.js';
+import { createCanvas } from './canvasService.js';
 import type { CommitOutcome } from './commitService.js';
 import type { GraphState, OpInput } from '@treemapper/shared';
 
@@ -22,6 +23,14 @@ async function fresh() {
   return built;
 }
 
+/** Blank canvas (no seed commit) so seq expectations start at 1. Engine tests bypass route-level membership. */
+async function freshCanvas() {
+  const built = await fresh();
+  const owner = await built.prisma.user.create({ data: { username: 'owner', passwordHash: 'x' } });
+  const canvas = await createCanvas(built.prisma, built.serviceFor, 'Test', owner.id, { seedRoot: false });
+  return { ...built, service: built.serviceFor(canvas.id), owner, canvas };
+}
+
 function committed(outcome: CommitOutcome) {
   if (outcome.result !== 'committed') throw new Error(`expected committed, got ${outcome.result}`);
   return outcome;
@@ -33,7 +42,7 @@ function branched(outcome: CommitOutcome) {
 
 describe('commit engine', () => {
   it('numbers commits sequentially and materializes state', async () => {
-    const { service } = await fresh();
+    const { service } = await freshCanvas();
     const r1 = committed(await service.commit([{ op: 'add_node', id: 'root', title: 'Root' }]));
     expect(r1.commit.seq).toBe(1);
     const r2 = committed(await service.commit([{ op: 'add_node', id: 'kid', parentId: 'root', title: 'Kid' }]));
@@ -43,13 +52,13 @@ describe('commit engine', () => {
   });
 
   it('auto-generates messages', async () => {
-    const { service } = await fresh();
+    const { service } = await freshCanvas();
     const { commit } = committed(await service.commit([{ op: 'add_node', title: 'Login page' }]));
     expect(commit.message).toBe('Add node "Login page"');
   });
 
   it('delete cascades subtree and incident edges atomically', async () => {
-    const { service } = await fresh();
+    const { service } = await freshCanvas();
     await service.commit([
       { op: 'add_node', id: 'a', title: 'A' },
       { op: 'add_node', id: 'b', parentId: 'a', title: 'B' },
@@ -66,7 +75,7 @@ describe('commit engine', () => {
   });
 
   it('rejects cyclic reparent', async () => {
-    const { service } = await fresh();
+    const { service } = await freshCanvas();
     await service.commit([
       { op: 'add_node', id: 'a', title: 'A' },
       { op: 'add_node', id: 'b', parentId: 'a', title: 'B' },
@@ -75,7 +84,7 @@ describe('commit engine', () => {
   });
 
   it('supports self-loops, parallel edges, kinds and directions', async () => {
-    const { service } = await fresh();
+    const { service } = await freshCanvas();
     await service.commit([
       { op: 'add_node', id: 'a', title: 'A' },
       { op: 'add_node', id: 'b', title: 'B' },
@@ -102,7 +111,7 @@ describe('commit engine', () => {
   });
 
   it('time-travel: stateAt(n) replays exactly', async () => {
-    const { service } = await fresh();
+    const { service } = await freshCanvas();
     await service.commit([{ op: 'add_node', id: 'a', title: 'A' }]);
     await service.commit([{ op: 'add_node', id: 'b', title: 'B' }]);
     await service.commit([{ op: 'update_node', id: 'a', fields: { title: 'A2' } }]);
@@ -114,7 +123,7 @@ describe('commit engine', () => {
   });
 
   it('revert applies inverse as a new commit; history is append-only', async () => {
-    const { service } = await fresh();
+    const { service } = await freshCanvas();
     await service.commit([{ op: 'add_node', id: 'a', title: 'A' }]);
     const { commit } = await service.revert(1);
     expect(commit.seq).toBe(2);
@@ -126,14 +135,14 @@ describe('commit engine', () => {
   });
 
   it('revert conflicts throw ConflictError', async () => {
-    const { service } = await fresh();
+    const { service } = await freshCanvas();
     await service.commit([{ op: 'add_node', id: 'a', title: 'A' }]);
     await service.commit([{ op: 'delete_node', id: 'a' }]);
     await expect(service.revert(1)).rejects.toThrow(/Cannot revert/);
   });
 
   it('restore resets to an earlier state as one commit', async () => {
-    const { service } = await fresh();
+    const { service } = await freshCanvas();
     await service.commit([{ op: 'add_node', id: 'a', title: 'A' }]);
     await service.commit([{ op: 'add_node', id: 'b', parentId: 'a', title: 'B' }]);
     await service.commit([{ op: 'update_node', id: 'a', fields: { title: 'Renamed' } }]);
@@ -146,7 +155,7 @@ describe('commit engine', () => {
   });
 
   it('fuzz: replay equals materialized state after ~150 random ops', async () => {
-    const { service } = await fresh();
+    const { service } = await freshCanvas();
     let rng = 42;
     const rand = (n: number) => { rng = (rng * 1103515245 + 12345) & 0x7fffffff; return rng % n; };
     const ids: string[] = [];
@@ -194,7 +203,7 @@ describe('commit engine', () => {
 
 describe('branching & co-op', () => {
   async function withUsers() {
-    const built = await fresh();
+    const built = await freshCanvas();
     const u1 = await built.prisma.user.create({ data: { username: 'user1', passwordHash: 'x' } });
     const u2 = await built.prisma.user.create({ data: { username: 'user2', passwordHash: 'x' } });
     await built.service.commit([
@@ -303,7 +312,7 @@ describe('auth', () => {
   it('register/login/me flow with cookies; protected routes 401 without session', async () => {
     const { app } = await fresh();
 
-    let res = await app.inject({ method: 'GET', url: '/api/state' });
+    let res = await app.inject({ method: 'GET', url: '/api/canvases' });
     expect(res.statusCode).toBe(401);
 
     res = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'beren', password: 'sifre1' } });
@@ -315,11 +324,24 @@ describe('auth', () => {
     res = await app.inject({ method: 'GET', url: '/api/auth/me', cookies });
     expect(res.json().user.username).toBe('beren');
 
-    res = await app.inject({ method: 'GET', url: '/api/state', cookies });
+    // fresh account starts with no canvases — the user creates the first one
+    res = await app.inject({ method: 'GET', url: '/api/canvases', cookies });
     expect(res.statusCode).toBe(200);
+    expect(res.json().canvases).toHaveLength(0);
+
+    res = await app.inject({ method: 'POST', url: '/api/canvases', cookies, payload: { name: 'Plan' } });
+    expect(res.statusCode).toBe(200);
+    const canvasId = res.json().canvas.id;
+    expect(res.json().canvas.role).toBe('owner');
+    expect(res.json().canvas.headSeq).toBe(1); // seed root commit
+
+    res = await app.inject({ method: 'GET', url: `/api/canvases/${canvasId}/state`, cookies });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().nodes).toHaveLength(1);
+    expect(res.json().nodes[0].title).toBe('Plan');
 
     // commits get the author
-    res = await app.inject({ method: 'POST', url: '/api/commit', cookies, payload: { ops: [{ op: 'add_node', title: 'X' }] } });
+    res = await app.inject({ method: 'POST', url: `/api/canvases/${canvasId}/commit`, cookies, payload: { ops: [{ op: 'add_node', title: 'X' }] } });
     expect(res.json().commit.author).toBe('beren');
 
     // duplicate username
@@ -332,13 +354,80 @@ describe('auth', () => {
 
     // logout kills the session
     res = await app.inject({ method: 'POST', url: '/api/auth/logout', cookies });
-    res = await app.inject({ method: 'GET', url: '/api/state', cookies });
+    res = await app.inject({ method: 'GET', url: '/api/canvases', cookies });
     expect(res.statusCode).toBe(401);
   });
 });
 
+describe('canvases & invites', () => {
+  async function twoUsers() {
+    const built = await fresh();
+    const reg1 = await built.app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'u1', password: 'pass1' } });
+    const reg2 = await built.app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'u2', password: 'pass2' } });
+    return {
+      ...built,
+      c1: { tm_session: reg1.cookies.find((c) => c.name === 'tm_session')!.value },
+      c2: { tm_session: reg2.cookies.find((c) => c.name === 'tm_session')!.value },
+    };
+  }
+
+  it('membership gates every canvas route; invite link is the only way in', async () => {
+    const { app, c1, c2 } = await twoUsers();
+    const created = await app.inject({ method: 'POST', url: '/api/canvases', cookies: c1, payload: { name: 'Gizli plan' } });
+    const canvasId = created.json().canvas.id;
+
+    // u2 is not a member: canvas is invisible
+    let res = await app.inject({ method: 'GET', url: `/api/canvases/${canvasId}/state`, cookies: c2 });
+    expect(res.statusCode).toBe(404);
+    res = await app.inject({ method: 'POST', url: `/api/canvases/${canvasId}/commit`, cookies: c2, payload: { ops: [{ op: 'add_node', title: 'X' }] } });
+    expect(res.statusCode).toBe(404);
+    res = await app.inject({ method: 'GET', url: '/api/canvases', cookies: c2 });
+    expect(res.json().canvases).toHaveLength(0);
+
+    // u1 mints an invite; u2 accepts it
+    res = await app.inject({ method: 'POST', url: `/api/canvases/${canvasId}/invites`, cookies: c1 });
+    expect(res.statusCode).toBe(200);
+    const token = res.json().token;
+
+    res = await app.inject({ method: 'GET', url: `/api/invites/${token}`, cookies: c2 });
+    expect(res.json()).toEqual({ canvasName: 'Gizli plan', invitedBy: 'u1' });
+
+    res = await app.inject({ method: 'POST', url: `/api/invites/${token}/accept`, cookies: c2 });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().canvas.role).toBe('member');
+    expect(res.json().canvas.memberCount).toBe(2);
+
+    // accepting twice is idempotent
+    res = await app.inject({ method: 'POST', url: `/api/invites/${token}/accept`, cookies: c2 });
+    expect(res.json().canvas.memberCount).toBe(2);
+
+    // now the canvas opens for u2
+    res = await app.inject({ method: 'GET', url: `/api/canvases/${canvasId}/state`, cookies: c2 });
+    expect(res.statusCode).toBe(200);
+
+    // bogus token → 404
+    res = await app.inject({ method: 'POST', url: '/api/invites/yok-boyle-bir-sey/accept', cookies: c2 });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('commit numbering is independent per canvas', async () => {
+    const { app, c1 } = await twoUsers();
+    const a = (await app.inject({ method: 'POST', url: '/api/canvases', cookies: c1, payload: { name: 'A' } })).json().canvas;
+    const post = (canvasId: string, title: string) =>
+      app.inject({ method: 'POST', url: `/api/canvases/${canvasId}/commit`, cookies: c1, payload: { ops: [{ op: 'add_node', title }] } });
+    await post(a.id, 'x'); // A: seq 2 (after seed)
+    await post(a.id, 'y'); // A: seq 3
+    const b = (await app.inject({ method: 'POST', url: '/api/canvases', cookies: c1, payload: { name: 'B' } })).json().canvas;
+    expect(b.headSeq).toBe(1); // B's seed is #1 regardless of A's history
+    const r = await post(b.id, 'z');
+    expect(r.json().commit.seq).toBe(2);
+    const aCommits = await app.inject({ method: 'GET', url: `/api/canvases/${a.id}/commits`, cookies: c1 });
+    expect(aCommits.json().commits.map((c: { seq: number }) => c.seq)).toEqual([3, 2, 1]);
+  });
+});
+
 describe('API integration', () => {
-  it('full loop incl. branches over HTTP', async () => {
+  it('full loop incl. invite + branches over HTTP', async () => {
     const { app } = await fresh();
     const reg = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'u1', password: 'pass1' } });
     const cookies = { tm_session: reg.cookies.find((c) => c.name === 'tm_session')!.value };
@@ -350,34 +439,40 @@ describe('API integration', () => {
     const get = (url: string, c = cookies) =>
       app.inject({ method: 'GET', url, cookies: c }).then((r) => ({ code: r.statusCode, body: r.json() }));
 
-    await post('/api/commit', { ops: [{ op: 'add_node', id: 'a', title: 'A' }] });
-    await post('/api/commit', { ops: [{ op: 'add_node', id: 'b', parentId: 'a', title: 'B' }] });
+    // u1 creates a canvas (seed commit = #1) and invites u2
+    const canvasId = (await post('/api/canvases', { name: 'Ortak plan' })).body.canvas.id;
+    const base = `/api/canvases/${canvasId}`;
+    const token = (await post(`${base}/invites`)).body.token;
+    await post(`/api/invites/${token}/accept`, {}, cookies2);
 
-    // u1 and u2 both edit node a's title from baseSeq 2 → u2 branches
-    await post('/api/commit', { ops: [{ op: 'update_node', id: 'a', fields: { title: 'A-u1' } }], baseSeq: 2 });
-    let r = await post('/api/commit', { ops: [{ op: 'update_node', id: 'a', fields: { title: 'A-u2' } }], baseSeq: 2 }, cookies2);
+    await post(`${base}/commit`, { ops: [{ op: 'add_node', id: 'a', title: 'A' }] }); // #2
+    await post(`${base}/commit`, { ops: [{ op: 'add_node', id: 'b', parentId: 'a', title: 'B' }] }); // #3
+
+    // u1 and u2 both edit node a's title from baseSeq 3 → u2 branches
+    await post(`${base}/commit`, { ops: [{ op: 'update_node', id: 'a', fields: { title: 'A-u1' } }], baseSeq: 3 });
+    let r = await post(`${base}/commit`, { ops: [{ op: 'update_node', id: 'a', fields: { title: 'A-u2' } }], baseSeq: 3 }, cookies2);
     expect(r.body.result).toBe('branched');
     const branchId = r.body.branch.id;
 
-    r = await get('/api/branches');
+    r = await get(`${base}/branches`);
     expect(r.body.branches).toHaveLength(1);
     expect(r.body.branches[0].createdBy).toBe('u2');
 
-    r = await get(`/api/branches/${branchId}/state`);
+    r = await get(`${base}/branches/${branchId}/state`);
     expect(r.body.nodes.find((n: { id: string }) => n.id === 'a').title).toBe('A-u2');
 
-    r = await post(`/api/branches/${branchId}/merge`);
+    r = await post(`${base}/branches/${branchId}/merge`);
     expect(r.code).toBe(200);
     expect(r.body.state.nodes.find((n: { id: string }) => n.id === 'a').title).toBe('A-u2');
 
-    r = await get('/api/commits');
+    r = await get(`${base}/commits`);
     expect(r.body.commits[0].message).toMatch(/^Merge branch/);
     expect(r.body.commits[0].author).toBe('u1');
 
     // validation + 404s still work
-    r = await post('/api/commit', { ops: [{ op: 'add_edge', sourceId: 'a', targetId: 'ghost' }] });
+    r = await post(`${base}/commit`, { ops: [{ op: 'add_edge', sourceId: 'a', targetId: 'ghost' }] });
     expect(r.code).toBe(400);
-    r = await get('/api/state-at/999');
+    r = await get(`${base}/state-at/999`);
     expect(r.code).toBe(404);
   });
 });

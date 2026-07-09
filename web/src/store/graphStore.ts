@@ -32,8 +32,10 @@ interface GraphStore {
   viewingState: GraphState | null;
 
   load: () => Promise<void>;
-  connectWs: () => void;
+  connectWs: (canvasId: string) => void;
   disconnectWs: () => void;
+  /** Clears graph state when leaving a canvas (back to the dashboard). */
+  reset: () => void;
   setView: (view: ViewMode) => void;
   select: (id: string | null) => void;
   togglePanel: (panel: 'history' | 'connections' | 'branches') => void;
@@ -140,16 +142,16 @@ export const useGraphStore = create<GraphStore>((set, get) => {
       }
     },
 
-    connectWs: () => {
+    connectWs: (canvasId) => {
       if (ws) return;
       const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
       const open = () => {
-        ws = new WebSocket(`${proto}://${window.location.host}/api/ws`);
+        ws = new WebSocket(`${proto}://${window.location.host}/api/ws?canvas=${canvasId}`);
         ws.onopen = () => set({ wsConnected: true });
         ws.onclose = () => {
           set({ wsConnected: false, clientId: null });
           ws = null;
-          wsRetry = setTimeout(() => get().connectWs(), 2000);
+          wsRetry = setTimeout(() => get().connectWs(canvasId), 2000);
         };
         ws.onmessage = (event) => {
           const msg = JSON.parse(event.data) as ServerMessage;
@@ -202,6 +204,13 @@ export const useGraphStore = create<GraphStore>((set, get) => {
       sock?.close();
       set({ wsConnected: false, clientId: null });
     },
+
+    reset: () =>
+      set({
+        nodes: [], edges: [], headSeq: 0, commits: [], branches: [], loaded: false,
+        error: null, notice: null, selectedNodeId: null, sidePanel: 'none',
+        viewingSeq: null, viewingBranchId: null, viewingState: null,
+      }),
 
     setView: (view) => set({ view }),
     select: (selectedNodeId) => set({ selectedNodeId }),

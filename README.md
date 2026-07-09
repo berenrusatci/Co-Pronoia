@@ -2,6 +2,14 @@
 
 Ağaç tabanlı, **çok kullanıcılı** geliştirme planlama uygulaması. Planınızı düğümler halinde kurar; aynı veriyi üç görünümde sunar, her değişikliği yazarıyla birlikte numaralı bir commit olarak kaydeder ve eşzamanlı çakışmaları dallara ayırır.
 
+## Pano ve kanvaslar
+
+Giriş yaptıktan sonra **pano** açılır: kanvaslarınızı listeler, yeni kanvas oluşturur. Yeni hesap boş başlar — ilk kanvası kullanıcı kendisi oluşturur (kanvas, adını taşıyan bir kök düğümle açılır).
+
+- Her kanvasın verisi (düğümler, bağlantılar, commit geçmişi, dallar) tamamen ayrıdır; commit numaraları kanvas başına 1'den başlar.
+- Bir kanvasa başkasını eklemenin **tek yolu davet linkidir**: karttaki (veya kanvas içindeki araç çubuğundaki) **🔗 Davet linki** butonu `…/?davet=TOKEN` linkini panoya kopyalar. Linki açan kişi giriş/kayıt sonrası kanvasa otomatik üye olur ve doğrudan kanvasa düşer.
+- Üye olmayan kullanıcı kanvası göremez (API 404 döner).
+
 ## Görünümler
 
 - **Zihin Haritası** — `parentId` hiyerarşisinden otomatik yerleştirilen ağaç (d3-hierarchy). Düğüm üzerine gelince çıkan **+** ile alt düğüm eklenir.
@@ -48,7 +56,7 @@ npm run build   # prisma generate + tip kontrolü + üretim derlemesi
 
 ## Manuel duman testi
 
-1. İki tarayıcıda (normal + gizli) iki hesap açın
+1. İki tarayıcıda (normal + gizli) iki hesap açın; A panodan bir kanvas oluşturup **Davet linki**ni kopyalasın, B linki açıp kayıt olsun → kanvasa otomatik düşmeli
 2. A bir düğüm eklesin → B'de anında görünmeli; geçmişte yazar adı görünmeli
 3. Bağlantılar panelinden bir bağımlılık, bir self-loop, bir de paralel ilişki kenarı ekleyin → akış görünümünde farklı stiller
 4. Aynı düğümün başlığını iki tarafta da (biri bayat baseSeq ile) değiştirin → dal oluşmalı, iki tarafta da bildirim

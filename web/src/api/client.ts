@@ -1,5 +1,5 @@
 import type {
-  BranchInfo, Commit, CommitSummary, EdgeDirection, EdgeKind, GraphState, NodeFields, NodeType, OpInput,
+  BranchInfo, CanvasInfo, Commit, CommitSummary, EdgeDirection, EdgeKind, GraphState, NodeFields, NodeType, OpInput,
 } from '@treemapper/shared';
 
 export class ApiError extends Error {
@@ -12,6 +12,16 @@ export class ApiError extends Error {
 export let onUnauthorized: () => void = () => {};
 export function setOnUnauthorized(fn: () => void): void {
   onUnauthorized = fn;
+}
+
+/** All graph endpoints live under the active canvas; the dashboard sets this before loading. */
+let activeCanvasId: string | null = null;
+export function setActiveCanvasId(id: string | null): void {
+  activeCanvasId = id;
+}
+function base(): string {
+  if (!activeCanvasId) throw new ApiError(0, 'aktif kanvas yok');
+  return `/api/canvases/${activeCanvasId}`;
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
@@ -43,7 +53,7 @@ export interface CommitContext {
 }
 
 function postCommit(ops: OpInput[], ctx: CommitContext): Promise<CommitOutcome> {
-  return post('/api/commit', { ops, message: ctx.message, baseSeq: ctx.baseSeq, clientId: ctx.clientId });
+  return post(`${base()}/commit`, { ops, message: ctx.message, baseSeq: ctx.baseSeq, clientId: ctx.clientId });
 }
 
 export interface EdgeFields {
@@ -55,11 +65,11 @@ export interface EdgeFields {
 }
 
 export const api = {
-  getState: () => request<GraphState>('/api/state'),
-  getStateAt: (seq: number) => request<GraphState>(`/api/state-at/${seq}`),
+  getState: () => request<GraphState>(`${base()}/state`),
+  getStateAt: (seq: number) => request<GraphState>(`${base()}/state-at/${seq}`),
   getCommits: (limit = 100, before?: number) =>
-    request<{ commits: CommitSummary[] }>(`/api/commits?limit=${limit}${before !== undefined ? `&before=${before}` : ''}`),
-  getCommit: (seq: number) => request<Commit>(`/api/commits/${seq}`),
+    request<{ commits: CommitSummary[] }>(`${base()}/commits?limit=${limit}${before !== undefined ? `&before=${before}` : ''}`),
+  getCommit: (seq: number) => request<Commit>(`${base()}/commits/${seq}`),
 
   commit: postCommit,
   addNode: (fields: { title: string; parentId?: string | null; x?: number; y?: number; nodeType?: NodeType }, ctx: CommitContext) =>
@@ -74,11 +84,21 @@ export const api = {
   updateEdge: (id: string, fields: EdgeFields, ctx: CommitContext) =>
     postCommit([{ op: 'delete_edge', id }, { op: 'add_edge', id, ...fields }], ctx),
 
-  revert: (seq: number, clientId: string | null) => post<CommitResult>(`/api/commits/${seq}/revert`, { clientId }),
-  restore: (seq: number, clientId: string | null) => post<CommitResult>(`/api/commits/${seq}/restore`, { clientId }),
+  revert: (seq: number, clientId: string | null) => post<CommitResult>(`${base()}/commits/${seq}/revert`, { clientId }),
+  restore: (seq: number, clientId: string | null) => post<CommitResult>(`${base()}/commits/${seq}/restore`, { clientId }),
 
-  getBranches: () => request<{ branches: BranchInfo[] }>('/api/branches'),
-  getBranchState: (id: string) => request<GraphState>(`/api/branches/${id}/state`),
-  mergeBranch: (id: string) => post<{ commit: Commit; state: GraphState }>(`/api/branches/${id}/merge`),
-  discardBranch: (id: string) => post<{ branch: BranchInfo }>(`/api/branches/${id}/discard`),
+  getBranches: () => request<{ branches: BranchInfo[] }>(`${base()}/branches`),
+  getBranchState: (id: string) => request<GraphState>(`${base()}/branches/${id}/state`),
+  mergeBranch: (id: string) => post<{ commit: Commit; state: GraphState }>(`${base()}/branches/${id}/merge`),
+  discardBranch: (id: string) => post<{ branch: BranchInfo }>(`${base()}/branches/${id}/discard`),
+};
+
+/** Dashboard-level endpoints (not canvas-scoped). */
+export const canvasApi = {
+  list: () => request<{ canvases: CanvasInfo[] }>('/api/canvases'),
+  create: (name: string) => post<{ canvas: CanvasInfo }>('/api/canvases', { name }),
+  createInvite: (canvasId: string) => post<{ token: string }>(`/api/canvases/${canvasId}/invites`),
+  inviteInfo: (token: string) =>
+    request<{ canvasName: string; invitedBy: string }>(`/api/invites/${encodeURIComponent(token)}`),
+  acceptInvite: (token: string) => post<{ canvas: CanvasInfo }>(`/api/invites/${encodeURIComponent(token)}/accept`),
 };

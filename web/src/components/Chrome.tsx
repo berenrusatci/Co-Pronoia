@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { useGraphStore, type ViewMode } from '../store/graphStore';
 import { useAuthStore } from '../store/authStore';
+import { useCanvasStore } from '../store/canvasStore';
 
 const views: { key: ViewMode; label: string }[] = [
   { key: 'mindmap', label: 'Zihin Haritası' },
@@ -33,10 +35,31 @@ export function Toolbar() {
   const view = useGraphStore((s) => s.view);
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
+  const activeCanvas = useCanvasStore((s) => s.active);
+  const closeCanvas = useCanvasStore((s) => s.close);
+  const inviteLink = useCanvasStore((s) => s.inviteLink);
+  const [copied, setCopied] = useState(false);
+
+  const copyInvite = async () => {
+    if (!activeCanvas) return;
+    const url = await inviteLink(activeCanvas.id);
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    } catch {
+      window.prompt('Davet linkini kopyalayın:', url);
+    }
+  };
 
   return (
     <div className="toolbar">
       <span className="brand">🌳 TreeMapper</span>
+      <button className="pano-btn" onClick={closeCanvas} title="Kanvas listesine dön">
+        ← Pano
+      </button>
+      <span className="canvas-title" title={activeCanvas?.name}>{activeCanvas?.name}</span>
       <ViewSwitcher />
       <div className="toolbar-right">
         {!readOnly && view !== 'timeline' && (
@@ -53,6 +76,9 @@ export function Toolbar() {
         </button>
         <button className={sidePanel === 'history' ? 'active' : ''} onClick={() => togglePanel('history')}>
           Geçmiş (#{headSeq})
+        </button>
+        <button onClick={copyInvite} title="Bu kanvasa üye ekleme linki oluştur ve kopyala">
+          {copied ? 'Kopyalandı ✓' : '🔗 Davet'}
         </button>
         <span className={`ws-dot ${wsConnected ? 'on' : 'off'}`} title={wsConnected ? 'Canlı bağlantı aktif' : 'Canlı bağlantı kopuk'} />
         <span className="user-chip">{user?.username}</span>
