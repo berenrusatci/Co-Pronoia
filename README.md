@@ -1,6 +1,6 @@
 # 🌳 TreeMapper
 
-Ağaç tabanlı geliştirme planlama uygulaması. Planınızı düğümler halinde kurar; aynı veriyi üç görünümde sunar ve her değişikliği numaralı bir commit olarak kaydeder.
+Ağaç tabanlı, **çok kullanıcılı** geliştirme planlama uygulaması. Planınızı düğümler halinde kurar; aynı veriyi üç görünümde sunar, her değişikliği yazarıyla birlikte numaralı bir commit olarak kaydeder ve eşzamanlı çakışmaları dallara ayırır.
 
 ## Görünümler
 
@@ -8,34 +8,49 @@ Ağaç tabanlı geliştirme planlama uygulaması. Planınızı düğümler halin
 - **Akış Diyagramı** — serbest konumlandırma; düğümleri sürükleyin, kenar noktalarından ok çekerek bağlantı kurun.
 - **Zaman Çizelgesi** — commit geçmişi akışı + kaydırıcı (scrubber) ile geçmişte gezinme.
 
+## Bağlantı mekanizmaları
+
+Kenar türleri farklı çizgi stilleriyle çizilir: **akış** (düz mavi), **döngü** (turuncu), **bağımlılık** (kesikli mor), **ilişki** (noktalı gri). Ayrıca:
+
+- **Self-loop** — düğümün kendine bağlanması (düğümün üzerinden kavis)
+- **Çift yönlü** kenarlar (iki uçta ok) ve aynı çift arasında **paralel** kenarlar (yelpaze gibi açılır)
+- **Bağlantılar paneli** — tüm kenarlar madde madde metin olarak: `Kaynak → Hedef (bağımlılık · etiket)`; buradan tür/yön/etiket düzenlenir, silinir, yeni bağlantı eklenir
+
+## Hesaplar ve co-op
+
+- Kullanıcı adı + şifre ile kayıt/giriş (scrypt hash, session cookie). Her commit'te yazar görünür.
+- **WebSocket canlı senkron**: biri commit atınca diğer açık oturumlara anında yansır.
+- **Çakışma → dal**: iki kişi aynı anda commit atarsa ve değişiklikler ayrıksa otomatik merge edilir; aynı alana dokunuyorlarsa sonraki commit `kullanıcı/cakisma-N` adlı bir dala kaydedilir. Dallar panelinden dal **görüntülenir** (salt okunur), **ana hatta birleştirilir** (tek merge commit'i) veya **silinir** — seçim kullanıcının.
+
 ## Commit sistemi
 
-Her ekleme/güncelleme/silme/taşıma otomatik mesajlı, numaralı bir commit olur (#1, #2, …).
+Her ekleme/güncelleme/silme/taşıma otomatik mesajlı, numaralı bir commit olur. Geçmiş panelinden:
 
 - **Görüntüle** — grafiği o commit'teki haliyle salt okunur açar
 - **Geri al** — sadece o commit'in tersini yeni bir commit olarak uygular (temiz uygulanamazsa reddedilir)
 - **Buna dön** — grafiği o commit'teki haline döndürür (tek yeni commit)
 
-Geçmiş hiçbir zaman yeniden yazılmaz; her şey ileriye doğru eklenir.
+Geçmiş hiçbir zaman yeniden yazılmaz. Ana hat numaralandırmasında dal commit'leri kadar boşluk olabilir (numara sırası globaldir) — bu beklenen davranıştır.
 
 ## Çalıştırma
 
 ```bash
 npm install
-npm run dev     # API :3001 + web :5173
+npm run dev     # API :3001 + web :5173 (şema otomatik uygulanır)
 ```
 
-Tarayıcıda http://localhost:5173 — veri `server/data/treemapper.db` (SQLite) dosyasında tutulur.
+Tarayıcıda http://localhost:5173 — veri `server/data/treemapper.db` (SQLite, Prisma) dosyasında tutulur; silerseniz temiz kurulumla açılır.
 
 ```bash
-npm run test    # commit motoru testleri (inversiyon, fuzz replay, kaskad, revert/restore, API)
-npm run build   # tip kontrolü + üretim derlemesi; Fastify web/dist'i servis eder
+npm run test    # op motoru + branching + auth + API testleri
+npm run build   # prisma generate + tip kontrolü + üretim derlemesi
 ```
 
 ## Manuel duman testi
 
-1. Zihin haritasında köke iki alt düğüm ekle, birini yeniden adlandır
-2. Akış diyagramına geç: düğümleri sürükle, ikisi arasına ok çiz
-3. Geçmiş panelini aç: her eylemin ayrı bir commit olduğunu gör
-4. Ortadaki bir commit'i "Görüntüle" — tuval salt okunur eski hali gösterir
-5. Bir "Geri al" ve bir "Buna dön" yap; sayfayı yenile — state aynı kalır
+1. İki tarayıcıda (normal + gizli) iki hesap açın
+2. A bir düğüm eklesin → B'de anında görünmeli; geçmişte yazar adı görünmeli
+3. Bağlantılar panelinden bir bağımlılık, bir self-loop, bir de paralel ilişki kenarı ekleyin → akış görünümünde farklı stiller
+4. Aynı düğümün başlığını iki tarafta da (biri bayat baseSeq ile) değiştirin → dal oluşmalı, iki tarafta da bildirim
+5. Dalı görüntüleyip birleştirin → merge commit'i iki tarayıcıda da görünmeli
+6. Bir commit'i geri alın, birine dönün, sayfayı yenileyin — state aynı kalmalı

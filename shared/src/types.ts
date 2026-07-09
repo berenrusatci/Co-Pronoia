@@ -14,11 +14,15 @@ export interface PlanNode {
   updatedCommit: number;
 }
 
+export type EdgeKind = 'flow' | 'loop' | 'dependency' | 'relation';
+export type EdgeDirection = 'directed' | 'bidirectional';
+
 export interface PlanEdge {
   id: string;
   sourceId: string;
   targetId: string;
-  kind: 'flow';
+  kind: EdgeKind;
+  direction: EdgeDirection;
   label: string;
   createdCommit: number;
 }
@@ -46,7 +50,7 @@ export type OpInput =
   | { op: 'update_node'; id: string; fields: Partial<NodeFields> }
   | { op: 'delete_node'; id: string }
   | { op: 'move_node'; id: string; x: number; y: number }
-  | { op: 'add_edge'; id?: string; sourceId: string; targetId: string; label?: string }
+  | { op: 'add_edge'; id?: string; sourceId: string; targetId: string; label?: string; kind?: EdgeKind; direction?: EdgeDirection }
   | { op: 'delete_edge'; id: string };
 
 export interface Commit {
@@ -54,6 +58,8 @@ export interface Commit {
   message: string;
   createdAt: string;
   ops: Op[];
+  author: string | null;
+  branchId?: string | null;
 }
 
 export interface CommitSummary {
@@ -61,6 +67,7 @@ export interface CommitSummary {
   message: string;
   createdAt: string;
   opSummary: string;
+  author: string | null;
 }
 
 export interface GraphState {

@@ -17,14 +17,14 @@ describe('invertOp round-trips', () => {
     const g = emptyGraph();
     applyOp(g, { op: 'add_node', node: node('a', null, { x: 5, y: 5 }) }, 1);
     applyOp(g, { op: 'add_node', node: node('b', 'a') }, 2);
-    applyOp(g, { op: 'add_edge', edge: { id: 'e1', sourceId: 'a', targetId: 'b', kind: 'flow', label: '', createdCommit: 2 } }, 2);
+    applyOp(g, { op: 'add_edge', edge: { id: 'e1', sourceId: 'a', targetId: 'b', kind: 'flow', direction: 'directed', label: '', createdCommit: 2 } }, 2);
 
     const ops: Op[] = [
       { op: 'add_node', node: node('c', 'a') },
       { op: 'update_node', id: 'b', before: { title: 'Node b' }, after: { title: 'Renamed' } },
       { op: 'move_node', id: 'a', before: { x: 5, y: 5 }, after: { x: 100, y: 50 } },
-      { op: 'add_edge', edge: { id: 'e2', sourceId: 'b', targetId: 'a', kind: 'flow', label: 'dep', createdCommit: 3 } },
-      { op: 'delete_edge', edge: { id: 'e1', sourceId: 'a', targetId: 'b', kind: 'flow', label: '', createdCommit: 2 } },
+      { op: 'add_edge', edge: { id: 'e2', sourceId: 'b', targetId: 'a', kind: 'flow', direction: 'directed', label: 'dep', createdCommit: 3 } },
+      { op: 'delete_edge', edge: { id: 'e1', sourceId: 'a', targetId: 'b', kind: 'flow', direction: 'directed', label: '', createdCommit: 2 } },
     ];
     const before = snapshot(g);
     for (const op of ops) applyOp(g, op, 3);
@@ -51,7 +51,7 @@ describe('applyOp validation', () => {
     const g = emptyGraph();
     applyOp(g, { op: 'add_node', node: node('a') }, 1);
     expect(() =>
-      applyOp(g, { op: 'add_edge', edge: { id: 'e', sourceId: 'a', targetId: 'ghost', kind: 'flow', label: '', createdCommit: 1 } }, 1),
+      applyOp(g, { op: 'add_edge', edge: { id: 'e', sourceId: 'a', targetId: 'ghost', kind: 'flow', direction: 'directed', label: '', createdCommit: 1 } }, 1),
     ).toThrow(/target/);
   });
 

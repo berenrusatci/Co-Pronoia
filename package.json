@@ -13,6 +13,7 @@
     "start": "npm run start -w server"
   },
   "devDependencies": {
-    "concurrently": "^9.1.2"
+    "concurrently": "^9.1.2",
+    "puppeteer-core": "^25.3.0"
   }
 }

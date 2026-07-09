@@ -1,0 +1,72 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model User {
+  id           String    @id @default(cuid())
+  username     String    @unique
+  passwordHash String
+  createdAt    DateTime  @default(now())
+  sessions     Session[]
+  commits      Commit[]
+  branches     Branch[]
+}
+
+model Session {
+  id        String   @id
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+}
+
+model Node {
+  id            String  @id
+  parentId      String?
+  title         String
+  description   String  @default("")
+  nodeType      String  @default("task")
+  status        String  @default("planned")
+  x             Float?
+  y             Float?
+  createdCommit Int
+  updatedCommit Int
+}
+
+model Edge {
+  id            String @id
+  sourceId      String
+  targetId      String
+  kind          String @default("flow")
+  direction     String @default("directed")
+  label         String @default("")
+  createdCommit Int
+}
+
+model Commit {
+  seq       Int      @id @default(autoincrement())
+  message   String
+  createdAt DateTime @default(now())
+  ops       String
+  authorId  String?
+  author    User?    @relation(fields: [authorId], references: [id])
+  branchId  String?
+  branch    Branch?  @relation(fields: [branchId], references: [id])
+
+  @@index([branchId, seq])
+}
+
+model Branch {
+  id        String   @id @default(cuid())
+  name      String
+  baseSeq   Int
+  status    String   @default("open")
+  createdBy String
+  creator   User     @relation(fields: [createdBy], references: [id])
+  createdAt DateTime @default(now())
+  commits   Commit[]
+}

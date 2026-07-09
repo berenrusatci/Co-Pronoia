@@ -6,39 +6,48 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Requires Node 22+ (a user-local install lives at `~/.local/opt/node22/bin`; add it to PATH if `node` is missing).
 
-- `npm run dev` — runs both dev servers via concurrently: Fastify API on :3001, Vite on :5173 (proxies `/api` → :3001, so no CORS setup)
-- `npm run test` — vitest in `shared/` then `server/` (there are no web tests)
+- `npm run dev` — runs both dev servers via concurrently: Fastify API on :3001, Vite on :5173 (proxies `/api` incl. WebSocket → :3001). The server script runs `prisma db push` first, so schema changes apply automatically.
+- `npm run test` — vitest in `shared/` then `server/` (no web tests)
 - `npm run test -w server` — one workspace; add `-- -t "name"` for a single test
-- `npm run build` — typecheck all three workspaces (`tsc --noEmit`) + `vite build`. In prod, Fastify serves `web/dist` statically if it exists.
+- `npm run build` — `prisma generate` + typecheck all workspaces + `vite build`. In prod, Fastify serves `web/dist` if it exists.
 
-The SQLite DB lives at `server/data/treemapper.db` (gitignored). Delete it to reset; the server seeds a root node on first boot. Tests use `:memory:` via `buildApp(':memory:')` from `server/src/app.ts`.
+Database: SQLite via **Prisma 7** (driver adapter `@prisma/adapter-better-sqlite3`). Connection URL comes from `server/.env` (`DATABASE_URL`) read by `server/prisma.config.ts` — Prisma 7 does not read the URL from schema.prisma. Dev DB at `server/data/treemapper.db` (gitignored); delete it to reset — the server seeds a root node on first boot. No migration files: schema changes go through `prisma db push`.
+
+Tests get isolated DBs from `server/src/testDb.ts`: one `prisma db push` into a template file per suite, then a cheap file copy per test (`testDbFactory().fresh()`), consumed by `await buildApp(url)` from `server/src/app.ts`.
 
 ## Architecture
 
-TreeMapper is a single-project development-planning app with an **in-app commit system** (not real git): every mutation is recorded as a numbered commit and the graph can be viewed at / reverted to any commit.
+TreeMapper is a collaborative development-planning app with an **in-app commit system** (not real git): every mutation is a numbered commit with an author; concurrent conflicting edits land on branches the user resolves.
 
-npm-workspaces monorepo: `shared/` (types + op engine), `server/` (Fastify + better-sqlite3), `web/` (Vite + React + React Flow + zustand).
+npm-workspaces monorepo: `shared/` (types + op engine + WS message types), `server/` (Fastify + Prisma), `web/` (Vite + React + React Flow + zustand).
 
 ### Event sourcing is the core invariant
 
-The `commits` table (append-only JSON op arrays) is the **source of truth**; `nodes`/`edges` tables are a materialized cache of replaying it. `CommitService.rebuildCheck()` asserts they never diverge — tests use it as the correctness oracle. Never write to `nodes`/`edges` outside a commit.
+The `Commit` table (append-only JSON op arrays) is the **source of truth** for main; `Node`/`Edge` tables are a materialized cache of replaying main-branch commits. `CommitService.rebuildCheck()` asserts they never diverge — tests use it as the oracle. Never write `Node`/`Edge` outside a commit. Branch commits (`branchId != null`) do NOT touch the materialized tables; branch state is always computed by replay (`branchState()`).
 
-- `shared/src/ops.ts` — the op vocabulary (`add_node`, `update_node`, `delete_node`, `move_node`, `add_edge`, `delete_edge`), `applyOp`, `invertOp`. Every op carries before+after (or a full snapshot), which is what makes time-travel, revert, and diff display work. If you add an op type, its inverse must round-trip: `apply(invert(apply(g, op)))` ≡ identity (tested).
-- `server/src/commitService.ts` — expands client *intents* (`OpInput`) into full ops (fills `before` fields, computes delete cascades: whole subtree + incident edges, deepest first), validates against a trial in-memory replay, then applies to SQLite in one transaction. Revert = inverse ops as a *new* commit (409 `ConflictError` if it no longer applies); restore = `diffStates(current, stateAt(n))` as a new commit. History is never rewritten.
-- All mutations go through `POST /api/commit`; there are no per-entity write endpoints.
+- `shared/src/ops.ts` — op vocabulary (`add_node`…`delete_edge`), `applyOp`, `invertOp`. Ops carry before+after / full snapshots → time-travel, revert, diffs. New op types must satisfy `apply(invert(apply(g, op)))` ≡ identity (tested).
+- `server/src/commitService.ts` — expands intents into ops (fills `before`, computes delete cascades), validates via trial replay, applies in a `$transaction`. **A promise-chain mutex (`locked()`) serializes all mutating paths — it is load-bearing**: the service is async, and without it interleaved commits corrupt head numbering. Edge edits are `delete_edge`+`add_edge` with the same id in one commit — there is deliberately no `update_edge` op.
+- All mutations go through `POST /api/commit`; no per-entity write endpoints.
 
-### Graph model
+### Co-op, branching, conflict rules
 
-Hierarchy is **implicit via `parentId`** on nodes (drives the mind map); only free-form flow-diagram connections live in the `edges` table. Reparenting is a node update and is cycle-checked in both `applyOp` and intent expansion.
+Clients send `baseSeq` (the head they saw) with each commit. If head moved: re-expand against current state and compare target sets against intervening commits' ops (`opsConflict()` in commitService — node add/delete are wildcards, updates/moves conflict per-field, edges per-id). Disjoint → auto-merge onto main as a normal commit. Overlapping (or re-expansion throws) → a `Branch` row is created (`{username}/cakisma-{head}`) and the commit lands there, expanded against `stateAt(baseSeq)`. Merge = `diffStates(main, branchState)` as one main commit ("take branch wholesale"); discard just flips status — branch commits stay in the table, filtered out of main replay by `branchId: null`. `seq` is one global autoincrement shared by main and branches, so main numbering has gaps where branch commits exist — expected.
 
-### Three views, one store
+### Auth & WebSocket
 
-`web/src/store/graphStore.ts` (zustand) holds canonical state; each view derives its own React Flow props:
+Session cookie (`tm_session`) auth: scrypt hashes in `server/src/auth.ts`, routes in `authRoutes.ts`, a global preHandler hook 401s every `/api` route except `/api/auth/*` and `/api/health`. Commits record `authorId`; the seed commit's author is null (shown as "sistem").
 
-- **FlowView** uses persisted `x`/`y` (null → ephemeral fallback grid; first drag persists real coords via a `move_node` commit on drag-end).
-- **MindMapView** ignores `x`/`y` entirely — `web/src/layout/mindmapLayout.ts` (d3-hierarchy) computes positions on the fly and they are **never persisted**, so the two views' geometries can't corrupt each other. Nodes are not draggable here.
-- **TimelineView** reuses `CommitList` (also used by the history drawer) plus a 0..head scrubber.
+WS (`/api/ws`, broadcast-only — mutations stay on HTTP): server assigns a `clientId` on connect; clients echo it in commit POSTs; broadcasts carry the originator's `clientId` so the originator skips its own `commit` message (it already applied the HTTP response). Message types in `shared/src/wsMessages.ts`.
 
-Time-travel: `viewingSeq !== null` puts the app in read-only mode — views render from a separate `viewingState` slot (`useDisplayedGraph()` picks the right one), and `guard()` in the store blocks all mutations. `?view=flow|mindmap|timeline` deep-links a view.
+### Frontend: one store, three views + panels
+
+`web/src/store/graphStore.ts` holds canonical state and the WS connection; views derive React Flow props:
+
+- **FlowView** uses persisted `x`/`y`; custom edge component `web/src/components/CurvedEdge.tsx` renders kind styles (flow solid blue, loop orange, dependency dashed purple, relation dotted gray), self-loops (arc over the node), and parallel edges (perpendicular offset by index within the unordered node pair), bidirectional = arrowheads both ends.
+- **MindMapView** ignores `x`/`y` — layout computed by `web/src/layout/mindmapLayout.ts` (d3-hierarchy), never persisted. Hierarchy lives in `parentId` on nodes; only free-form connections are `Edge` rows.
+- **TimelineView** reuses `CommitList` + scrubber.
+- Side panels (`sidePanel` in store): history, connections (textual edge list with edit/delete), branches (view/merge/discard).
+
+Read-only mode is shared by time-travel (`viewingSeq`) and branch viewing (`viewingBranchId`): both load into `viewingState`, `useDisplayedGraph()` picks the right source, `guard()` blocks mutations. `?view=flow|mindmap|timeline` deep-links a view.
 
 UI language is Turkish; keep new user-facing strings in Turkish.

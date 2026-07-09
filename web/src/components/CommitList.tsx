@@ -17,7 +17,7 @@ function opLine(op: Op): { cls: string; text: string } {
   }
 }
 
-function CommitEntry({ seq, message, createdAt, opSummary }: { seq: number; message: string; createdAt: string; opSummary: string }) {
+function CommitEntry({ seq, message, createdAt, opSummary, author }: { seq: number; message: string; createdAt: string; opSummary: string; author: string | null }) {
   const [detail, setDetail] = useState<Commit | null>(null);
   const [open, setOpen] = useState(false);
   const viewAt = useGraphStore((s) => s.viewAt);
@@ -36,7 +36,8 @@ function CommitEntry({ seq, message, createdAt, opSummary }: { seq: number; mess
       <div className="commit-row" onClick={toggle}>
         <span className="commit-seq">#{seq}</span>
         <span className="commit-msg">{message}</span>
-        <span className="commit-time">{new Date(createdAt + 'Z').toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}</span>
+        <span className="commit-author">{author ?? 'sistem'}</span>
+        <span className="commit-time">{new Date(createdAt).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}</span>
       </div>
       <div className="commit-sub">
         <span className="commit-summary">{opSummary}</span>

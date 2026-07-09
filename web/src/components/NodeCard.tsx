@@ -11,7 +11,7 @@ const statusLabels: Record<NodeStatus, string> = { planned: 'planlandı', in_pro
 export function NodeCard({ data, selected }: NodeProps<FlowNode>) {
   const { plan, showChildButton } = data;
   const addNode = useGraphStore((s) => s.addNode);
-  const readOnly = useGraphStore((s) => s.viewingSeq !== null);
+  const readOnly = useGraphStore((s) => s.viewingSeq !== null || s.viewingBranchId !== null);
 
   return (
     <div className={`node-card type-${plan.nodeType} status-${plan.status}${selected ? ' selected' : ''}`}>
