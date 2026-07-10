@@ -15,7 +15,7 @@ Giriş yaptıktan sonra **pano** açılır: kanvaslarınızı listeler, yeni kan
 
 - **Roller**: kanvas sahibi (**sahip**) her şeyi yapar; **editör** (davetle katılan varsayılan) grafiği düzenler; **görüntüleyici** salt okunurdur. Üyeler panelinden sahip rol atar ve üye çıkarır; çıkarılan kullanıcının erişimi (ve WS bağlantısı) anında kesilir.
 - **Kimler aktif**: araç çubuğundaki baş harf çipleri ve Üyeler panelindeki yeşil noktalar kanvasa o an bağlı herkesi gösterir.
-- **Bölgeler**: sahip, akış görünümünde ad verip dikdörtgen bölgeler tanımlar (sürükleyip boyutlandırır) ve her bölgeye üye atar. Bölgenin **içindeki** düğümleri yalnızca o bölgeye atanan üyeler (ve sahip) değiştirebilir — düğüm ekleme/taşıma/silme ve o düğümlere kenar bağlama dahil; sunucu ihlalde Türkçe hata döndürür. Bölge dışı düğümler her editöre açıktır.
+- **Bölgeler**: sahip, akış görünümünde ad verip dikdörtgen bölgeler tanımlar (sürükleyip boyutlandırır) ve her bölgeye üye atar. Bölgenin **içindeki** düğümleri yalnızca o bölgeye atanan üyeler (ve sahip) değiştirebilir — düğüm ekleme/taşıma/silme, bir ucu bölgede olan **kenarların** eklenmesi/silinmesi/düzenlenmesi (silme kaskadları dahil) ve bölgeye dokunan commit'lerin geri alınması/geri yüklenmesi/dal birleştirmesi dahil; ihlal daha düzenleme anında ve sunucuda Türkçe hatayla engellenir. Bölge dışı düğümler her editöre açıktır.
 
 ## Push (değişiklikleri biriktirme)
 

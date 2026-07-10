@@ -1,12 +1,11 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { PrismaClient } from '@prisma/client';
 import type { OpInput, ServerMessage } from '@treemapper/shared';
-import { ConflictError, ValidationError } from './commitService.js';
+import { ConflictError, RegionError, ValidationError, type Actor } from './commitService.js';
 import {
   createInvite, createRegion, deleteCanvas, deleteRegion, listMembers, listRegions,
   removeMember, setMemberRole, setRegionMembers, updateRegion, type ServiceFor,
 } from './canvasService.js';
-import { regionViolation } from './regionGuard.js';
 
 type Broadcast = (canvasId: string, msg: ServerMessage) => void;
 type Kick = (canvasId: string, reason: 'deleted' | 'removed', userId?: string) => void;
@@ -47,6 +46,9 @@ export function registerRoutes(
     return true;
   };
 
+  /** The CommitService enforces the region rule per actor (owner bypasses). */
+  const actorOf = (req: FastifyRequest): Actor => ({ userId: req.user!.id, role: req.memberRole! });
+
   app.get('/state', async (req) => scoped(req).service.getState());
 
   app.get<{ Params: CanvasParams; Querystring: { limit?: string; before?: string } }>('/commits', async (req) => {
@@ -74,17 +76,12 @@ export function registerRoutes(
     async (req, reply) => {
       const { canvasId, service } = scoped(req);
       if (!requireEditor(req, reply)) return;
-      // Region rule: non-owners may only touch nodes inside regions they belong to.
-      if (req.memberRole !== 'owner') {
-        const regions = await listRegions(prisma, canvasId);
-        const violation = regionViolation(await service.getState(), regions, req.user!.id, req.body.ops ?? []);
-        if (violation) return reply.code(403).send({ error: violation });
-      }
       try {
         const outcome = await service.commit(req.body.ops ?? [], {
           message: req.body.message || undefined,
           baseSeq: req.body.baseSeq,
           authorId: req.user?.id ?? null,
+          actor: actorOf(req),
         });
         const clientId = req.body.clientId ?? null;
         if (outcome.result === 'committed') {
@@ -105,7 +102,7 @@ export function registerRoutes(
       const { canvasId, service } = scoped(req);
       if (!requireEditor(req, reply)) return;
       try {
-        const result = await service.revert(Number(req.params.seq), req.user?.id ?? null);
+        const result = await service.revert(Number(req.params.seq), req.user?.id ?? null, actorOf(req));
         broadcast(canvasId, { type: 'commit', ...result, clientId: req.body?.clientId ?? null });
         return result;
       } catch (err) {
@@ -120,7 +117,7 @@ export function registerRoutes(
       const { canvasId, service } = scoped(req);
       if (!requireEditor(req, reply)) return;
       try {
-        const result = await service.restore(Number(req.params.seq), req.user?.id ?? null);
+        const result = await service.restore(Number(req.params.seq), req.user?.id ?? null, actorOf(req));
         broadcast(canvasId, { type: 'commit', ...result, clientId: req.body?.clientId ?? null });
         return result;
       } catch (err) {
@@ -147,7 +144,7 @@ export function registerRoutes(
     const { canvasId, service } = scoped(req);
     if (!requireEditor(req, reply)) return;
     try {
-      const result = await service.mergeBranch(req.params.id, req.user?.id ?? null);
+      const result = await service.mergeBranch(req.params.id, req.user?.id ?? null, actorOf(req));
       broadcast(canvasId, { type: 'branch_resolved', branchId: req.params.id, status: 'merged', ...result });
       return result;
     } catch (err) {
@@ -220,15 +217,26 @@ export function registerRoutes(
   }));
 
   type RegionBody = { name?: string; x?: number; y?: number; width?: number; height?: number; color?: string };
-  const badRect = (b: RegionBody) =>
-    [b.x, b.y, b.width, b.height].some((v) => typeof v !== 'number' || !Number.isFinite(v)) ||
-    b.width! <= 0 || b.height! <= 0;
+  /** Present rect fields must be finite numbers (width/height positive); `required` demands all four. */
+  const rectError = (b: RegionBody | undefined, required: boolean): string | null => {
+    for (const key of ['x', 'y', 'width', 'height'] as const) {
+      const v = b?.[key];
+      if (v === undefined) {
+        if (required) return 'geçersiz bölge alanı';
+        continue;
+      }
+      if (typeof v !== 'number' || !Number.isFinite(v) || ((key === 'width' || key === 'height') && v <= 0))
+        return 'geçersiz bölge alanı';
+    }
+    return null;
+  };
 
   app.post<{ Params: CanvasParams; Body: RegionBody }>('/regions', async (req, reply) => {
     if (!requireOwner(req, reply)) return;
     const name = (req.body?.name ?? '').trim();
     if (!name) return reply.code(400).send({ error: 'bölge adı gerekli' });
-    if (badRect(req.body)) return reply.code(400).send({ error: 'geçersiz bölge alanı' });
+    const rectErr = rectError(req.body, true);
+    if (rectErr) return reply.code(400).send({ error: rectErr });
     const { canvasId } = scoped(req);
     const region = await createRegion(prisma, canvasId, {
       name, x: req.body.x!, y: req.body.y!, width: req.body.width!, height: req.body.height!,
@@ -241,14 +249,11 @@ export function registerRoutes(
   app.patch<{ Params: CanvasParams & { id: string }; Body: RegionBody }>('/regions/:id', async (req, reply) => {
     if (!requireOwner(req, reply)) return;
     const { canvasId } = scoped(req);
+    const rectErr = rectError(req.body, false);
+    if (rectErr) return reply.code(400).send({ error: rectErr });
     const data: RegionBody = {};
     for (const key of ['x', 'y', 'width', 'height'] as const) {
-      const v = req.body?.[key];
-      if (v !== undefined) {
-        if (typeof v !== 'number' || !Number.isFinite(v) || ((key === 'width' || key === 'height') && v <= 0))
-          return reply.code(400).send({ error: 'geçersiz bölge alanı' });
-        data[key] = v;
-      }
+      if (req.body?.[key] !== undefined) data[key] = req.body[key];
     }
     if (req.body?.name !== undefined) {
       const name = req.body.name.trim();
@@ -285,6 +290,7 @@ export function registerRoutes(
 }
 
 function sendError(reply: FastifyReply, err: unknown) {
+  if (err instanceof RegionError) return reply.code(403).send({ error: err.message });
   if (err instanceof ConflictError) return reply.code(409).send({ error: err.message });
   if (err instanceof ValidationError) return reply.code(400).send({ error: err.message });
   throw err;

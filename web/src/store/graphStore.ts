@@ -1,12 +1,12 @@
 import { create } from 'zustand';
 import {
-  summarizeOps,
+  expandAll, regionViolation, summarizeOps,
   type BranchInfo, type Commit, type CommitSummary, type EdgeDirection, type EdgeKind,
   type GraphState, type MemberInfo, type NodeFields, type NodeType, type OpInput,
   type PlanEdge, type PlanNode, type RegionInfo, type ServerMessage,
 } from '@treemapper/shared';
 import { api, ApiError, type CommitOutcome } from '../api/client';
-import { applyIntents, genId, pushIntent } from './applyIntents';
+import { applyIntents, genId, pushIntent, toGraph } from './applyIntents';
 import { useCanvasStore } from './canvasStore';
 import { useAuthStore } from './authStore';
 
@@ -110,13 +110,18 @@ export const useGraphStore = create<GraphStore>((set, get) => {
     return { pending, nodes: preview.nodes, edges: preview.edges };
   };
 
+  /** New canonical state from the server (HTTP response or WS broadcast) + preview recompute. */
+  const withServerState = (s: { pending: OpInput[]; commits: CommitSummary[] }, state: GraphState, commit?: Commit) => ({
+    serverNodes: state.nodes,
+    serverEdges: state.edges,
+    ...withPreview({ serverNodes: state.nodes, serverEdges: state.edges }, s.pending),
+    headSeq: state.headSeq,
+    commits: commit && !s.commits.some((c) => c.seq === commit.seq) ? [toSummary(commit), ...s.commits] : s.commits,
+  });
+
   const applyState = (state: GraphState, commit?: Commit) => {
     set((s) => ({
-      serverNodes: state.nodes,
-      serverEdges: state.edges,
-      ...withPreview({ serverNodes: state.nodes, serverEdges: state.edges }, s.pending),
-      headSeq: state.headSeq,
-      commits: commit && !s.commits.some((c) => c.seq === commit.seq) ? [toSummary(commit), ...s.commits] : s.commits,
+      ...withServerState(s, state, commit),
       viewingSeq: null,
       viewingBranchId: null,
       viewingState: null,
@@ -143,6 +148,22 @@ export const useGraphStore = create<GraphStore>((set, get) => {
     if (isViewer()) {
       set({ error: 'Görüntüleyici rolündesiniz — değişiklik yapamazsınız.' });
       return;
+    }
+    // Region feedback at staging time, with the same shared check the server enforces
+    // on push. Advisory only — the server stays authoritative.
+    const { nodes, edges, regions } = get();
+    const me = useAuthStore.getState().user;
+    if (regions.length > 0 && me && useCanvasStore.getState().active?.role !== 'owner') {
+      try {
+        const graph = toGraph(nodes, edges);
+        const violation = regionViolation(graph, regions, me.id, expandAll(graph, intents, genId));
+        if (violation) {
+          set({ error: violation });
+          return;
+        }
+      } catch {
+        // expansion failed against the preview — stage anyway; push surfaces the real error
+      }
     }
     set((s) => {
       let pending = s.pending;
@@ -238,13 +259,7 @@ export const useGraphStore = create<GraphStore>((set, get) => {
             case 'commit': {
               if (msg.clientId !== null && msg.clientId === get().clientId) break; // own commit, already applied
               if (msg.state.headSeq <= get().headSeq) break;
-              set((s) => ({
-                serverNodes: msg.state.nodes,
-                serverEdges: msg.state.edges,
-                ...withPreview({ serverNodes: msg.state.nodes, serverEdges: msg.state.edges }, s.pending),
-                headSeq: msg.state.headSeq,
-                commits: s.commits.some((c) => c.seq === msg.commit.seq) ? s.commits : [toSummary(msg.commit), ...s.commits],
-              }));
+              set((s) => withServerState(s, msg.state, msg.commit));
               break;
             }
             case 'branch_created':
@@ -259,13 +274,7 @@ export const useGraphStore = create<GraphStore>((set, get) => {
             case 'branch_resolved':
               set((s) => ({ branches: s.branches.filter((b) => b.id !== msg.branchId) }));
               if (msg.commit && msg.state && msg.state.headSeq > get().headSeq) {
-                set((s) => ({
-                  serverNodes: msg.state!.nodes,
-                  serverEdges: msg.state!.edges,
-                  ...withPreview({ serverNodes: msg.state!.nodes, serverEdges: msg.state!.edges }, s.pending),
-                  headSeq: msg.state!.headSeq,
-                  commits: s.commits.some((c) => c.seq === msg.commit!.seq) ? s.commits : [toSummary(msg.commit!), ...s.commits],
-                }));
+                set((s) => withServerState(s, msg.state!, msg.commit));
               }
               break;
             case 'presence':

@@ -529,6 +529,129 @@ describe('roles, regions & owner tools', () => {
     expect(res.statusCode).toBe(200);
   });
 
+  /** canvasWithTwo + nodes `in` (100,100) / `out` (900,900), edge e1: in→out, region Backend (0,0,300,300) without u2. */
+  async function regionFixture() {
+    const two = await canvasWithTwo();
+    await two.app.inject({
+      method: 'POST', url: `${two.base}/commit`, cookies: two.c1,
+      payload: { ops: [
+        { op: 'add_node', id: 'in', title: 'İçeride', x: 100, y: 100 },
+        { op: 'add_node', id: 'out', title: 'Dışarıda', x: 900, y: 900 },
+        { op: 'add_edge', id: 'e1', sourceId: 'in', targetId: 'out' },
+      ] },
+    });
+    const res = await two.app.inject({ method: 'POST', url: `${two.base}/regions`, cookies: two.c1, payload: { name: 'Backend', x: 0, y: 0, width: 300, height: 300 } });
+    return { ...two, regionId: res.json().region.id as string };
+  }
+
+  it('regions cover edges: any op touching an in-region endpoint is blocked for non-members', async () => {
+    const { app, c1, c2, u2Id, base, regionId } = await regionFixture();
+    const commit = (cookies: Record<string, string>, ops: unknown[]) =>
+      app.inject({ method: 'POST', url: `${base}/commit`, cookies, payload: { ops } });
+
+    // u2: connecting to, disconnecting from, and re-styling an in-region endpoint all blocked
+    let res = await commit(c2, [{ op: 'add_edge', sourceId: 'out', targetId: 'in' }]);
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error).toMatch(/Backend/);
+    res = await commit(c2, [{ op: 'delete_edge', id: 'e1' }]);
+    expect(res.statusCode).toBe(403);
+    // edge edit = delete + add with the same id in one commit
+    res = await commit(c2, [
+      { op: 'delete_edge', id: 'e1' },
+      { op: 'add_edge', id: 'e1', sourceId: 'in', targetId: 'out', kind: 'dependency' },
+    ]);
+    expect(res.statusCode).toBe(403);
+    // moving an in-region node OUT of the region is blocked too
+    res = await commit(c2, [{ op: 'move_node', id: 'in', x: 900, y: 500 }]);
+    expect(res.statusCode).toBe(403);
+
+    // owner edits the crossing edge freely
+    res = await commit(c1, [
+      { op: 'delete_edge', id: 'e1' },
+      { op: 'add_edge', id: 'e1', sourceId: 'in', targetId: 'out', kind: 'loop' },
+    ]);
+    expect(res.statusCode).toBe(200);
+
+    // once u2 joins the region, the same ops pass
+    await app.inject({ method: 'PUT', url: `${base}/regions/${regionId}/members`, cookies: c1, payload: { userIds: [u2Id] } });
+    res = await commit(c2, [{ op: 'delete_edge', id: 'e1' }]);
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('deleting an outside node whose cascade removes an in-region edge is blocked (gap 1)', async () => {
+    const { app, c1, c2, base, serviceFor, canvasId } = await regionFixture();
+    // 'out' is outside the region, but deleting it cascades delete_edge e1 whose other end is inside
+    let res = await app.inject({ method: 'POST', url: `${base}/commit`, cookies: c2, payload: { ops: [{ op: 'delete_node', id: 'out' }] } });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error).toMatch(/Backend/);
+    // subtree variant: outside parent with an in-region child
+    await app.inject({
+      method: 'POST', url: `${base}/commit`, cookies: c1,
+      payload: { ops: [
+        { op: 'add_node', id: 'p', title: 'Ebeveyn', x: 800, y: 100 },
+        { op: 'add_node', id: 'ch', parentId: 'p', title: 'Çocuk', x: 50, y: 50 },
+      ] },
+    });
+    res = await app.inject({ method: 'POST', url: `${base}/commit`, cookies: c2, payload: { ops: [{ op: 'delete_node', id: 'p' }] } });
+    expect(res.statusCode).toBe(403);
+    // owner deletes both without restriction and the cache stays consistent
+    res = await app.inject({ method: 'POST', url: `${base}/commit`, cookies: c1, payload: { ops: [{ op: 'delete_node', id: 'out' }, { op: 'delete_node', id: 'p' }] } });
+    expect(res.statusCode).toBe(200);
+    expect(await serviceFor(canvasId).rebuildCheck()).toBe(true);
+  });
+
+  it('revert/restore respect regions (gap 2)', async () => {
+    const { app, c1, c2, base } = await regionFixture();
+    // #3 touches the in-region node, #4 only the outside one
+    await app.inject({ method: 'POST', url: `${base}/commit`, cookies: c1, payload: { ops: [{ op: 'update_node', id: 'in', fields: { title: 'Bölgede' } }] } });
+    await app.inject({ method: 'POST', url: `${base}/commit`, cookies: c1, payload: { ops: [{ op: 'update_node', id: 'out', fields: { title: 'Serbest' } }] } });
+
+    let res = await app.inject({ method: 'POST', url: `${base}/commits/3/revert`, cookies: c2 });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error).toMatch(/Backend/);
+    res = await app.inject({ method: 'POST', url: `${base}/commits/4/revert`, cookies: c2 });
+    expect(res.statusCode).toBe(200); // outside-only revert is fine
+    // restoring to seq 2 would rewrite the in-region title → blocked
+    res = await app.inject({ method: 'POST', url: `${base}/commits/2/restore`, cookies: c2 });
+    expect(res.statusCode).toBe(403);
+    // owner does both
+    res = await app.inject({ method: 'POST', url: `${base}/commits/3/revert`, cookies: c1 });
+    expect(res.statusCode).toBe(200);
+    res = await app.inject({ method: 'POST', url: `${base}/commits/3/restore`, cookies: c1 });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('merging a region-touching branch respects regions; stale region-touching commits do not even branch (gap 2)', async () => {
+    const { app, c1, c2, base } = await canvasWithTwo();
+    await app.inject({
+      method: 'POST', url: `${base}/commit`, cookies: c1,
+      payload: { ops: [
+        { op: 'add_node', id: 'in', title: 'İçeride', x: 100, y: 100 },
+        { op: 'add_node', id: 'out', title: 'Dışarıda', x: 900, y: 900 },
+      ] },
+    }); // #2
+    // conflict branch on `in` created BEFORE any region exists (legitimate at the time)
+    await app.inject({ method: 'POST', url: `${base}/commit`, cookies: c1, payload: { ops: [{ op: 'update_node', id: 'in', fields: { title: 'A' } }], baseSeq: 2 } });
+    let res = await app.inject({ method: 'POST', url: `${base}/commit`, cookies: c2, payload: { ops: [{ op: 'update_node', id: 'in', fields: { title: 'B' } }], baseSeq: 2 } });
+    expect(res.json().result).toBe('branched');
+    const branchId = res.json().branch.id as string;
+
+    // owner now draws a region over `in` without u2 → u2 can no longer merge
+    await app.inject({ method: 'POST', url: `${base}/regions`, cookies: c1, payload: { name: 'Backend', x: 0, y: 0, width: 300, height: 300 } });
+    res = await app.inject({ method: 'POST', url: `${base}/branches/${branchId}/merge`, cookies: c2 });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error).toMatch(/Backend/);
+    res = await app.inject({ method: 'POST', url: `${base}/branches/${branchId}/merge`, cookies: c1 });
+    expect(res.statusCode).toBe(200);
+
+    // u2's stale region-touching commit is rejected outright — no branch row appears either
+    const before = (await app.inject({ method: 'GET', url: `${base}/branches`, cookies: c2 })).json().branches.length;
+    res = await app.inject({ method: 'POST', url: `${base}/commit`, cookies: c2, payload: { ops: [{ op: 'update_node', id: 'in', fields: { title: 'C' } }], baseSeq: 2 } });
+    expect(res.statusCode).toBe(403);
+    const after = (await app.inject({ method: 'GET', url: `${base}/branches`, cookies: c2 })).json().branches.length;
+    expect(after).toBe(before);
+  });
+
   it('password change verifies the current password and rotates sessions', async () => {
     const { app } = await fresh();
     const reg = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'ayar', password: 'eski1' } });

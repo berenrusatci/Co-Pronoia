@@ -1,72 +1,33 @@
-import type { OpInput, PlanEdge, PlanNode } from '@treemapper/shared';
+import { applyOp, expand, type Graph, type OpInput, type PlanEdge, type PlanNode } from '@treemapper/shared';
 
 /** Client-side id for staged entities; the server keeps ids the client sends. */
 export const genId = (): string => 'c' + Math.random().toString(36).slice(2, 11);
 
+export function toGraph(nodes: PlanNode[], edges: PlanEdge[]): Graph {
+  return { nodes: new Map(nodes.map((n) => [n.id, n])), edges: new Map(edges.map((e) => [e.id, e])) };
+}
+
 /**
- * Local preview of staged intents on top of the server state, mirroring the server's
- * expansion semantics (delete cascades subtree + incident edges). `createdCommit: 0`
- * marks entities that are not pushed yet.
+ * Local preview of staged intents on top of the server state, using the same shared
+ * expansion the server commits with. Seq 0 marks entities that are not pushed yet
+ * ("yeni" badge). Lenient on purpose: a WS commit can invalidate a staged intent
+ * (e.g. someone deleted the node it edits) — such intents are skipped in the preview
+ * and the server re-validates everything on push.
  */
 export function applyIntents(
   nodes: PlanNode[],
   edges: PlanEdge[],
   intents: OpInput[],
 ): { nodes: PlanNode[]; edges: PlanEdge[] } {
-  const nmap = new Map(nodes.map((n) => [n.id, { ...n }]));
-  const emap = new Map(edges.map((e) => [e.id, { ...e }]));
+  const graph = toGraph(nodes, edges);
   for (const it of intents) {
-    switch (it.op) {
-      case 'add_node':
-        if (!it.id) break;
-        nmap.set(it.id, {
-          id: it.id, parentId: it.parentId ?? null, title: it.title,
-          description: it.description ?? '', nodeType: it.nodeType ?? 'task', status: it.status ?? 'planned',
-          x: it.x ?? null, y: it.y ?? null, createdCommit: 0, updatedCommit: 0,
-        });
-        break;
-      case 'update_node': {
-        const n = nmap.get(it.id);
-        if (n) Object.assign(n, it.fields);
-        break;
-      }
-      case 'move_node': {
-        const n = nmap.get(it.id);
-        if (n) {
-          n.x = it.x;
-          n.y = it.y;
-        }
-        break;
-      }
-      case 'delete_node': {
-        const doomed = new Set([it.id]);
-        let grew = true;
-        while (grew) {
-          grew = false;
-          for (const n of nmap.values()) {
-            if (n.parentId !== null && doomed.has(n.parentId) && !doomed.has(n.id)) {
-              doomed.add(n.id);
-              grew = true;
-            }
-          }
-        }
-        for (const id of doomed) nmap.delete(id);
-        for (const e of [...emap.values()]) if (doomed.has(e.sourceId) || doomed.has(e.targetId)) emap.delete(e.id);
-        break;
-      }
-      case 'add_edge':
-        if (!it.id) break;
-        emap.set(it.id, {
-          id: it.id, sourceId: it.sourceId, targetId: it.targetId,
-          kind: it.kind ?? 'flow', direction: it.direction ?? 'directed', label: it.label ?? '', createdCommit: 0,
-        });
-        break;
-      case 'delete_edge':
-        emap.delete(it.id);
-        break;
+    try {
+      for (const op of expand(graph, it, [], genId)) applyOp(graph, op, 0);
+    } catch {
+      // stale intent — skip
     }
   }
-  return { nodes: [...nmap.values()], edges: [...emap.values()] };
+  return { nodes: [...graph.nodes.values()], edges: [...graph.edges.values()] };
 }
 
 /** Appends an intent, collapsing repeat moves/updates of the same node into one entry. */

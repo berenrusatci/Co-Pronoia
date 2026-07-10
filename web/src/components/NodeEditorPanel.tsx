@@ -85,7 +85,7 @@ export function NodeEditorPanel() {
         </select>
       </label>
       <div className="editor-meta">
-        Oluşturuldu: commit #{node.createdCommit} · Son değişiklik: #{node.updatedCommit}
+        Oluşturuldu: {node.createdCommit === 0 ? 'yeni' : `commit #${node.createdCommit}`} · Son değişiklik: {node.updatedCommit === 0 ? 'yeni' : `#${node.updatedCommit}`}
       </div>
       {!readOnly && (
         <button

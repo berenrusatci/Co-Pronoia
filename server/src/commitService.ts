@@ -1,13 +1,22 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
-import { nanoid } from 'nanoid';
 import {
-  applyOp, autoMessage, emptyGraph, invertOps, OpError, summarizeOps, wouldCreateCycle,
-  type Commit, type CommitSummary, type Graph, type GraphState, type Op, type OpInput,
-  type PlanEdge, type PlanNode,
+  applyOp, autoMessage, depthOf, emptyGraph, expandAll, invertOps, OpError, regionViolation,
+  summarizeOps, ValidationError,
+  type CanvasRole, type Commit, type CommitSummary, type Graph, type GraphState, type Op,
+  type OpInput, type PlanEdge, type PlanNode,
 } from '@treemapper/shared';
+import { listRegions } from './canvasService.js';
 
 export class ConflictError extends Error {}
-export class ValidationError extends Error {}
+/** A commit that touches a region the actor is not a member of (HTTP 403). */
+export class RegionError extends Error {}
+export { ValidationError };
+
+/** Who is performing a mutation; omitted for system paths (seed) and engine tests → no region check. */
+export interface Actor {
+  userId: string;
+  role: CanvasRole;
+}
 
 export interface BranchSummary {
   id: string;
@@ -22,6 +31,7 @@ export interface CommitOptions {
   message?: string;
   authorId?: string | null;
   baseSeq?: number;
+  actor?: Actor;
 }
 
 export type CommitOutcome =
@@ -156,7 +166,7 @@ export class CommitService {
   }
 
   /** Merge = take the branch's state wholesale as one new main commit (diff-based). */
-  mergeBranch(branchId: string, authorId?: string | null): Promise<{ commit: Commit; state: GraphState }> {
+  mergeBranch(branchId: string, authorId?: string | null, actor?: Actor): Promise<{ commit: Commit; state: GraphState }> {
     return this.locked(async () => {
       const branch = await this.findBranch(branchId);
       if (branch.status !== 'open') throw new ValidationError(`branch '${branch.name}' is not open`);
@@ -169,7 +179,7 @@ export class CommitService {
         await this.prisma.branch.update({ where: { id: branchId }, data: { status: 'merged' } });
         return { commit: (await this.getCommit(current.headSeq))!, state: current };
       }
-      commit = (await this.applyCommit(ops, `Merge branch '${branch.name}'`, authorId ?? null)).commit;
+      commit = (await this.applyCommit(ops, `Merge branch '${branch.name}'`, authorId ?? null, actor)).commit;
       await this.prisma.branch.update({ where: { id: branchId }, data: { status: 'merged' } });
       return { commit, state: await this.getState() };
     });
@@ -191,13 +201,13 @@ export class CommitService {
     return this.locked(async () => {
       if (inputs.length === 0) throw new ValidationError('commit requires at least one op');
       const head = await this.headSeq();
-      const { baseSeq, authorId = null, message } = opts;
+      const { baseSeq, authorId = null, message, actor } = opts;
 
       if (baseSeq === undefined || baseSeq === head) {
         const graph = await this.loadGraph();
-        const ops = this.expandAll(graph, inputs);
+        const ops = expandAll(graph, inputs);
         const titleOf = (id: string) => graph.nodes.get(id)?.title;
-        const { commit, state } = await this.applyCommit(ops, message ?? autoMessage(ops, titleOf), authorId);
+        const { commit, state } = await this.applyCommit(ops, message ?? autoMessage(ops, titleOf), authorId, actor);
         return { result: 'committed', commit, state };
       }
 
@@ -207,7 +217,7 @@ export class CommitService {
       const graph = await this.loadGraph();
       let ops: Op[] | null = null;
       try {
-        ops = this.expandAll(graph, inputs);
+        ops = expandAll(graph, inputs);
       } catch {
         ops = null; // does not even apply to current state → conflict
       }
@@ -218,14 +228,16 @@ export class CommitService {
         const interveningOps = intervening.flatMap((c) => JSON.parse(c.ops) as Op[]);
         if (!opsConflict(ops, interveningOps)) {
           const titleOf = (id: string) => graph.nodes.get(id)?.title;
-          const { commit, state } = await this.applyCommit(ops, message ?? autoMessage(ops, titleOf), authorId);
+          const { commit, state } = await this.applyCommit(ops, message ?? autoMessage(ops, titleOf), authorId, actor);
           return { result: 'committed', commit, state };
         }
       }
 
       // Conflict → park the change on a new branch, expanded against the state the client saw.
       const baseGraph = await this.replayGraph(baseSeq);
-      const branchOps = this.expandAll(baseGraph, inputs);
+      const branchOps = expandAll(baseGraph, inputs);
+      // First line of defense on historical positions; merging re-checks against current state.
+      await this.assertRegions(baseGraph, branchOps, actor);
       const titleOf = (id: string) => baseGraph.nodes.get(id)?.title;
       const username = authorId
         ? (await this.prisma.user.findUnique({ where: { id: authorId } }))?.username ?? 'anon'
@@ -250,13 +262,13 @@ export class CommitService {
     });
   }
 
-  revert(seq: number, authorId?: string | null): Promise<{ commit: Commit; state: GraphState }> {
+  revert(seq: number, authorId?: string | null, actor?: Actor): Promise<{ commit: Commit; state: GraphState }> {
     return this.locked(async () => {
       const target = await this.getCommit(seq);
       if (!target || target.branchId) throw new ValidationError(`commit #${seq} does not exist on main`);
       const ops = invertOps(target.ops);
       try {
-        return await this.applyCommit(ops, `Revert #${seq}: ${target.message}`, authorId ?? null);
+        return await this.applyCommit(ops, `Revert #${seq}: ${target.message}`, authorId ?? null, actor);
       } catch (err) {
         if (err instanceof OpError)
           throw new ConflictError(`Cannot revert #${seq} cleanly: ${err.message}. Use restore instead.`);
@@ -265,14 +277,14 @@ export class CommitService {
     });
   }
 
-  restore(seq: number, authorId?: string | null): Promise<{ commit: Commit; state: GraphState }> {
+  restore(seq: number, authorId?: string | null, actor?: Actor): Promise<{ commit: Commit; state: GraphState }> {
     return this.locked(async () => {
       const head = await this.headSeq();
       if (seq < 0 || seq > head) throw new ValidationError(`commit #${seq} does not exist`);
       const target = await this.stateAt(seq);
       const ops = diffStates(await this.getState(), target);
       if (ops.length === 0) throw new ValidationError('already at that state');
-      return this.applyCommit(ops, `Restore to #${seq}`, authorId ?? null);
+      return this.applyCommit(ops, `Restore to #${seq}`, authorId ?? null, actor);
     });
   }
 
@@ -306,15 +318,22 @@ export class CommitService {
     return created.id;
   }
 
-  private expandAll(graph: Graph, inputs: OpInput[]): Op[] {
-    const ops: Op[] = [];
-    for (const input of inputs) ops.push(...this.expand(graph, input, ops));
-    return ops;
+  /**
+   * Region rule (non-owners only): expanded ops may not touch nodes — or edges with an
+   * endpoint — inside a region the actor is not a member of. Lives here, not in the routes,
+   * so every write path (commit, auto-merge, revert, restore, merge) enforces it.
+   */
+  private async assertRegions(graph: Graph, ops: Op[], actor?: Actor): Promise<void> {
+    if (!actor || actor.role === 'owner') return;
+    const regions = await listRegions(this.prisma, this.canvasId);
+    const violation = regionViolation(graph, regions, actor.userId, ops);
+    if (violation) throw new RegionError(violation);
   }
 
-  private async applyCommit(ops: Op[], message: string, authorId: string | null): Promise<{ commit: Commit; state: GraphState }> {
+  private async applyCommit(ops: Op[], message: string, authorId: string | null, actor?: Actor): Promise<{ commit: Commit; state: GraphState }> {
     const seq = await this.nextSeq();
     const trial = await this.loadGraph();
+    await this.assertRegions(trial, ops, actor);
     for (const op of ops) applyOp(trial, op, seq); // throws OpError on any invalid op
 
     await this.prisma.$transaction(async (tx) => {
@@ -355,79 +374,6 @@ export class CommitService {
       case 'delete_edge':
         await tx.edge.delete({ where: { canvasId_id: { canvasId: this.canvasId, id: op.edge.id } } });
         break;
-    }
-  }
-
-  private expand(graph: Graph, input: OpInput, pending: Op[]): Op[] {
-    const scratch: Graph = { nodes: new Map(graph.nodes), edges: new Map(graph.edges) };
-    for (const op of pending) applyOp(scratch, op, 0);
-
-    switch (input.op) {
-      case 'add_node': {
-        if (input.parentId != null && !scratch.nodes.has(input.parentId))
-          throw new ValidationError(`parent ${input.parentId} does not exist`);
-        const node: PlanNode = {
-          id: input.id ?? nanoid(10),
-          parentId: input.parentId ?? null,
-          title: input.title,
-          description: input.description ?? '',
-          nodeType: input.nodeType ?? 'task',
-          status: input.status ?? 'planned',
-          x: input.x ?? null,
-          y: input.y ?? null,
-          createdCommit: 0,
-          updatedCommit: 0,
-        };
-        return [{ op: 'add_node', node }];
-      }
-      case 'update_node': {
-        const node = scratch.nodes.get(input.id);
-        if (!node) throw new ValidationError(`node ${input.id} does not exist`);
-        const before: Record<string, unknown> = {};
-        const after: Record<string, unknown> = {};
-        for (const [key, value] of Object.entries(input.fields)) {
-          const cur = (node as unknown as Record<string, unknown>)[key];
-          if (cur !== value) { before[key] = cur; after[key] = value; }
-        }
-        if (Object.keys(after).length === 0) return [];
-        if ('parentId' in after && after.parentId != null && wouldCreateCycle(scratch, input.id, after.parentId as string))
-          throw new ValidationError('reparenting would create a cycle');
-        return [{ op: 'update_node', id: input.id, before, after }];
-      }
-      case 'delete_node': {
-        const node = scratch.nodes.get(input.id);
-        if (!node) throw new ValidationError(`node ${input.id} does not exist`);
-        const subtree = collectSubtree(scratch, input.id);
-        const ops: Op[] = [];
-        for (const edge of scratch.edges.values())
-          if (subtree.has(edge.sourceId) || subtree.has(edge.targetId))
-            ops.push({ op: 'delete_edge', edge });
-        const ordered = [...subtree].sort((a, b) => depthOf(scratch, b) - depthOf(scratch, a));
-        for (const id of ordered) ops.push({ op: 'delete_node', node: scratch.nodes.get(id)! });
-        return ops;
-      }
-      case 'move_node': {
-        const node = scratch.nodes.get(input.id);
-        if (!node) throw new ValidationError(`node ${input.id} does not exist`);
-        if (node.x === input.x && node.y === input.y) return [];
-        return [{ op: 'move_node', id: input.id, before: { x: node.x, y: node.y }, after: { x: input.x, y: input.y } }];
-      }
-      case 'add_edge': {
-        if (!scratch.nodes.has(input.sourceId)) throw new ValidationError(`source ${input.sourceId} does not exist`);
-        if (!scratch.nodes.has(input.targetId)) throw new ValidationError(`target ${input.targetId} does not exist`);
-        const edge: PlanEdge = {
-          id: input.id ?? nanoid(10),
-          sourceId: input.sourceId, targetId: input.targetId,
-          kind: input.kind ?? 'flow', direction: input.direction ?? 'directed',
-          label: input.label ?? '', createdCommit: 0,
-        };
-        return [{ op: 'add_edge', edge }];
-      }
-      case 'delete_edge': {
-        const edge = scratch.edges.get(input.id);
-        if (!edge) throw new ValidationError(`edge ${input.id} does not exist`);
-        return [{ op: 'delete_edge', edge }];
-      }
     }
   }
 
@@ -503,28 +449,6 @@ export function opsConflict(a: Op[], b: Op[]): boolean {
   return false;
 }
 
-function collectSubtree(graph: Graph, rootId: string): Set<string> {
-  const result = new Set<string>([rootId]);
-  let grew = true;
-  while (grew) {
-    grew = false;
-    for (const node of graph.nodes.values()) {
-      if (node.parentId !== null && result.has(node.parentId) && !result.has(node.id)) {
-        result.add(node.id);
-        grew = true;
-      }
-    }
-  }
-  return result;
-}
-
-function depthOf(graph: Graph, id: string): number {
-  let depth = 0;
-  let cur = graph.nodes.get(id)?.parentId ?? null;
-  while (cur !== null) { depth++; cur = graph.nodes.get(cur)?.parentId ?? null; }
-  return depth;
-}
-
 /** Ops that transform `from` into `to`. Used by restore and branch merge. */
 export function diffStates(from: GraphState, to: GraphState): Op[] {
   const ops: Op[] = [];
@@ -541,17 +465,12 @@ export function diffStates(from: GraphState, to: GraphState): Op[] {
     const want = toEdges.get(edge.id);
     if (!want || edgeChanged(edge, want)) ops.push({ op: 'delete_edge', edge });
   }
-  const depth = (n: PlanNode, nodes: Map<string, PlanNode>): number => {
-    let d = 0; let cur = n.parentId;
-    while (cur !== null) { d++; cur = nodes.get(cur)?.parentId ?? null; }
-    return d;
-  };
   const doomed = [...fromNodes.values()].filter((n) => !toNodes.has(n.id));
-  doomed.sort((a, b) => depth(b, fromNodes) - depth(a, fromNodes));
+  doomed.sort((a, b) => depthOf(fromNodes, b.id) - depthOf(fromNodes, a.id));
   for (const node of doomed) ops.push({ op: 'delete_node', node });
 
   const added = [...toNodes.values()].filter((n) => !fromNodes.has(n.id));
-  added.sort((a, b) => depth(a, toNodes) - depth(b, toNodes));
+  added.sort((a, b) => depthOf(toNodes, a.id) - depthOf(toNodes, b.id));
   for (const node of added) ops.push({ op: 'add_node', node });
 
   for (const node of toNodes.values()) {
