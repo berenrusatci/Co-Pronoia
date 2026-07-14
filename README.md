@@ -51,6 +51,19 @@ Her ekleme/güncelleme/silme/taşıma otomatik mesajlı, numaralı bir commit ol
 
 Geçmiş hiçbir zaman yeniden yazılmaz. Ana hat numaralandırmasında dal commit'leri kadar boşluk olabilir (numara sırası globaldir) — bu beklenen davranıştır.
 
+## Gemini ajanı
+
+Sunucuya gömülü doğal dil ajanı: her kanvasta anında kullanılabilir, ayrı bot hesabı veya davet gerekmez. `server/.env` içine `GEMINI_API_KEY` (Google AI Studio anahtarı, isteğe bağlı `GEMINI_MODEL`, varsayılan `gemini-3.5-flash`) yazın ve oturum çerezinizle çağırın:
+
+```bash
+curl -s -X POST http://localhost:3001/api/canvases/<kanvasId>/agent \
+  -H 'Content-Type: application/json' -b 'tm_session=<çerez>' \
+  -d '{"prompt":"backend bölgesine üç adımlı auth akışı çiz"}'
+# → {"reply":"...","committed":true,"commitSeq":42,"opCount":5}
+```
+
+Özet istekleri (`"özetle"`, `"listele"`) kanvasa dokunmadan metin döner; değişiklik istekleri tek commit olarak gider ve normal kurallardan geçer: ajan **isteği yapan kullanıcı adına** çalışır, yani viewer'lar yazamaz, bölge kuralları aynen uygulanır, çakışmada dal açılır (`branched: true`). Ajan kullanıcının yazabildiği bölgeleri bilir ve yazamadıklarına dokunmaz; bir bölge adı verilirse yeni düğümler o dikdörtgenin içine yerleştirilir. Yeni düğümler varsayılan olarak bağımsızdır (köke bağlanmaz); açıkça "şu düğümü alt adımlara böl" denirse hiyerarşi kurulur. `detail` alanı (panelde **Prototip / Detaylı** düğmeleri) çizim ayrıntısını seçer: `proto` 3-6 düğümlük iskelet, `detailed` açıklamalı ve bağımlılık kenarlı kapsamlı döküm. Anahtar tanımlı değilse uç 503 döner.
+
 ## Çalıştırma
 
 ```bash

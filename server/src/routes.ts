@@ -7,6 +7,7 @@ import {
   removeMember, setCanvasRoleAccess, setMemberRole, setRegionMembers, updateRegion, type ServiceFor,
 } from './canvasService.js';
 import { memberPermissions } from './groupService.js';
+import { geminiConfigured, runAgent } from './agent.js';
 
 type Broadcast = (canvasId: string, msg: ServerMessage) => void;
 type Kick = (canvasId: string, reason: 'deleted' | 'removed', userId?: string) => void;
@@ -96,6 +97,36 @@ export function registerRoutes(
       }
     },
   );
+
+  /**
+   * Yerleşik Gemini ajanı: doğal dil komutunu yorumlar, gerekiyorsa tek commit atar.
+   * Üyelik preHandler'dan geçen herkes her kanvasta anında kullanabilir; actor istek sahibi
+   * olduğundan rol/bölge kuralları normal commit'lerle aynıdır.
+   */
+  app.post<{ Params: CanvasParams; Body: { prompt?: string; detail?: string } }>('/agent', async (req, reply) => {
+    const { canvasId, service } = scoped(req);
+    const prompt = (req.body?.prompt ?? '').trim();
+    if (!prompt) return reply.code(400).send({ error: 'prompt gerekli' });
+    if (!geminiConfigured())
+      return reply.code(503).send({ error: 'ajan yapılandırılmamış: sunucuda GEMINI_API_KEY tanımlı değil' });
+    const canvas = await prisma.canvas.findUnique({ where: { id: canvasId }, select: { name: true } });
+    let result;
+    try {
+      result = await runAgent({
+        prisma, service, canvasId, canvasName: canvas?.name ?? '', prompt, actor: actorOf(req),
+        detail: req.body?.detail === 'detailed' ? 'detailed' : 'proto',
+      });
+    } catch (err) {
+      return reply.code(502).send({ error: `ajan çalıştırılamadı: ${err instanceof Error ? err.message : String(err)}` });
+    }
+    if (result.outcome?.result === 'committed') {
+      broadcast(canvasId, { type: 'commit', commit: result.outcome.commit, state: result.outcome.state, clientId: null });
+    } else if (result.outcome?.result === 'branched') {
+      broadcast(canvasId, { type: 'branch_created', branch: result.outcome.branch, clientId: null });
+    }
+    const { outcome: _outcome, ...res } = result;
+    return res;
+  });
 
   app.post<{ Params: CanvasParams & { seq: string }; Body: { clientId?: string } | null }>(
     '/commits/:seq/revert',
