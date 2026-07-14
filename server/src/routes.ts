@@ -4,8 +4,9 @@ import type { OpInput, ServerMessage } from '@treemapper/shared';
 import { ConflictError, RegionError, ValidationError, type Actor } from './commitService.js';
 import {
   createInvite, createRegion, deleteCanvas, deleteRegion, listMembers, listRegions,
-  removeMember, setMemberRole, setRegionMembers, updateRegion, type ServiceFor,
+  removeMember, setCanvasRoleAccess, setMemberRole, setRegionMembers, updateRegion, type ServiceFor,
 } from './canvasService.js';
+import { memberPermissions } from './groupService.js';
 
 type Broadcast = (canvasId: string, msg: ServerMessage) => void;
 type Kick = (canvasId: string, reason: 'deleted' | 'removed', userId?: string) => void;
@@ -276,15 +277,47 @@ export function registerRoutes(
     return { ok: true };
   });
 
-  app.put<{ Params: CanvasParams & { id: string }; Body: { userIds?: string[] } }>(
+  app.put<{ Params: CanvasParams & { id: string }; Body: { userIds?: string[]; roleIds?: string[] } }>(
     '/regions/:id/members',
     async (req, reply) => {
       if (!requireOwner(req, reply)) return;
       const { canvasId } = scoped(req);
-      const region = await setRegionMembers(prisma, canvasId, req.params.id, req.body?.userIds ?? []);
+      const region = await setRegionMembers(
+        prisma, canvasId, req.params.id, req.body?.userIds ?? [], req.body?.roleIds,
+      );
       if (!region) return reply.code(404).send({ error: 'bölge bulunamadı' });
       broadcast(canvasId, { type: 'regions', regions: await listRegions(prisma, canvasId) });
       return { region };
+    },
+  );
+
+  // ---------- Rol bazlı kanvas erişimi (grup kanvasları) ----------
+
+  app.get<{ Params: CanvasParams }>('/role-access', async (req) => {
+    const { canvasId } = scoped(req);
+    const rows = await prisma.canvasRoleAccess.findMany({ where: { canvasId } });
+    return { access: rows.map((r) => ({ roleId: r.roleId, access: r.access })) };
+  });
+
+  /** Kanvas sahibi ya da grupta rol yönetme yetkisi olanlar ayarlayabilir. */
+  app.put<{ Params: CanvasParams; Body: { roleId?: string; access?: string | null } }>(
+    '/role-access',
+    async (req, reply) => {
+      const { canvasId } = scoped(req);
+      if (req.memberRole !== 'owner') {
+        const canvas = await prisma.canvas.findUnique({ where: { id: canvasId }, select: { groupId: true } });
+        const perms = canvas?.groupId ? await memberPermissions(prisma, canvas.groupId, req.user!.id) : null;
+        if (!perms?.canManageRoles)
+          return reply.code(403).send({ error: 'bu işlem için rol yönetme yetkisi gerekli' });
+      }
+      const roleId = req.body?.roleId;
+      const access = req.body?.access ?? null;
+      if (!roleId) return reply.code(400).send({ error: 'roleId gerekli' });
+      if (access !== null && access !== 'none' && access !== 'view' && access !== 'edit')
+        return reply.code(400).send({ error: "access 'none', 'view', 'edit' ya da null olmalı" });
+      const err = await setCanvasRoleAccess(prisma, canvasId, roleId, access);
+      if (err) return reply.code(400).send(err);
+      return { ok: true };
     },
   );
 }

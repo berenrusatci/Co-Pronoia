@@ -22,17 +22,46 @@ export async function listCanvases(prisma: PrismaClient, userId: string): Promis
     },
   });
   if (rows.length === 0) return [];
+  // Grup üzerinden gelen kanvaslar için rol bazlı erişimi topluca çöz (admin → edit;
+  // atanmış rol → açık CanvasRoleAccess > rolün varsayılanı; rolsüz üye → edit).
+  const groupIds = [...new Set(rows.filter((r) => !r.members[0] && r.group).map((r) => r.group!.id))];
+  const memberships = groupIds.length
+    ? await prisma.groupMember.findMany({
+        where: { userId, groupId: { in: groupIds }, status: 'approved' },
+        include: { roleDef: true },
+      })
+    : [];
+  const membershipOf = new Map(memberships.map((m) => [m.groupId, m]));
+  const roleIds = memberships.map((m) => m.roleDef?.id).filter((id): id is string => !!id);
+  const accessRows = roleIds.length
+    ? await prisma.canvasRoleAccess.findMany({
+        where: { roleId: { in: roleIds }, canvasId: { in: rows.map((r) => r.id) } },
+      })
+    : [];
+  const explicitAccess = new Map(accessRows.map((a) => [`${a.canvasId}:${a.roleId}`, a.access]));
+
+  const groupAccess = (canvasId: string, groupId: string): 'edit' | 'view' | null => {
+    const gm = membershipOf.get(groupId);
+    if (!gm) return null;
+    if (gm.role === 'admin' || !gm.roleDef) return 'edit';
+    const access = explicitAccess.get(`${canvasId}:${gm.roleDef.id}`) ?? gm.roleDef.defaultCanvasAccess;
+    return access === 'edit' ? 'edit' : access === 'view' ? 'view' : null;
+  };
+
+  const visible = rows.filter((r) => r.members[0] || (r.group && groupAccess(r.id, r.group.id) !== null));
+  if (visible.length === 0) return [];
   const heads = await prisma.commit.groupBy({
     by: ['canvasId'],
-    where: { canvasId: { in: rows.map((r) => r.id) }, branchId: null },
+    where: { canvasId: { in: visible.map((r) => r.id) }, branchId: null },
     _max: { seq: true },
   });
   const headOf = new Map(heads.map((h) => [h.canvasId, h._max.seq ?? 0]));
-  return rows.map((r) => ({
+  return visible.map((r) => ({
     id: r.id,
     name: r.name,
     owner: r.owner.username,
-    role: (r.members[0]?.role ?? (r.group ? 'editor' : 'member')) as CanvasInfo['role'],
+    role: (r.members[0]?.role ??
+      (groupAccess(r.id, r.group!.id) === 'view' ? 'viewer' : 'editor')) as CanvasInfo['role'],
     memberCount: r._count.members,
     headSeq: headOf.get(r.id) ?? 0,
     createdAt: r.createdAt.toISOString(),
@@ -75,13 +104,24 @@ export async function memberRole(prisma: PrismaClient, canvasId: string, userId:
     where: { canvasId_userId: { canvasId, userId } },
   });
   if (row) return row.role as CanvasRole;
-  // No direct membership — fall back to editor access via an approved group membership.
+  // Doğrudan üyelik yok — onaylı grup üyeliği üzerinden erişim: admin her zaman editör,
+  // diğerleri atanmış rollerinin kanvas erişimine göre (açık kayıt > rolün varsayılanı).
   const canvas = await prisma.canvas.findUnique({ where: { id: canvasId }, select: { groupId: true } });
   if (!canvas?.groupId) return null;
   const gm = await prisma.groupMember.findUnique({
     where: { groupId_userId: { groupId: canvas.groupId, userId } },
+    include: { roleDef: true },
   });
-  return gm?.status === 'approved' ? 'editor' : null;
+  if (gm?.status !== 'approved') return null;
+  if (gm.role === 'admin') return 'editor';
+  if (!gm.roleDef) return 'editor'; // rol atanmamış üye: eski davranış korunur
+  const explicit = await prisma.canvasRoleAccess.findUnique({
+    where: { canvasId_roleId: { canvasId, roleId: gm.roleDef.id } },
+  });
+  const access = explicit?.access ?? gm.roleDef.defaultCanvasAccess;
+  if (access === 'edit') return 'editor';
+  if (access === 'view') return 'viewer';
+  return null; // 'none' → kanvas bu kullanıcıya hiç görünmez
 }
 
 // ---------- Members & roles (owner-managed) ----------
@@ -149,16 +189,41 @@ export async function deleteCanvas(prisma: PrismaClient, canvasId: string): Prom
 
 // ---------- Regions ----------
 
-const toRegionInfo = (r: {
+const regionInclude = {
+  members: { include: { user: { select: { username: true } } } },
+  roleAccess: {
+    include: {
+      role: {
+        include: {
+          members: { where: { status: 'approved' }, include: { user: { select: { username: true } } } },
+        },
+      },
+    },
+  },
+} as const;
+
+type RegionRow = {
   id: string; name: string; x: number; y: number; width: number; height: number; color: string;
   members: { userId: string; user: { username: string } }[];
-}): RegionInfo => ({
-  id: r.id, name: r.name, x: r.x, y: r.y, width: r.width, height: r.height, color: r.color,
-  memberIds: r.members.map((m) => m.userId),
-  memberNames: r.members.map((m) => m.user.username),
-});
+  roleAccess: {
+    roleId: string;
+    role: { members: { userId: string; user: { username: string } }[] };
+  }[];
+};
 
-const regionInclude = { members: { include: { user: { select: { username: true } } } } } as const;
+/** memberIds = doğrudan üyeler ∪ erişimli rollerin onaylı üyeleri — regionGuard tek listeyi okur. */
+const toRegionInfo = (r: RegionRow): RegionInfo => {
+  const byId = new Map<string, string>();
+  for (const m of r.members) byId.set(m.userId, m.user.username);
+  for (const ra of r.roleAccess) for (const m of ra.role.members) byId.set(m.userId, m.user.username);
+  return {
+    id: r.id, name: r.name, x: r.x, y: r.y, width: r.width, height: r.height, color: r.color,
+    memberIds: [...byId.keys()],
+    memberNames: [...byId.values()],
+    directMemberIds: r.members.map((m) => m.userId),
+    roleIds: r.roleAccess.map((ra) => ra.roleId),
+  };
+};
 
 export async function listRegions(prisma: PrismaClient, canvasId: string): Promise<RegionInfo[]> {
   const rows = await prisma.region.findMany({
@@ -200,25 +265,70 @@ export async function deleteRegion(prisma: PrismaClient, canvasId: string, regio
   return true;
 }
 
-/** Replaces a region's member list (only canvas members are accepted). */
+/** Replaces a region's member list (only canvas members are accepted) and, if given, its role-access list. */
 export async function setRegionMembers(
   prisma: PrismaClient,
   canvasId: string,
   regionId: string,
   userIds: string[],
+  roleIds?: string[],
 ): Promise<RegionInfo | null> {
   const existing = await prisma.region.findFirst({ where: { id: regionId, canvasId } });
   if (!existing) return null;
   const canvasMembers = await prisma.canvasMember.findMany({ where: { canvasId, userId: { in: userIds } } });
-  const valid = canvasMembers.map((m) => m.userId);
-  await prisma.$transaction([
+  const validUsers = canvasMembers.map((m) => m.userId);
+  // Kanvas grup üyeliğiyle (CanvasMember kaydı olmadan) erişilen kullanıcılar da atanabilmeli.
+  const canvas = await prisma.canvas.findUnique({ where: { id: canvasId }, select: { groupId: true } });
+  if (canvas?.groupId) {
+    const groupUsers = await prisma.groupMember.findMany({
+      where: { groupId: canvas.groupId, status: 'approved', userId: { in: userIds } },
+      select: { userId: true },
+    });
+    for (const g of groupUsers) if (!validUsers.includes(g.userId)) validUsers.push(g.userId);
+  }
+  const tx: ReturnType<typeof prisma.regionMember.deleteMany | typeof prisma.regionMember.createMany>[] = [
     prisma.regionMember.deleteMany({ where: { regionId } }),
-    ...(valid.length > 0
-      ? [prisma.regionMember.createMany({ data: valid.map((userId) => ({ regionId, userId })) })]
+    ...(validUsers.length > 0
+      ? [prisma.regionMember.createMany({ data: validUsers.map((userId) => ({ regionId, userId })) })]
       : []),
-  ]);
+  ];
+  if (roleIds !== undefined) {
+    const validRoles = canvas?.groupId
+      ? (await prisma.groupRoleDef.findMany({
+          where: { groupId: canvas.groupId, id: { in: roleIds } },
+          select: { id: true },
+        })).map((r) => r.id)
+      : [];
+    tx.push(prisma.regionRoleAccess.deleteMany({ where: { regionId } }));
+    if (validRoles.length > 0)
+      tx.push(prisma.regionRoleAccess.createMany({ data: validRoles.map((roleId) => ({ regionId, roleId })) }));
+  }
+  await prisma.$transaction(tx);
   const row = await prisma.region.findUnique({ where: { id: regionId }, include: regionInclude });
   return row ? toRegionInfo(row) : null;
+}
+
+/** Rolün bir grup kanvasına erişimini ayarla ('none'|'view'|'edit'; null → açık kaydı sil, rol varsayılanına dön). */
+export async function setCanvasRoleAccess(
+  prisma: PrismaClient,
+  canvasId: string,
+  roleId: string,
+  access: 'none' | 'view' | 'edit' | null,
+): Promise<{ error: string } | null> {
+  const canvas = await prisma.canvas.findUnique({ where: { id: canvasId }, select: { groupId: true } });
+  if (!canvas?.groupId) return { error: 'bu kanvas bir gruba bağlı değil' };
+  const role = await prisma.groupRoleDef.findFirst({ where: { id: roleId, groupId: canvas.groupId } });
+  if (!role) return { error: 'rol bulunamadı' };
+  if (access === null) {
+    await prisma.canvasRoleAccess.deleteMany({ where: { canvasId, roleId } });
+  } else {
+    await prisma.canvasRoleAccess.upsert({
+      where: { canvasId_roleId: { canvasId, roleId } },
+      create: { canvasId, roleId, access },
+      update: { access },
+    });
+  }
+  return null;
 }
 
 export async function createInvite(prisma: PrismaClient, canvasId: string, userId: string): Promise<string> {

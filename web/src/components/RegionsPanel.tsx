@@ -1,20 +1,34 @@
-import { useState, type FormEvent } from 'react';
-import type { RegionInfo } from '@treemapper/shared';
+import { useEffect, useState, type FormEvent } from 'react';
+import type { GroupRoleDefInfo, RegionInfo } from '@treemapper/shared';
 import { useGraphStore } from '../store/graphStore';
 import { useCanvasStore } from '../store/canvasStore';
+import { groupApi } from '../api/client';
 
-const COLORS = ['#3b6fe0', '#c47612', '#7a4dc9', '#1e7a2e', '#b3261e', '#0e7f86'];
+const COLORS = ['#d97757', '#3b6fe0', '#7a4dc9', '#1e7a2e', '#b3261e', '#0e7f86'];
 
-function RegionEntry({ region, isOwner }: { region: RegionInfo; isOwner: boolean }) {
+function RegionEntry({
+  region, isOwner, groupRoles,
+}: {
+  region: RegionInfo;
+  isOwner: boolean;
+  groupRoles: GroupRoleDefInfo[];
+}) {
   const members = useGraphStore((s) => s.members);
   const setRegionMembers = useGraphStore((s) => s.setRegionMembers);
   const deleteRegion = useGraphStore((s) => s.deleteRegion);
 
-  const toggle = (userId: string) => {
-    const next = region.memberIds.includes(userId)
-      ? region.memberIds.filter((id) => id !== userId)
-      : [...region.memberIds, userId];
-    setRegionMembers(region.id, next);
+  const toggleUser = (userId: string) => {
+    const next = region.directMemberIds.includes(userId)
+      ? region.directMemberIds.filter((id) => id !== userId)
+      : [...region.directMemberIds, userId];
+    setRegionMembers(region.id, next, region.roleIds);
+  };
+
+  const toggleRole = (roleId: string) => {
+    const next = region.roleIds.includes(roleId)
+      ? region.roleIds.filter((id) => id !== roleId)
+      : [...region.roleIds, roleId];
+    setRegionMembers(region.id, region.directMemberIds, next);
   };
 
   return (
@@ -32,18 +46,38 @@ function RegionEntry({ region, isOwner }: { region: RegionInfo; isOwner: boolean
         )}
       </div>
       {isOwner ? (
-        <div className="region-member-picker">
-          {members.map((m) => (
-            <label key={m.userId} className="region-member-check">
-              <input
-                type="checkbox"
-                checked={region.memberIds.includes(m.userId)}
-                onChange={() => toggle(m.userId)}
-              />
-              {m.username}
-            </label>
-          ))}
-        </div>
+        <>
+          {groupRoles.length > 0 && (
+            <>
+              <div className="region-picker-label">Erişimli roller</div>
+              <div className="region-member-picker">
+                {groupRoles.map((r) => (
+                  <label key={r.id} className="region-member-check">
+                    <input
+                      type="checkbox"
+                      checked={region.roleIds.includes(r.id)}
+                      onChange={() => toggleRole(r.id)}
+                    />
+                    {r.name}
+                  </label>
+                ))}
+              </div>
+            </>
+          )}
+          <div className="region-picker-label">Erişimli kullanıcılar</div>
+          <div className="region-member-picker">
+            {members.map((m) => (
+              <label key={m.userId} className="region-member-check">
+                <input
+                  type="checkbox"
+                  checked={region.directMemberIds.includes(m.userId)}
+                  onChange={() => toggleUser(m.userId)}
+                />
+                {m.username}
+              </label>
+            ))}
+          </div>
+        </>
       ) : (
         <div className="region-entry-members">
           {region.memberNames.length > 0 ? `Yetkili: ${region.memberNames.join(', ')}` : 'Henüz kimse atanmadı'}
@@ -57,8 +91,18 @@ export function RegionsPanel() {
   const regions = useGraphStore((s) => s.regions);
   const createRegion = useGraphStore((s) => s.createRegion);
   const setView = useGraphStore((s) => s.setView);
-  const isOwner = useCanvasStore((s) => s.active?.role === 'owner');
+  const active = useCanvasStore((s) => s.active);
+  const isOwner = active?.role === 'owner';
   const [name, setName] = useState('');
+  const [groupRoles, setGroupRoles] = useState<GroupRoleDefInfo[]>([]);
+
+  useEffect(() => {
+    if (!active?.groupId || !isOwner) {
+      setGroupRoles([]);
+      return;
+    }
+    groupApi.roles(active.groupId).then(({ roles }) => setGroupRoles(roles)).catch(() => setGroupRoles([]));
+  }, [active?.groupId, isOwner]);
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -78,13 +122,13 @@ export function RegionsPanel() {
     <aside className="side-panel">
       <h3>Bölgeler ({regions.length})</h3>
       <p className="empty-note">
-        Bölge, akış görünümünde bir dikdörtgen alandır: içindeki düğümleri yalnızca bölgeye atanan üyeler (ve kanvas
-        sahibi) değiştirebilir.
+        Bölge, akış görünümünde bir dikdörtgen alandır: içindeki düğümleri yalnızca bölgeye atanan üyeler ve roller (ve
+        kanvas sahibi) değiştirebilir.
       </p>
       {regions.length > 0 && (
         <ul className="region-list">
           {regions.map((r) => (
-            <RegionEntry key={r.id} region={r} isOwner={isOwner} />
+            <RegionEntry key={r.id} region={r} isOwner={isOwner} groupRoles={groupRoles} />
           ))}
         </ul>
       )}

@@ -35,7 +35,7 @@ export interface CommitOptions {
 }
 
 export type CommitOutcome =
-  | { result: 'committed'; commit: Commit; state: GraphState }
+  | { result: 'committed'; commit: Commit; state: GraphState; droppedMoves?: number }
   | { result: 'branched'; branch: BranchSummary; commit: Commit };
 
 type Tx = Prisma.TransactionClient;
@@ -227,39 +227,82 @@ export class CommitService {
           where: { canvasId: this.canvasId, branchId: null, seq: { gt: baseSeq, lte: head } },
         });
         const interveningOps = intervening.flatMap((c) => JSON.parse(c.ops) as Op[]);
-        if (!opsConflict(ops, interveningOps)) {
+        // Yumuşak çakışma: yalnızca konum (move_node) çakışan op'lar — main referans alınır,
+        // kullanıcının taşıması sessizce düşer. Kalanlar çakışmıyorsa otomatik merge devam eder.
+        const { kept, droppedMoves } = dropSoftConflicts(ops, interveningOps);
+        if (!opsConflict(kept, interveningOps)) {
+          if (kept.length === 0) {
+            // Her şey konum çakışmasıydı; commit edilecek bir şey kalmadı.
+            const state = await this.getState();
+            return { result: 'committed', commit: (await this.getCommit(head))!, state, droppedMoves };
+          }
           const titleOf = (id: string) => graph.nodes.get(id)?.title;
-          const { commit, state } = await this.applyCommit(ops, message ?? autoMessage(ops, titleOf), authorId, actor);
-          return { result: 'committed', commit, state };
+          const { commit, state } = await this.applyCommit(
+            kept, message ?? autoMessage(kept, titleOf), authorId, actor,
+          );
+          return { result: 'committed', commit, state, ...(droppedMoves > 0 ? { droppedMoves } : {}) };
         }
       }
 
-      // Conflict → park the change on a new branch, expanded against the state the client saw.
-      const baseGraph = await this.replayGraph(baseSeq);
-      const branchOps = expandAll(baseGraph, inputs);
-      // First line of defense on historical positions; merging re-checks against current state.
-      await this.assertRegions(baseGraph, branchOps, actor);
-      const titleOf = (id: string) => baseGraph.nodes.get(id)?.title;
+      // İçerik/durum çakışması → kullanıcının kalıcı kişisel branch'ine park et;
+      // kullanıcı dallar panelinden inceleyip (yetkisi varsa) birleştirir.
       const username = authorId
         ? (await this.prisma.user.findUnique({ where: { id: authorId } }))?.username ?? 'anon'
         : 'anon';
+      const personal = authorId
+        ? await this.prisma.branch.findFirst({
+            where: { canvasId: this.canvasId, createdBy: authorId, status: 'open' },
+            orderBy: { createdAt: 'desc' },
+          })
+        : null;
+
+      let branchId: string;
+      let expandBase: Graph;
+      if (personal) {
+        // Açık kişisel dal varsa yeni değişiklikler de oraya eklenir (dal state'ine göre genişletilir).
+        branchId = personal.id;
+        const branchGraph = await this.replayGraph(2147483647, personal.id, personal.baseSeq);
+        try {
+          expandBase = branchGraph;
+          expandAll(branchGraph, inputs);
+        } catch {
+          throw new ConflictError(
+            'değişiklik açık dalınızla da uyuşmuyor — önce dalınızı birleştirin ya da atın',
+          );
+        }
+      } else {
+        expandBase = await this.replayGraph(baseSeq);
+        branchId = '';
+      }
+      const branchOps = expandAll(expandBase, inputs);
+      // First line of defense on historical positions; merging re-checks against current state.
+      await this.assertRegions(expandBase, branchOps, actor);
+      const titleOf = (id: string) => expandBase.nodes.get(id)?.title;
       const seq = await this.nextSeq();
-      const name = await this.uniqueBranchName(`${username}/cakisma-${head}`);
       const created = await this.prisma.$transaction(async (tx) => {
-        const branch = await tx.branch.create({
-          data: { canvasId: this.canvasId, name, baseSeq, createdBy: authorId ?? (await this.systemUserId(tx)) },
-        });
+        let id = branchId;
+        if (!id) {
+          const branch = await tx.branch.create({
+            data: {
+              canvasId: this.canvasId,
+              name: await this.uniqueBranchName(username),
+              baseSeq,
+              createdBy: authorId ?? (await this.systemUserId(tx)),
+            },
+          });
+          id = branch.id;
+        }
         await tx.commit.create({
           data: {
             canvasId: this.canvasId, seq, message: message ?? autoMessage(branchOps, titleOf),
-            ops: JSON.stringify(branchOps), authorId, branchId: branch.id,
+            ops: JSON.stringify(branchOps), authorId, branchId: id,
           },
         });
-        return branch;
+        return id;
       });
       const commit = (await this.getCommit(seq))!;
       const list = await this.listBranches('all');
-      return { result: 'branched', branch: list.find((b) => b.id === created.id)!, commit };
+      return { result: 'branched', branch: list.find((b) => b.id === created)!, commit };
     });
   }
 
@@ -432,6 +475,29 @@ function targetsOf(ops: Op[]): TargetSet {
     }
   }
   return t;
+}
+
+/**
+ * Yumuşak çakışma ayıklama: kullanıcının move_node op'u, araya giren commit'ler aynı düğümün
+ * konumuna (x/y) dokunduysa ya da düğümü ekleyip/sildiyse düşürülür — main referans alınır,
+ * kullanıcıya sorulmaz. Diğer tüm çakışma türleri (alan bazlı update, delete, edge) sert kalır.
+ */
+export function dropSoftConflicts(ops: Op[], intervening: Op[]): { kept: Op[]; droppedMoves: number } {
+  const ti = targetsOf(intervening);
+  const kept: Op[] = [];
+  let droppedMoves = 0;
+  for (const op of ops) {
+    if (op.op === 'move_node') {
+      const fields = ti.nodeFields.get(op.id);
+      const positionTouched = ti.nodeWild.has(op.id) || (fields !== undefined && (fields.has('x') || fields.has('y')));
+      if (positionTouched) {
+        droppedMoves += 1;
+        continue;
+      }
+    }
+    kept.push(op);
+  }
+  return { kept, droppedMoves };
 }
 
 /** True when two op sets touch overlapping targets (same node wholesale, same node fields, or same edge). */

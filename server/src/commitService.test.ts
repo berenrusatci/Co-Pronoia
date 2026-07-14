@@ -232,13 +232,58 @@ describe('branching & co-op', () => {
     const head = await service.headSeq();
     committed(await service.commit([{ op: 'update_node', id: 'a', fields: { title: 'A-u1' } }], { authorId: u1.id, baseSeq: head }));
     const out = branched(await service.commit([{ op: 'update_node', id: 'a', fields: { title: 'A-u2' } }], { authorId: u2.id, baseSeq: head }));
-    expect(out.branch.name).toMatch(/^user2\/cakisma-/);
+    expect(out.branch.name).toBe('user2');
     expect(out.branch.createdBy).toBe('user2');
     // main untouched by the branched commit
     expect((await service.getState()).nodes.find((n) => n.id === 'a')?.title).toBe('A-u1');
     // branch state has u2's version
     const bs = await service.branchState(out.branch.id);
     expect(bs.nodes.find((n) => n.id === 'a')?.title).toBe('A-u2');
+    expect(await service.rebuildCheck()).toBe(true);
+  });
+
+  it('position-only conflict: main wins silently, move is dropped, rest auto-merges', async () => {
+    const { service, u1, u2 } = await withUsers();
+    const head = await service.headSeq();
+    committed(await service.commit([{ op: 'move_node', id: 'a', x: 100, y: 100 }], { authorId: u1.id, baseSeq: head }));
+    // u2 aynı düğümü taşımaya VE başka bir düğümün başlığını değiştirmeye çalışıyor
+    const out = committed(await service.commit([
+      { op: 'move_node', id: 'a', x: 999, y: 999 },
+      { op: 'update_node', id: 'b', fields: { title: 'B-u2' } },
+    ], { authorId: u2.id, baseSeq: head }));
+    expect(out.droppedMoves).toBe(1);
+    const state = await service.getState();
+    // main'in konumu korunur, u2'nin taşıması düşer
+    expect(state.nodes.find((n) => n.id === 'a')?.x).toBe(100);
+    expect(state.nodes.find((n) => n.id === 'b')?.title).toBe('B-u2');
+    expect(await service.listBranches()).toHaveLength(0);
+    expect(await service.rebuildCheck()).toBe(true);
+  });
+
+  it('all ops are dropped moves → nothing committed, no branch', async () => {
+    const { service, u1, u2 } = await withUsers();
+    const head = await service.headSeq();
+    committed(await service.commit([{ op: 'move_node', id: 'a', x: 100, y: 100 }], { authorId: u1.id, baseSeq: head }));
+    const before = await service.headSeq();
+    const out = committed(await service.commit([{ op: 'move_node', id: 'a', x: 5, y: 5 }], { authorId: u2.id, baseSeq: head }));
+    expect(out.droppedMoves).toBe(1);
+    expect(await service.headSeq()).toBe(before); // yeni commit yok
+    expect(await service.listBranches()).toHaveLength(0);
+  });
+
+  it('later conflicts reuse the same open personal branch', async () => {
+    const { service, u1, u2 } = await withUsers();
+    const head = await service.headSeq();
+    committed(await service.commit([{ op: 'update_node', id: 'a', fields: { title: 'A-u1' } }], { authorId: u1.id, baseSeq: head }));
+    const first = branched(await service.commit([{ op: 'update_node', id: 'a', fields: { title: 'A-u2' } }], { authorId: u2.id, baseSeq: head }));
+    // ikinci çakışan push da aynı dala eklenir
+    committed(await service.commit([{ op: 'update_node', id: 'b', fields: { title: 'B-x' } }], { authorId: u1.id }));
+    const newHead = await service.headSeq();
+    const second = branched(await service.commit([{ op: 'update_node', id: 'b', fields: { title: 'B-u2' } }], { authorId: u2.id, baseSeq: newHead - 1 }));
+    expect(second.branch.id).toBe(first.branch.id);
+    const bs = await service.branchState(first.branch.id);
+    expect(bs.nodes.find((n) => n.id === 'a')?.title).toBe('A-u2');
+    expect(bs.nodes.find((n) => n.id === 'b')?.title).toBe('B-u2');
     expect(await service.rebuildCheck()).toBe(true);
   });
 
