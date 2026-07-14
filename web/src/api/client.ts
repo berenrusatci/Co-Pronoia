@@ -1,6 +1,6 @@
 import type {
   BranchInfo, CanvasInfo, Commit, CommitSummary, EdgeDirection, EdgeKind, GraphState,
-  MemberInfo, NodeFields, NodeType, OpInput, RegionInfo,
+  GroupInfo, GroupMemberInfo, GroupRole, MemberInfo, NodeFields, NodeType, OpInput, RegionInfo,
 } from '@treemapper/shared';
 
 export class ApiError extends Error {
@@ -116,11 +116,29 @@ export const api = {
 /** Dashboard-level endpoints (not canvas-scoped). */
 export const canvasApi = {
   list: () => request<{ canvases: CanvasInfo[] }>('/api/canvases'),
-  create: (name: string) => post<{ canvas: CanvasInfo }>('/api/canvases', { name }),
+  create: (name: string, groupId?: string) => post<{ canvas: CanvasInfo }>('/api/canvases', { name, groupId }),
   createInvite: (canvasId: string) => post<{ token: string }>(`/api/canvases/${canvasId}/invites`),
   inviteInfo: (token: string) =>
     request<{ canvasName: string; invitedBy: string }>(`/api/invites/${encodeURIComponent(token)}`),
   acceptInvite: (token: string) => post<{ canvas: CanvasInfo }>(`/api/invites/${encodeURIComponent(token)}/accept`),
   deleteCanvas: (canvasId: string) => del<{ ok: boolean }>(`/api/canvases/${canvasId}`),
   changePassword: (current: string, next: string) => post<{ ok: boolean }>('/api/auth/password', { current, next }),
+};
+
+/** Dashboard-level group endpoints. */
+export const groupApi = {
+  list: () => request<{ groups: GroupInfo[] }>('/api/groups'),
+  create: (name: string) => post<{ group: GroupInfo }>('/api/groups', { name }),
+  members: (groupId: string) => request<{ members: GroupMemberInfo[] }>(`/api/groups/${groupId}/members`),
+  approveMember: (groupId: string, userId: string) =>
+    patch<{ members: GroupMemberInfo[] }>(`/api/groups/${groupId}/members/${userId}`, { status: 'approved' }),
+  setMemberRole: (groupId: string, userId: string, role: GroupRole) =>
+    patch<{ members: GroupMemberInfo[] }>(`/api/groups/${groupId}/members/${userId}`, { role }),
+  removeMember: (groupId: string, userId: string) =>
+    del<{ members: GroupMemberInfo[] }>(`/api/groups/${groupId}/members/${userId}`),
+  createInvite: (groupId: string) => post<{ token: string }>(`/api/groups/${groupId}/invites`),
+  inviteInfo: (token: string) =>
+    request<{ groupName: string; invitedBy: string }>(`/api/group-invites/${encodeURIComponent(token)}`),
+  acceptInvite: (token: string, jobTitle: string) =>
+    post<{ group: GroupInfo }>(`/api/group-invites/${encodeURIComponent(token)}/accept`, { jobTitle }),
 };

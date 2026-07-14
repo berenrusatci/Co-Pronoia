@@ -7,10 +7,16 @@ export type ServiceFor = (canvasId: string) => CommitService;
 
 export async function listCanvases(prisma: PrismaClient, userId: string): Promise<CanvasInfo[]> {
   const rows = await prisma.canvas.findMany({
-    where: { members: { some: { userId } } },
+    where: {
+      OR: [
+        { members: { some: { userId } } },
+        { groupId: { not: null }, group: { members: { some: { userId, status: 'approved' } } } },
+      ],
+    },
     orderBy: { createdAt: 'desc' },
     include: {
       owner: { select: { username: true } },
+      group: { select: { id: true, name: true } },
       _count: { select: { members: true } },
       members: { where: { userId }, select: { role: true } },
     },
@@ -26,10 +32,12 @@ export async function listCanvases(prisma: PrismaClient, userId: string): Promis
     id: r.id,
     name: r.name,
     owner: r.owner.username,
-    role: (r.members[0]?.role ?? 'member') as CanvasInfo['role'],
+    role: (r.members[0]?.role ?? (r.group ? 'editor' : 'member')) as CanvasInfo['role'],
     memberCount: r._count.members,
     headSeq: headOf.get(r.id) ?? 0,
     createdAt: r.createdAt.toISOString(),
+    groupId: r.group?.id ?? null,
+    groupName: r.group?.name ?? null,
   }));
 }
 
@@ -44,10 +52,10 @@ export async function createCanvas(
   serviceFor: ServiceFor,
   name: string,
   ownerId: string,
-  opts: { seedRoot?: boolean } = {},
+  opts: { seedRoot?: boolean; groupId?: string } = {},
 ): Promise<CanvasInfo> {
   const canvas = await prisma.canvas.create({
-    data: { name, ownerId, members: { create: { userId: ownerId, role: 'owner' } } },
+    data: { name, ownerId, groupId: opts.groupId, members: { create: { userId: ownerId, role: 'owner' } } },
   });
   if (opts.seedRoot !== false) {
     await serviceFor(canvas.id).commit(
@@ -66,7 +74,14 @@ export async function memberRole(prisma: PrismaClient, canvasId: string, userId:
   const row = await prisma.canvasMember.findUnique({
     where: { canvasId_userId: { canvasId, userId } },
   });
-  return (row?.role as CanvasRole) ?? null;
+  if (row) return row.role as CanvasRole;
+  // No direct membership — fall back to editor access via an approved group membership.
+  const canvas = await prisma.canvas.findUnique({ where: { id: canvasId }, select: { groupId: true } });
+  if (!canvas?.groupId) return null;
+  const gm = await prisma.groupMember.findUnique({
+    where: { groupId_userId: { groupId: canvas.groupId, userId } },
+  });
+  return gm?.status === 'approved' ? 'editor' : null;
 }
 
 // ---------- Members & roles (owner-managed) ----------

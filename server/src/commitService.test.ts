@@ -10,15 +10,15 @@ let db: ReturnType<typeof testDbFactory>;
 beforeAll(() => {
   db = testDbFactory();
 });
-afterAll(() => db.cleanup());
 
 const opened: Array<{ prisma: { $disconnect(): Promise<void> } }> = [];
 afterAll(async () => {
   for (const { prisma } of opened) await prisma.$disconnect();
-});
+  await db.cleanup();
+}, 30000);
 
 async function fresh() {
-  const built = await buildApp(db.fresh());
+  const built = await buildApp(await db.fresh());
   opened.push(built);
   return built;
 }
@@ -315,7 +315,7 @@ describe('auth', () => {
     let res = await app.inject({ method: 'GET', url: '/api/canvases' });
     expect(res.statusCode).toBe(401);
 
-    res = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'beren', password: 'sifre1' } });
+    res = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'beren', password: 'sifre1', email: 'beren@test.com' } });
     expect(res.statusCode).toBe(200);
     const cookie = res.cookies.find((c) => c.name === 'tm_session');
     expect(cookie).toBeDefined();
@@ -345,7 +345,7 @@ describe('auth', () => {
     expect(res.json().commit.author).toBe('beren');
 
     // duplicate username
-    res = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'beren', password: 'baska' } });
+    res = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'beren', password: 'baska', email: 'beren2@test.com' } });
     expect(res.statusCode).toBe(409);
 
     // wrong password
@@ -362,8 +362,8 @@ describe('auth', () => {
 describe('canvases & invites', () => {
   async function twoUsers() {
     const built = await fresh();
-    const reg1 = await built.app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'u1', password: 'pass1' } });
-    const reg2 = await built.app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'u2', password: 'pass2' } });
+    const reg1 = await built.app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'u1', password: 'pass1', email: 'u1@test.com' } });
+    const reg2 = await built.app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'u2', password: 'pass2', email: 'u2@test.com' } });
     return {
       ...built,
       c1: { tm_session: reg1.cookies.find((c) => c.name === 'tm_session')!.value },
@@ -429,8 +429,8 @@ describe('canvases & invites', () => {
 describe('roles, regions & owner tools', () => {
   async function canvasWithTwo() {
     const built = await fresh();
-    const reg1 = await built.app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'sahip', password: 'pass1' } });
-    const reg2 = await built.app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'uye', password: 'pass2' } });
+    const reg1 = await built.app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'sahip', password: 'pass1', email: 'sahip@test.com' } });
+    const reg2 = await built.app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'uye', password: 'pass2', email: 'uye@test.com' } });
     const c1 = { tm_session: reg1.cookies.find((c) => c.name === 'tm_session')!.value };
     const c2 = { tm_session: reg2.cookies.find((c) => c.name === 'tm_session')!.value };
     const u2Id = reg2.json().user.id as string;
@@ -654,7 +654,7 @@ describe('roles, regions & owner tools', () => {
 
   it('password change verifies the current password and rotates sessions', async () => {
     const { app } = await fresh();
-    const reg = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'ayar', password: 'eski1' } });
+    const reg = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'ayar', password: 'eski1', email: 'ayar@test.com' } });
     const cookies = { tm_session: reg.cookies.find((c) => c.name === 'tm_session')!.value };
 
     let res = await app.inject({ method: 'POST', url: '/api/auth/password', cookies, payload: { current: 'yanlis', next: 'yeni1' } });
@@ -675,9 +675,9 @@ describe('roles, regions & owner tools', () => {
 describe('API integration', () => {
   it('full loop incl. invite + branches over HTTP', async () => {
     const { app } = await fresh();
-    const reg = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'u1', password: 'pass1' } });
+    const reg = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'u1', password: 'pass1', email: 'u1@test.com' } });
     const cookies = { tm_session: reg.cookies.find((c) => c.name === 'tm_session')!.value };
-    const reg2 = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'u2', password: 'pass2' } });
+    const reg2 = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'u2', password: 'pass2', email: 'u2@test.com' } });
     const cookies2 = { tm_session: reg2.cookies.find((c) => c.name === 'tm_session')!.value };
 
     const post = (url: string, body?: unknown, c = cookies) =>

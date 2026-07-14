@@ -6,14 +6,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Requires Node 22+ (a user-local install lives at `~/.local/opt/node22/bin`; add it to PATH if `node` is missing).
 
+- Before `npm run dev` or tests: Postgres must be running — `docker compose up -d` (see root `docker-compose.yml`), exposed on host port **5433** (5432 is often taken by other local Postgres containers).
 - `npm run dev` — runs both dev servers via concurrently: Fastify API on :3001, Vite on :5173 (proxies `/api` incl. WebSocket → :3001). The server script runs `prisma db push` first, so schema changes apply automatically.
 - `npm run test` — vitest in `shared/` then `server/` (no web tests)
 - `npm run test -w server` — one workspace; add `-- -t "name"` for a single test
 - `npm run build` — `prisma generate` + typecheck all workspaces + `vite build`. In prod, Fastify serves `web/dist` if it exists.
+- `npm run db:seed -w server` — populates a sample dataset (two users `ayse`/`bora`, password `sifre123`, one canvas with a few nodes/edges/commits) through the real `createCanvas`/`CommitService` code path. Not idempotent — run once against an empty DB.
 
-Database: SQLite via **Prisma 7** (driver adapter `@prisma/adapter-better-sqlite3`). Connection URL comes from `server/.env` (`DATABASE_URL`) read by `server/prisma.config.ts` — Prisma 7 does not read the URL from schema.prisma. Dev DB at `server/data/treemapper.db` (gitignored); delete it to reset. There is no boot-time seed: each canvas gets its root-node seed commit when it is created. No migration files: schema changes go through `prisma db push`.
+Database: **PostgreSQL** via **Prisma 7** (driver adapter `@prisma/adapter-pg`), run via Docker (`docker compose up -d`). Connection URL comes from `server/.env` (`DATABASE_URL`) read by `server/prisma.config.ts` — Prisma 7 does not read the URL from schema.prisma. There is no boot-time seed: each canvas gets its root-node seed commit when it is created. No migration files: schema changes go through `prisma db push`. To reset dev data: `docker compose down -v && docker compose up -d && npm run dev -w server` (re-runs `prisma db push`).
 
-Tests get isolated DBs from `server/src/testDb.ts`: one `prisma db push` into a template file per suite, then a cheap file copy per test (`testDbFactory().fresh()`), consumed by `await buildApp(url)` from `server/src/app.ts`.
+Tests get isolated DBs from `server/src/testDb.ts`: one `prisma db push` into a template Postgres database per suite, then a cheap `CREATE DATABASE ... TEMPLATE` per test (`testDbFactory().fresh()`, both `fresh()`/`cleanup()` are async), consumed by `await buildApp(url)` from `server/src/app.ts`. `cleanup()` terminates backends and drops every database it created — always disconnect Prisma clients before calling it (see the single merged `afterAll` in `commitService.test.ts`) or `DROP DATABASE` will stall on lingering connections.
 
 ## Architecture
 

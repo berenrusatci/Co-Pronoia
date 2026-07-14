@@ -161,7 +161,8 @@ export class CommitService {
 
   async branchState(branchId: string): Promise<GraphState> {
     const branch = await this.findBranch(branchId);
-    const graph = await this.replayGraph(Number.MAX_SAFE_INTEGER, branchId, branch.baseSeq);
+    // Postgres seq column is a 4-byte int; Number.MAX_SAFE_INTEGER overflows it as a query value.
+    const graph = await this.replayGraph(2147483647, branchId, branch.baseSeq);
     return { nodes: [...graph.nodes.values()], edges: [...graph.edges.values()], headSeq: branch.baseSeq };
   }
 

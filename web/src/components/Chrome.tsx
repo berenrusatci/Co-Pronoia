@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useGraphStore, useReadOnly, type ViewMode } from '../store/graphStore';
 import { useAuthStore } from '../store/authStore';
 import { useCanvasStore } from '../store/canvasStore';
+import { useThemeStore } from '../store/themeStore';
 
 const views: { key: ViewMode; label: string }[] = [
   { key: 'mindmap', label: 'Zihin Haritası' },
@@ -43,6 +44,8 @@ export function Toolbar() {
   const closeCanvas = useCanvasStore((s) => s.close);
   const inviteLink = useCanvasStore((s) => s.inviteLink);
   const [copied, setCopied] = useState(false);
+  const theme = useThemeStore((s) => s.theme);
+  const toggleTheme = useThemeStore((s) => s.toggle);
 
   const leaveCanvas = () => {
     if (pendingCount > 0 && !window.confirm(`${pendingCount} push edilmemiş değişiklik var — panoya dönersen kaybolur. Devam?`))
@@ -125,7 +128,17 @@ export function Toolbar() {
             </span>
           ))}
         </span>
-        <span className="user-chip">{user?.username}</span>
+        <span className="user-chip">
+          {user?.avatarUrl && <img className="user-avatar" src={user.avatarUrl} alt="" />}
+          {user?.displayName || user?.username}
+        </span>
+        <button
+          className="theme-toggle"
+          onClick={toggleTheme}
+          title={theme === 'dark' ? 'Aydınlık moda geç' : 'Karanlık moda geç'}
+        >
+          {theme === 'dark' ? '☀️' : '🌙'}
+        </button>
         <button onClick={logout} title="Oturumu kapat">Çıkış</button>
       </div>
     </div>

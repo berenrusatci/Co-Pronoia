@@ -10,7 +10,7 @@ interface CanvasStore {
   error: string | null;
 
   loadList: () => Promise<void>;
-  createCanvas: (name: string) => Promise<CanvasInfo | null>;
+  createCanvas: (name: string, groupId?: string) => Promise<CanvasInfo | null>;
   open: (canvas: CanvasInfo) => void;
   close: () => void;
   /** Mints an invite token and returns the shareable URL. */
@@ -37,9 +37,9 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     }
   },
 
-  createCanvas: async (name) => {
+  createCanvas: async (name, groupId) => {
     try {
-      const { canvas } = await canvasApi.create(name);
+      const { canvas } = await canvasApi.create(name, groupId);
       set((s) => ({ canvases: [canvas, ...s.canvases] }));
       return canvas;
     } catch (err) {

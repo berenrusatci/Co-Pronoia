@@ -6,7 +6,7 @@ import fastifyStatic from '@fastify/static';
 import { buildApp } from './app.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const dbUrl = process.env.DATABASE_URL ?? `file:${join(here, '../data/treemapper.db')}`;
+const dbUrl = process.env.DATABASE_URL ?? 'postgresql://treemapper:treemapper@localhost:5433/treemapper?schema=public';
 const port = Number(process.env.PORT ?? 3001);
 
 const { app } = await buildApp(dbUrl);

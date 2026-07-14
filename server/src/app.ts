@@ -2,22 +2,26 @@ import Fastify from 'fastify';
 import fastifyCookie from '@fastify/cookie';
 import fastifyWebsocket from '@fastify/websocket';
 import { PrismaClient } from '@prisma/client';
-import { PrismaBetterSqlite3 } from '@prisma/adapter-better-sqlite3';
+import { PrismaPg } from '@prisma/adapter-pg';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
-import type { CanvasRole, ServerMessage } from '@treemapper/shared';
+import type { CanvasRole, GroupRole, GroupMemberStatus, ServerMessage } from '@treemapper/shared';
 import { CommitService } from './commitService.js';
 import { memberRole } from './canvasService.js';
+import { groupRole } from './groupService.js';
 import { resolveSession, sessionToken } from './auth.js';
 import { registerRoutes } from './routes.js';
 import { registerAuthRoutes } from './authRoutes.js';
+import { registerGoogleAuth } from './googleAuth.js';
 import { registerCanvasRoutes } from './canvasRoutes.js';
+import { registerGroupRoutes, registerGroupMemberRoutes } from './groupRoutes.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
     /** Requester's role on the canvas in the URL; set by the canvas-scope preHandler. */
     memberRole: CanvasRole | null;
+    /** Requester's role/status on the group in the URL; set by the group-scope preHandler. */
+    groupRole: GroupRole | null;
+    groupStatus: GroupMemberStatus | null;
   }
 }
 
@@ -30,9 +34,7 @@ export interface WsClient {
 }
 
 export async function buildApp(dbUrl: string) {
-  const filePath = dbUrl.replace(/^file:/, '');
-  if (filePath !== ':memory:') mkdirSync(dirname(filePath), { recursive: true });
-  const adapter = new PrismaBetterSqlite3({ url: dbUrl });
+  const adapter = new PrismaPg({ connectionString: dbUrl });
   const prisma = new PrismaClient({ adapter });
 
   // One CommitService per canvas: its promise-chain mutex serializes writes per canvas.
@@ -53,6 +55,8 @@ export async function buildApp(dbUrl: string) {
   // Session auth for every /api route except health and auth.
   app.decorateRequest('user', null);
   app.decorateRequest('memberRole', null);
+  app.decorateRequest('groupRole', null);
+  app.decorateRequest('groupStatus', null);
   app.addHook('preHandler', async (req, reply) => {
     if (!req.url.startsWith('/api')) return;
     if (req.url.startsWith('/api/auth/') || req.url === '/api/health') return;
@@ -118,7 +122,11 @@ export async function buildApp(dbUrl: string) {
   });
 
   registerAuthRoutes(app, prisma);
+  if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+    await registerGoogleAuth(app, prisma);
+  }
   registerCanvasRoutes(app, prisma, serviceFor, broadcast);
+  registerGroupRoutes(app, prisma);
 
   // All graph routes live under a canvas and require membership.
   await app.register(
@@ -132,6 +140,21 @@ export async function buildApp(dbUrl: string) {
       registerRoutes(scope, prisma, serviceFor, broadcast, kick);
     },
     { prefix: '/api/canvases/:canvasId' },
+  );
+
+  // Group member-management routes require an existing (pending or approved) membership.
+  await app.register(
+    async (scope) => {
+      scope.addHook('preHandler', async (req, reply) => {
+        const { groupId } = req.params as { groupId: string };
+        const membership = await groupRole(prisma, groupId, req.user!.id);
+        if (!membership) return reply.code(404).send({ error: 'grup bulunamadı' });
+        req.groupRole = membership.role;
+        req.groupStatus = membership.status;
+      });
+      registerGroupMemberRoutes(scope, prisma);
+    },
+    { prefix: '/api/groups/:groupId' },
   );
 
   return { app, prisma, serviceFor, broadcast, wsClients };

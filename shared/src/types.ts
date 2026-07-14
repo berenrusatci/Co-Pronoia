@@ -81,6 +81,32 @@ export interface CanvasInfo {
   memberCount: number;
   headSeq: number;
   createdAt: string;
+  groupId: string | null;
+  groupName: string | null;
+}
+
+/** admin: onaylar + davet gönderir · member: onaylandıktan sonra grubun kanvaslarına editör erişimi olur */
+export type GroupRole = 'admin' | 'member';
+export type GroupMemberStatus = 'pending' | 'approved';
+
+export interface GroupInfo {
+  id: string;
+  name: string;
+  myRole: GroupRole;
+  myStatus: GroupMemberStatus;
+  memberCount: number;
+  pendingCount: number;
+  canvasCount: number;
+  createdAt: string;
+}
+
+export interface GroupMemberInfo {
+  userId: string;
+  username: string;
+  role: GroupRole;
+  status: GroupMemberStatus;
+  jobTitle: string | null;
+  requestedAt: string;
 }
 
 export interface MemberInfo {

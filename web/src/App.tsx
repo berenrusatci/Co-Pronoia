@@ -15,6 +15,7 @@ import { BranchPanel } from './components/BranchPanel';
 import { MembersPanel } from './components/MembersPanel';
 import { RegionsPanel } from './components/RegionsPanel';
 import { LoginView } from './components/LoginView';
+import { GroupJoinPrompt } from './components/GroupJoinPrompt';
 import { Dashboard } from './components/Dashboard';
 import { Toolbar, ReadOnlyBanner, ErrorToast } from './components/Chrome';
 
@@ -40,6 +41,10 @@ export default function App() {
   // Invite link (?davet=TOKEN): accepted right after login, then stripped from the URL.
   const [joinPending, setJoinPending] = useState(
     () => new URLSearchParams(window.location.search).has('davet'),
+  );
+  // Group invite link (?grupDavet=TOKEN): prompts for a job title, then requests to join.
+  const [groupJoinPending, setGroupJoinPending] = useState(
+    () => new URLSearchParams(window.location.search).has('grupDavet'),
   );
 
   useEffect(() => {
@@ -84,6 +89,19 @@ export default function App() {
   if (!checked) return <div className="loading">Yükleniyor…</div>;
   if (!user) return <LoginView />;
   if (joinPending) return <div className="loading">Davet linki işleniyor…</div>;
+  if (groupJoinPending) {
+    return (
+      <GroupJoinPrompt
+        onDone={() => {
+          const params = new URLSearchParams(window.location.search);
+          params.delete('grupDavet');
+          const qs = params.toString();
+          window.history.replaceState(null, '', window.location.pathname + (qs ? `?${qs}` : ''));
+          setGroupJoinPending(false);
+        }}
+      />
+    );
+  }
   if (!activeCanvas) return <Dashboard />;
   if (!loaded) return <div className="loading">Yükleniyor…</div>;
 

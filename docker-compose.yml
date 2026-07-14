@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: treemapper-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: treemapper
+      POSTGRES_PASSWORD: treemapper
+      POSTGRES_DB: treemapper
+    ports:
+      - "5433:5432"
+    volumes:
+      - treemapper_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U treemapper -d treemapper"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  treemapper_pgdata:
