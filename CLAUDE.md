@@ -8,7 +8,7 @@ Requires Node 22+ (a user-local install lives at `~/.local/opt/node22/bin`; add 
 
 - Before `npm run dev` or tests: Postgres must be running — `docker compose up -d` (see root `docker-compose.yml`), exposed on host port **5433** (5432 is often taken by other local Postgres containers).
 - `npm run dev` — runs both dev servers via concurrently: Fastify API on :3001, Vite on :5173 (proxies `/api` incl. WebSocket → :3001). The server script runs `prisma db push` first, so schema changes apply automatically.
-- `npm run test` — vitest in `shared/` then `server/` (no web tests)
+- `npm run test` — vitest in `shared/` then `server/` (no web tests). Server test files run sequentially (`server/vitest.config.ts`, `fileParallelism: false`): every `buildApp` holds a Prisma pool until the suite's `afterAll`, and parallel files blow past Postgres `max_connections`.
 - `npm run test -w server` — one workspace; add `-- -t "name"` for a single test
 - `npm run build` — `prisma generate` + typecheck all workspaces + `vite build`. In prod, Fastify serves `web/dist` if it exists.
 - `npm run db:seed -w server` — populates a sample dataset (two users `ayse`/`bora`, password `sifre123`, one canvas with a few nodes/edges/commits) through the real `createCanvas`/`CommitService` code path. Not idempotent — run once against an empty DB.
@@ -47,6 +47,10 @@ The `Commit` table (append-only JSON op arrays) is the **source of truth** for m
 ### Co-op, branching, conflict rules
 
 Clients send `baseSeq` (the head they saw) with each commit. If head moved: re-expand against current state and compare target sets against intervening commits' ops (`opsConflict()` in commitService — node add/delete are wildcards, updates/moves conflict per-field, edges per-id). Disjoint → auto-merge onto main as a normal commit. Overlapping (or re-expansion throws) → a `Branch` row is created (`{username}/cakisma-{head}`) and the commit lands there, expanded against `stateAt(baseSeq)`. Merge = `diffStates(main, branchState)` as one main commit ("take branch wholesale"); discard just flips status — branch commits stay in the table, filtered out of main replay by `branchId: null`. `seq` is one per-canvas counter shared by that canvas's main and branches, so main numbering has gaps where branch commits exist — expected.
+
+### Built-in Gemini agent
+
+`POST /api/canvases/:canvasId/agent {prompt, detail?: 'proto'|'detailed'}` (`server/src/agent.ts`) — natural-language agent embedded in the server, available on every canvas with no bot user or invite: it gathers state + regions, calls Gemini (`GEMINI_API_KEY` / optional `GEMINI_MODEL` in `server/.env`; 503 if unset), parses a JSON `summary`/`diagram` response, and lands diagram ops as ONE commit through the normal `service.commit` path with the **requesting user as actor** — so viewer refusal, region checks, and conflict branching apply unchanged, and the route broadcasts the resulting `commit`/`branch_created` like any other. The model call is an injectable `Llm` function (tests pass a fake; see `agent.test.ts`). Op failures come back as a Turkish error `reply`, not an HTTP error.
 
 ### Auth & WebSocket
 

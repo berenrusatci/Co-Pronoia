@@ -14,6 +14,7 @@ import { ConnectionsPanel } from './components/ConnectionsPanel';
 import { BranchPanel } from './components/BranchPanel';
 import { MembersPanel } from './components/MembersPanel';
 import { RegionsPanel } from './components/RegionsPanel';
+import { AgentPanel } from './components/AgentPanel';
 import { LoginView } from './components/LoginView';
 import { GroupJoinPrompt } from './components/GroupJoinPrompt';
 import { Dashboard } from './components/Dashboard';
@@ -129,6 +130,7 @@ export default function App() {
         {sidePanel === 'branches' && <BranchPanel />}
         {sidePanel === 'members' && <MembersPanel />}
         {sidePanel === 'regions' && <RegionsPanel />}
+        {sidePanel === 'agent' && <AgentPanel />}
       </div>
     </div>
   );

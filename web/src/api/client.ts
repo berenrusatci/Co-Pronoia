@@ -79,6 +79,16 @@ export interface EdgeFields {
   label?: string;
 }
 
+export interface AgentResponse {
+  reply: string;
+  committed: boolean;
+  commitSeq?: number;
+  opCount?: number;
+  branched?: boolean;
+  branch?: string;
+  error?: string;
+}
+
 export const api = {
   getState: () => request<GraphState>(`${base()}/state`),
   getStateAt: (seq: number) => request<GraphState>(`${base()}/state-at/${seq}`),
@@ -120,6 +130,9 @@ export const api = {
   deleteRegion: (id: string) => del<{ ok: boolean }>(`${base()}/regions/${id}`),
   setRegionMembers: (id: string, userIds: string[], roleIds?: string[]) =>
     put<{ region: RegionInfo }>(`${base()}/regions/${id}/members`, { userIds, ...(roleIds !== undefined ? { roleIds } : {}) }),
+
+  agent: (prompt: string, detail: 'proto' | 'detailed' = 'proto') =>
+    post<AgentResponse>(`${base()}/agent`, { prompt, detail }),
 };
 
 /** Dashboard-level endpoints (not canvas-scoped). */

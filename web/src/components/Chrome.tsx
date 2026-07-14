@@ -99,6 +99,9 @@ export function Toolbar() {
         {!readOnly && view !== 'timeline' && (
           <button onClick={() => addNode({ title: 'Yeni düğüm' })}>+ Düğüm</button>
         )}
+        <button className={sidePanel === 'agent' ? 'active' : ''} onClick={() => togglePanel('agent')} title="Gemini ajanı: kanvasla doğal dilde konuş">
+          ✨ Ajan
+        </button>
         <button className={sidePanel === 'connections' ? 'active' : ''} onClick={() => togglePanel('connections')}>
           Bağlantılar ({edgeCount})
         </button>

@@ -12,6 +12,15 @@ import { useAuthStore } from './authStore';
 
 export type ViewMode = 'flow' | 'mindmap' | 'timeline';
 
+export interface AgentChatEntry {
+  who: 'user' | 'agent';
+  text: string;
+  /** Ajan yanıtı bir commit attıysa numarası; dala düştüyse branched. */
+  commitSeq?: number;
+  branched?: boolean;
+  isError?: boolean;
+}
+
 interface GraphStore {
   /** Canonical state from the server (pushed commits only). */
   serverNodes: PlanNode[];
@@ -34,7 +43,15 @@ interface GraphStore {
 
   view: ViewMode;
   selectedNodeId: string | null;
-  sidePanel: 'none' | 'history' | 'connections' | 'branches' | 'members' | 'regions';
+  sidePanel: 'none' | 'history' | 'connections' | 'branches' | 'members' | 'regions' | 'agent';
+
+  /** Ajan paneli sohbeti; panel kapansa da kanvastan çıkana dek korunur. */
+  agentLog: AgentChatEntry[];
+  agentBusy: boolean;
+  /** Çizim ayrıntısı: proto = hızlı iskelet (3-6 düğüm), detailed = kapsamlı döküm. */
+  agentDetail: 'proto' | 'detailed';
+  setAgentDetail: (detail: 'proto' | 'detailed') => void;
+  askAgent: (prompt: string) => Promise<void>;
 
   /** WS identity: commits we POST carry this id so our own broadcasts are skipped. */
   clientId: string | null;
@@ -52,7 +69,7 @@ interface GraphStore {
   reset: () => void;
   setView: (view: ViewMode) => void;
   select: (id: string | null) => void;
-  togglePanel: (panel: 'history' | 'connections' | 'branches' | 'members' | 'regions') => void;
+  togglePanel: (panel: 'history' | 'connections' | 'branches' | 'members' | 'regions' | 'agent') => void;
   clearError: () => void;
   clearNotice: () => void;
 
@@ -212,6 +229,9 @@ export const useGraphStore = create<GraphStore>((set, get) => {
     view: initialView(),
     selectedNodeId: null,
     sidePanel: 'none',
+    agentLog: [],
+    agentBusy: false,
+    agentDetail: 'proto',
     clientId: null,
     wsConnected: false,
     viewingSeq: null,
@@ -329,7 +349,34 @@ export const useGraphStore = create<GraphStore>((set, get) => {
         headSeq: 0, commits: [], branches: [], members: [], regions: [], activeUsers: [],
         loaded: false, error: null, notice: null, selectedNodeId: null, sidePanel: 'none',
         viewingSeq: null, viewingBranchId: null, viewingState: null,
+        agentLog: [], agentBusy: false,
       }),
+
+    setAgentDetail: (agentDetail) => set({ agentDetail }),
+
+    askAgent: async (prompt) => {
+      const trimmed = prompt.trim();
+      if (!trimmed || get().agentBusy) return;
+      set((s) => ({ agentLog: [...s.agentLog, { who: 'user', text: trimmed }], agentBusy: true }));
+      try {
+        // Commit atarsa sunucu WS'ten clientId: null ile yayınlar; state oradan güncellenir.
+        const res = await api.agent(trimmed, get().agentDetail);
+        set((s) => ({
+          agentLog: [...s.agentLog, {
+            who: 'agent',
+            text: res.reply || res.error || 'Yanıt alınamadı.',
+            ...(res.commitSeq !== undefined ? { commitSeq: res.commitSeq } : {}),
+            ...(res.branched ? { branched: true } : {}),
+            ...(res.error ? { isError: true } : {}),
+          }],
+        }));
+      } catch (err) {
+        const text = err instanceof ApiError ? err.message : String(err);
+        set((s) => ({ agentLog: [...s.agentLog, { who: 'agent', text, isError: true }] }));
+      } finally {
+        set({ agentBusy: false });
+      }
+    },
 
     setView: (view) => set({ view }),
     select: (selectedNodeId) => set({ selectedNodeId }),
