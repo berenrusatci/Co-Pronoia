@@ -19,4 +19,6 @@ if (existsSync(webDist)) {
 }
 
 await app.listen({ port, host });
-console.log(`co-pronoia server on http://${host}:${port} (db: ${dbUrl})`);
+// Log'a şifre sızdırma: URL'deki kimlik bilgisini maskeleyerek yaz.
+const safeDbUrl = dbUrl.replace(/\/\/([^:@/]+)(:[^@/]+)?@/, '//$1:***@');
+console.log(`co-pronoia server on http://${host}:${port} (db: ${safeDbUrl})`);
