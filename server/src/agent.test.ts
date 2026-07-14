@@ -24,11 +24,12 @@ async function freshCanvas() {
   const service = built.serviceFor(canvas.id);
   await service.commit([{ op: 'add_node', id: 'root', title: 'Kök' }]);
   const actor: Actor = { userId: owner.id, role: 'owner' };
-  const run = (llm: Llm, actorOverride?: Actor, detail?: 'proto' | 'detailed') =>
+  const run = (llm: Llm, actorOverride?: Actor, detail?: 'proto' | 'detailed', selectedIds?: string[]) =>
     runAgent({
       prisma: built.prisma, service, canvasId: canvas.id, canvasName: canvas.name,
       prompt: 'test isteği', actor: actorOverride ?? actor, llm,
       ...(detail ? { detail } : {}),
+      ...(selectedIds ? { selectedIds } : {}),
     });
   return { ...built, service, canvas, owner, actor, run };
 }
@@ -149,6 +150,22 @@ describe('agent', () => {
     await run(capture);
     expect(system).toContain('DETAY DÜZEYİ: PROTOTİP');
     expect(user).toContain('Yazabildiği bölgeler: HEPSİ');
+  });
+
+  it('threads selected nodes into the prompt, ignoring unknown ids', async () => {
+    const { run } = await freshCanvas();
+    let user = '';
+    const capture: Llm = async (_s, u) => {
+      user = u;
+      return JSON.stringify({ mode: 'summary', reply: 'ok' });
+    };
+    await run(capture, undefined, undefined, ['root', 'olmayan-id']);
+    expect(user).toContain('SEÇİLİ DÜĞÜMLER');
+    expect(user).toContain('{"id":"root","title":"Kök"}');
+    expect(user).not.toContain('olmayan-id');
+
+    await run(capture);
+    expect(user).not.toContain('SEÇİLİ DÜĞÜMLER');
   });
 
   it('reports invalid ops as an error reply instead of throwing', async () => {

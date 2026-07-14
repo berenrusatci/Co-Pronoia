@@ -28,7 +28,8 @@ export function FlowView() {
   const updateRegion = useGraphStore((s) => s.updateRegion);
   const connect = useGraphStore((s) => s.connect);
   const select = useGraphStore((s) => s.select);
-  const selectedNodeId = useGraphStore((s) => s.selectedNodeId);
+  const toggleSelect = useGraphStore((s) => s.toggleSelect);
+  const selectedNodeIds = useGraphStore((s) => s.selectedNodeIds);
   const isOwner = useCanvasStore((s) => s.active?.role === 'owner');
 
   const initialNodes = useMemo<CanvasNode[]>(() => {
@@ -50,10 +51,10 @@ export function FlowView() {
       position:
         plan.x !== null && plan.y !== null ? { x: plan.x, y: plan.y } : fallbackPosition(unplaced++),
       data: { plan, showChildButton: false },
-      selected: plan.id === selectedNodeId,
+      selected: selectedNodeIds.includes(plan.id),
     }));
     return [...regionNodes, ...cardNodes];
-  }, [nodes, regions, selectedNodeId, isOwner, readOnly]);
+  }, [nodes, regions, selectedNodeIds, isOwner, readOnly]);
 
   // Local copy so dragging is smooth; server state re-syncs it after each commit.
   const [rfNodes, setRfNodes] = useState<CanvasNode[]>(initialNodes);
@@ -125,7 +126,10 @@ export function FlowView() {
       onNodesChange={onNodesChange}
       onConnect={readOnly ? undefined : onConnect}
       onNodeDragStop={onNodeDragStop}
-      onNodeClick={(_, node) => node.type !== 'region' && select(node.id)}
+      onNodeClick={(e, node) =>
+        node.type !== 'region' &&
+        (e.ctrlKey || e.metaKey || e.shiftKey ? toggleSelect(node.id) : select(node.id))
+      }
       onPaneClick={() => select(null)}
       nodesDraggable={!readOnly}
       nodesConnectable={!readOnly}

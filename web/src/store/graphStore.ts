@@ -43,6 +43,8 @@ interface GraphStore {
 
   view: ViewMode;
   selectedNodeId: string | null;
+  /** Çoklu seçim (Ctrl/Shift+tık): ajan komutlarına bağlam olarak gider. */
+  selectedNodeIds: string[];
   sidePanel: 'none' | 'history' | 'connections' | 'branches' | 'members' | 'regions' | 'agent';
 
   /** Ajan paneli sohbeti; panel kapansa da kanvastan çıkana dek korunur. */
@@ -69,6 +71,8 @@ interface GraphStore {
   reset: () => void;
   setView: (view: ViewMode) => void;
   select: (id: string | null) => void;
+  /** Ctrl/Shift+tık: düğümü çoklu seçime ekler/çıkarır. */
+  toggleSelect: (id: string) => void;
   togglePanel: (panel: 'history' | 'connections' | 'branches' | 'members' | 'regions' | 'agent') => void;
   clearError: () => void;
   clearNotice: () => void;
@@ -228,6 +232,7 @@ export const useGraphStore = create<GraphStore>((set, get) => {
     notice: null,
     view: initialView(),
     selectedNodeId: null,
+    selectedNodeIds: [],
     sidePanel: 'none',
     agentLog: [],
     agentBusy: false,
@@ -347,7 +352,7 @@ export const useGraphStore = create<GraphStore>((set, get) => {
       set({
         serverNodes: [], serverEdges: [], nodes: [], edges: [], pending: [],
         headSeq: 0, commits: [], branches: [], members: [], regions: [], activeUsers: [],
-        loaded: false, error: null, notice: null, selectedNodeId: null, sidePanel: 'none',
+        loaded: false, error: null, notice: null, selectedNodeId: null, selectedNodeIds: [], sidePanel: 'none',
         viewingSeq: null, viewingBranchId: null, viewingState: null,
         agentLog: [], agentBusy: false,
       }),
@@ -360,7 +365,8 @@ export const useGraphStore = create<GraphStore>((set, get) => {
       set((s) => ({ agentLog: [...s.agentLog, { who: 'user', text: trimmed }], agentBusy: true }));
       try {
         // Commit atarsa sunucu WS'ten clientId: null ile yayınlar; state oradan güncellenir.
-        const res = await api.agent(trimmed, get().agentDetail);
+        // Seçili düğümler komuta bağlam olarak eklenir ("şu adımları detaylandır" bunlara işaret eder).
+        const res = await api.agent(trimmed, get().agentDetail, get().selectedNodeIds);
         set((s) => ({
           agentLog: [...s.agentLog, {
             who: 'agent',
@@ -379,7 +385,14 @@ export const useGraphStore = create<GraphStore>((set, get) => {
     },
 
     setView: (view) => set({ view }),
-    select: (selectedNodeId) => set({ selectedNodeId }),
+    select: (selectedNodeId) =>
+      set({ selectedNodeId, selectedNodeIds: selectedNodeId ? [selectedNodeId] : [] }),
+    toggleSelect: (id) =>
+      set((s) => {
+        const has = s.selectedNodeIds.includes(id);
+        const selectedNodeIds = has ? s.selectedNodeIds.filter((x) => x !== id) : [...s.selectedNodeIds, id];
+        return { selectedNodeIds, selectedNodeId: has ? (selectedNodeIds.at(-1) ?? null) : id };
+      }),
     togglePanel: (panel) => set((s) => ({ sidePanel: s.sidePanel === panel ? 'none' : panel })),
     clearError: () => set({ error: null }),
     clearNotice: () => set({ notice: null }),
@@ -388,7 +401,10 @@ export const useGraphStore = create<GraphStore>((set, get) => {
     updateNode: (id, fields) => stage([{ op: 'update_node', id, fields }]),
     deleteNode: (id) => {
       stage([{ op: 'delete_node', id }]);
-      if (get().selectedNodeId === id) set({ selectedNodeId: null });
+      set((s) => ({
+        selectedNodeIds: s.selectedNodeIds.filter((x) => x !== id),
+        ...(s.selectedNodeId === id ? { selectedNodeId: null } : {}),
+      }));
     },
     moveNode: (id, x, y) => stage([{ op: 'move_node', id, x, y }]),
     connect: (sourceId, targetId, kind) => stage([{ op: 'add_edge', id: genId(), sourceId, targetId, kind }]),

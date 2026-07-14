@@ -9,7 +9,8 @@ const nodeTypes = { card: NodeCard };
 export function MindMapView() {
   const { nodes, edges: _flowEdges, readOnly } = useDisplayedGraph();
   const select = useGraphStore((s) => s.select);
-  const selectedNodeId = useGraphStore((s) => s.selectedNodeId);
+  const toggleSelect = useGraphStore((s) => s.toggleSelect);
+  const selectedNodeIds = useGraphStore((s) => s.selectedNodeIds);
 
   const { rfNodes, rfEdges } = useMemo(() => {
     const { positions } = computeMindmapLayout(nodes);
@@ -18,7 +19,7 @@ export function MindMapView() {
       type: 'card' as const,
       position: positions.get(plan.id) ?? { x: 0, y: 0 },
       data: { plan, showChildButton: true },
-      selected: plan.id === selectedNodeId,
+      selected: selectedNodeIds.includes(plan.id),
       draggable: false,
     }));
     const ids = new Set(nodes.map((n) => n.id));
@@ -32,14 +33,16 @@ export function MindMapView() {
         className: 'hierarchy-edge',
       }));
     return { rfNodes, rfEdges };
-  }, [nodes, selectedNodeId]);
+  }, [nodes, selectedNodeIds]);
 
   return (
     <ReactFlow
       nodes={rfNodes}
       edges={rfEdges}
       nodeTypes={nodeTypes}
-      onNodeClick={(_, node) => select(node.id)}
+      onNodeClick={(e, node) =>
+        e.ctrlKey || e.metaKey || e.shiftKey ? toggleSelect(node.id) : select(node.id)
+      }
       onPaneClick={() => select(null)}
       nodesDraggable={false}
       nodesConnectable={false}

@@ -7,6 +7,12 @@ export function AgentPanel() {
   const askAgent = useGraphStore((s) => s.askAgent);
   const agentDetail = useGraphStore((s) => s.agentDetail);
   const setAgentDetail = useGraphStore((s) => s.setAgentDetail);
+  const selectedNodeIds = useGraphStore((s) => s.selectedNodeIds);
+  const nodes = useGraphStore((s) => s.nodes);
+  const toggleSelect = useGraphStore((s) => s.toggleSelect);
+  const selectedNodes = selectedNodeIds
+    .map((id) => nodes.find((n) => n.id === id))
+    .filter((n): n is NonNullable<typeof n> => n !== undefined);
   const [prompt, setPrompt] = useState('');
   const logRef = useRef<HTMLDivElement>(null);
 
@@ -41,6 +47,17 @@ export function AgentPanel() {
         {agentBusy && <div className="agent-msg agent thinking">Düşünüyor…</div>}
       </div>
       <div className="agent-input">
+        {selectedNodes.length > 0 && (
+          <div className="agent-selection" title="Seçili düğümler komuta bağlam olarak gider — 'bu adımları detaylandır' bunlara işaret eder. Ctrl+tık ile çoğaltın, × ile çıkarın.">
+            <span className="agent-selection-label">Seçili:</span>
+            {selectedNodes.map((n) => (
+              <span key={n.id} className="agent-selection-chip">
+                {n.title}
+                <button onClick={() => toggleSelect(n.id)} title="Seçimden çıkar">×</button>
+              </span>
+            ))}
+          </div>
+        )}
         <div className="agent-detail-switch" title="Çizim isteklerinde ne kadar ayrıntıya girileceği">
           <button
             className={agentDetail === 'proto' ? 'active' : ''}

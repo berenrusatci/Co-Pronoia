@@ -92,6 +92,7 @@ function buildSystemPrompt(detail: AgentDetail): string {
     '- Özet/analiz isteklerinde ASLA ops üretme; mode "summary" olsun.',
     '- Kullanıcı açıkça silme istemedikçe delete_node / delete_edge kullanma.',
     '- Kullanıcı bir bölgeden bahsediyorsa düğümlerin "regions" alanına bakarak o bölgedeki düğümleri esas al.',
+    '- SEÇİLİ DÜĞÜMLER verilmişse komutun hedefi onlardır: "detaylandır / alt adımlara böl" → her seçili düğüm için alt adımlar üret (kırılım istendiği için parentId olarak o seçili düğümün id\'sini kullanabilirsin); "değiştir / yeniden adlandır / durumunu güncelle" → update_node ile o düğümleri güncelle; "bundan sonrasını ... şekilde çiz" → akışı seçili düğümden devam ettir, ilk yeni düğümü ona bir kenarla bağla ve kullanıcı isterse seçili düğümden SONRAKİ mevcut akışı değiştir. Seçili düğümlerin konumuna yakın koordinatlar tercih et (bölge kuralı önceliklidir).',
     '- reply her zaman Türkçe, kısa ve net olsun.',
     '',
     detail === 'detailed'
@@ -107,7 +108,8 @@ function writableRegions(regions: RegionInfo[], actor: Actor): RegionInfo[] {
 }
 
 function buildUserText(
-  canvasName: string, state: GraphState, regions: RegionInfo[], actor: Actor, prompt: string,
+  canvasName: string, state: GraphState, regions: RegionInfo[], actor: Actor,
+  prompt: string, selectedIds: string[],
 ): string {
   const inRegion = (n: { x: number | null; y: number | null }, r: RegionInfo) =>
     n.x != null && n.y != null &&
@@ -154,6 +156,18 @@ function buildUserText(
     '',
     `KENARLAR: ${JSON.stringify(edges)}`,
     '',
+    ...(() => {
+      const selected = selectedIds
+        .map((id) => state.nodes.find((n) => n.id === id))
+        .filter((n): n is NonNullable<typeof n> => n !== undefined)
+        .map((n) => ({ id: n.id, title: n.title }));
+      return selected.length > 0
+        ? [
+            `SEÇİLİ DÜĞÜMLER (kullanıcı bunları kanvasta işaretledi; istekteki "bu/şu adım(lar)", "seçili düğümler", "buradan sonrası" gibi ifadeler BUNLARA işaret eder — detaylandırma/değiştirme/devamını çizme komutlarını bu düğümler üzerinde uygula): ${JSON.stringify(selected)}`,
+            '',
+          ]
+        : [];
+    })(),
     `KULLANICI İSTEĞİ: ${prompt}`,
   ].join('\n');
 }
@@ -204,13 +218,18 @@ export async function runAgent(opts: {
   prompt: string;
   actor: Actor;
   detail?: AgentDetail;
+  /** Kullanıcının kanvasta işaretlediği düğümler; "şu adımları detaylandır" bunlara işaret eder. */
+  selectedIds?: string[];
   llm?: Llm;
 }): Promise<AgentResult> {
-  const { prisma, service, canvasId, canvasName, prompt, actor, detail = 'proto' } = opts;
+  const { prisma, service, canvasId, canvasName, prompt, actor, detail = 'proto', selectedIds = [] } = opts;
   const llm: Llm = opts.llm ?? ((s, u) => geminiGenerate(s, u, modelsFor(detail)));
 
   const [state, regions] = await Promise.all([service.getState(), listRegions(prisma, canvasId)]);
-  const raw = await llm(buildSystemPrompt(detail), buildUserText(canvasName, state, regions, actor, prompt));
+  const raw = await llm(
+    buildSystemPrompt(detail),
+    buildUserText(canvasName, state, regions, actor, prompt, selectedIds),
+  );
   const { reply, message, ops } = parseModelOutput(raw);
 
   if (ops.length === 0) return { reply, committed: false };

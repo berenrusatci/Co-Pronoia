@@ -103,7 +103,7 @@ export function registerRoutes(
    * Üyelik preHandler'dan geçen herkes her kanvasta anında kullanabilir; actor istek sahibi
    * olduğundan rol/bölge kuralları normal commit'lerle aynıdır.
    */
-  app.post<{ Params: CanvasParams; Body: { prompt?: string; detail?: string } }>('/agent', async (req, reply) => {
+  app.post<{ Params: CanvasParams; Body: { prompt?: string; detail?: string; selectedIds?: string[] } }>('/agent', async (req, reply) => {
     const { canvasId, service } = scoped(req);
     const prompt = (req.body?.prompt ?? '').trim();
     if (!prompt) return reply.code(400).send({ error: 'prompt gerekli' });
@@ -115,6 +115,9 @@ export function registerRoutes(
       result = await runAgent({
         prisma, service, canvasId, canvasName: canvas?.name ?? '', prompt, actor: actorOf(req),
         detail: req.body?.detail === 'detailed' ? 'detailed' : 'proto',
+        selectedIds: Array.isArray(req.body?.selectedIds)
+          ? req.body.selectedIds.filter((x): x is string => typeof x === 'string').slice(0, 50)
+          : [],
       });
     } catch (err) {
       return reply.code(502).send({ error: `ajan çalıştırılamadı: ${err instanceof Error ? err.message : String(err)}` });
