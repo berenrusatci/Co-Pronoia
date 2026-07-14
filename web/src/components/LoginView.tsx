@@ -33,7 +33,7 @@ export function LoginView() {
         {theme === 'dark' ? '☀️' : '🌙'}
       </button>
       <form className="login-card" onSubmit={submit}>
-        <h1>🌳 TreeMapper</h1>
+        <h1><span className="brand-mark">✱</span> co-pronoia</h1>
         <p className="login-sub">Plan ağacınızı birlikte kurun — her değişiklik commit olarak kaydedilir.</p>
         {new URLSearchParams(window.location.search).has('davet') && (
           <p className="login-invite-note">

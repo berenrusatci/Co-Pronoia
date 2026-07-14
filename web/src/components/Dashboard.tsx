@@ -380,7 +380,7 @@ export function Dashboard() {
   return (
     <div className="dashboard">
       <div className="toolbar">
-        <span className="brand">🌳 TreeMapper</span>
+        <span className="brand"><span className="brand-mark">✱</span> co-pronoia</span>
         <div className="toolbar-right">
           <span className="user-chip">
             {user?.avatarUrl && <img className="user-avatar" src={user.avatarUrl} alt="" />}

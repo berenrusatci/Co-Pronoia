@@ -68,7 +68,7 @@ export function Toolbar() {
 
   return (
     <div className="toolbar">
-      <span className="brand">🌳 TreeMapper</span>
+      <span className="brand"><span className="brand-mark">✱</span> co-pronoia</span>
       <button className="pano-btn" onClick={leaveCanvas} title="Kanvas listesine dön">
         ← Pano
       </button>

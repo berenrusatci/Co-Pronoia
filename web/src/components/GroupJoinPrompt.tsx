@@ -18,7 +18,7 @@ export function GroupJoinPrompt({ onDone }: { onDone: () => void }) {
   return (
     <div className="login-screen">
       <form className="login-card" onSubmit={submit}>
-        <h1>🌳 TreeMapper</h1>
+        <h1><span className="brand-mark">✱</span> co-pronoia</h1>
         <p className="login-sub">Bir grup davet linkiyle geldiniz. Katılma isteğiniz grup yöneticisinin onayına gönderilecek.</p>
         <label>
           Rolünüz / göreviniz

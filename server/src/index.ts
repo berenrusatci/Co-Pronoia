@@ -19,4 +19,4 @@ if (existsSync(webDist)) {
 }
 
 await app.listen({ port, host });
-console.log(`treemapper server on http://${host}:${port} (db: ${dbUrl})`);
+console.log(`co-pronoia server on http://${host}:${port} (db: ${dbUrl})`);
