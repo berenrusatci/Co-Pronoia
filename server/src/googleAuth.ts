@@ -38,7 +38,11 @@ async function uniqueUsername(prisma: PrismaClient, seed: string): Promise<strin
 export async function registerGoogleAuth(app: FastifyInstance, prisma: PrismaClient): Promise<void> {
   const clientId = process.env.GOOGLE_CLIENT_ID!;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET!;
-  const redirectUri = process.env.GOOGLE_REDIRECT_URI ?? 'http://localhost:5173/api/auth/google/callback';
+  // Öncelik: açıkça verilen GOOGLE_REDIRECT_URI → Render'ın otomatik verdiği public URL → yerel geliştirme.
+  const externalUrl = process.env.RENDER_EXTERNAL_URL; // ör. https://co-pronoia.onrender.com
+  const redirectUri =
+    process.env.GOOGLE_REDIRECT_URI ??
+    (externalUrl ? `${externalUrl}/api/auth/google/callback` : 'http://localhost:5173/api/auth/google/callback');
 
   await app.register(fastifyOauth2, {
     name: 'googleOAuth2',
