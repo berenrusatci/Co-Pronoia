@@ -53,7 +53,7 @@ Geçmiş hiçbir zaman yeniden yazılmaz. Ana hat numaralandırmasında dal comm
 
 ## Gemini ajanı
 
-Sunucuya gömülü doğal dil ajanı: her kanvasta anında kullanılabilir, ayrı bot hesabı veya davet gerekmez. `server/.env` içine `GEMINI_API_KEY` (Google AI Studio anahtarı, isteğe bağlı `GEMINI_MODEL`, varsayılan `gemini-3.5-flash`) yazın ve oturum çerezinizle çağırın:
+Sunucuya gömülü doğal dil ajanı: her kanvasta anında kullanılabilir, ayrı bot hesabı veya davet gerekmez. `server/.env` içine `GEMINI_API_KEY` (Google AI Studio anahtarı) yazın ve oturum çerezinizle çağırın. Model seçimi detay düzeyine göredir: prototip `gemini-flash-lite-latest` (geniş ücretsiz kota), detaylı `gemini-flash-latest`; kota/yoğunluk hatasında otomatik diğer modele düşülür. `GEMINI_MODEL_PROTO` / `GEMINI_MODEL` env değişkenleriyle ezilebilir.
 
 ```bash
 curl -s -X POST http://localhost:3001/api/canvases/<kanvasId>/agent \

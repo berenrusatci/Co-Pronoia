@@ -23,34 +23,50 @@ export interface AgentResult {
 
 export const geminiConfigured = (): boolean => Boolean(process.env.GEMINI_API_KEY);
 
-export const geminiGenerate: Llm = async (system, user) => {
-  const model = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
-  // 429/503 (kota/yoğunluk) geçici olur: artan bekleme ile üç deneme.
-  for (let attempt = 1; ; attempt++) {
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY ?? '' },
-      body: JSON.stringify({
-        system_instruction: { parts: [{ text: system }] },
-        contents: [{ role: 'user', parts: [{ text: user }] }],
-        generationConfig: { temperature: 0.2, responseMimeType: 'application/json' },
-      }),
-    });
-    if (res.ok) {
-      const data = (await res.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
-      return (data.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? '').join('');
-    }
-    const body = (await res.text()).slice(0, 300);
-    if ((res.status === 429 || res.status === 503) && attempt < 3) {
-      await new Promise((r) => setTimeout(r, attempt * 2000));
-      continue;
-    }
-    throw new Error(`Gemini isteği başarısız (${res.status}): ${body}`);
-  }
-};
-
 /** Çizim detay düzeyi: proto = hızlı iskelet, detailed = kapsamlı döküm. */
 export type AgentDetail = 'proto' | 'detailed';
+
+/**
+ * Detay düzeyine göre model sırası: prototip hafif modeli (ayrı ve geniş ücretsiz kota),
+ * detaylı tam modeli kullanır; ilki kota/yoğunluk yüzünden düşerse diğerine geçilir.
+ * `GEMINI_MODEL_PROTO` / `GEMINI_MODEL` env değişkenleriyle ezilebilir.
+ */
+function modelsFor(detail: AgentDetail): string[] {
+  const lite = process.env.GEMINI_MODEL_PROTO || 'gemini-flash-lite-latest';
+  const full = process.env.GEMINI_MODEL || 'gemini-flash-latest';
+  return [...new Set(detail === 'proto' ? [lite, full] : [full, lite])];
+}
+
+async function geminiGenerate(system: string, user: string, models: string[]): Promise<string> {
+  let lastErr = 'model listesi boş';
+  for (const model of models) {
+    // 429/503 (kota/yoğunluk) geçici olabilir: bir kısa deneme daha, sonra sıradaki model.
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY ?? '' },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: system }] },
+          contents: [{ role: 'user', parts: [{ text: user }] }],
+          generationConfig: { temperature: 0.2, responseMimeType: 'application/json' },
+        }),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
+        return (data.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? '').join('');
+      }
+      const body = (await res.text()).slice(0, 300);
+      lastErr = `(${res.status}, ${model}): ${body}`;
+      if (res.status === 429 || res.status === 503) {
+        if (attempt < 2) await new Promise((r) => setTimeout(r, 2000));
+        continue; // ikinci denemede de düşerse iç döngü biter → sıradaki model
+      }
+      if (res.status === 404) break; // model bu hesapta yok → sıradaki model
+      throw new Error(`Gemini isteği başarısız ${lastErr}`);
+    }
+  }
+  throw new Error(`Gemini isteği başarısız ${lastErr}`);
+}
 
 function buildSystemPrompt(detail: AgentDetail): string {
   return [
@@ -191,7 +207,7 @@ export async function runAgent(opts: {
   llm?: Llm;
 }): Promise<AgentResult> {
   const { prisma, service, canvasId, canvasName, prompt, actor, detail = 'proto' } = opts;
-  const llm = opts.llm ?? geminiGenerate;
+  const llm: Llm = opts.llm ?? ((s, u) => geminiGenerate(s, u, modelsFor(detail)));
 
   const [state, regions] = await Promise.all([service.getState(), listRegions(prisma, canvasId)]);
   const raw = await llm(buildSystemPrompt(detail), buildUserText(canvasName, state, regions, actor, prompt));
