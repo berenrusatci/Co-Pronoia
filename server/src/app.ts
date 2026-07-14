@@ -26,11 +26,19 @@ declare module 'fastify' {
 }
 
 export interface WsClient {
-  socket: { send(data: string): void; close(code?: number, reason?: string): void };
+  socket: {
+    send(data: string): void;
+    close(code?: number, reason?: string): void;
+    ping?(): void;
+    terminate?(): void;
+    on?(event: string, cb: () => void): void;
+  };
   clientId: string;
   canvasId: string;
   userId: string;
   username: string;
+  /** Heartbeat: pong geldiğinde true'ya döner; iki ping arası yanıt yoksa bağlantı ölü sayılır. */
+  isAlive: boolean;
 }
 
 export async function buildApp(dbUrl: string) {
@@ -82,6 +90,34 @@ export async function buildApp(dbUrl: string) {
     broadcast(canvasId, { type: 'presence', users });
   };
 
+  // Heartbeat: sessizce kopan bağlantılar (proxy timeout, ağ kesintisi) close olayı üretmez;
+  // ping'e iki tur üst üste pong dönmeyen soket ölü sayılır, kapatılır ve presence tazelenir.
+  const heartbeat = setInterval(() => {
+    const staleCanvases = new Set<string>();
+    for (const c of [...wsClients]) {
+      if (!c.socket.ping) continue;
+      if (!c.isAlive) {
+        wsClients.delete(c);
+        staleCanvases.add(c.canvasId);
+        try {
+          c.socket.terminate?.();
+        } catch {
+          /* already gone */
+        }
+        continue;
+      }
+      c.isAlive = false;
+      try {
+        c.socket.ping();
+      } catch {
+        wsClients.delete(c);
+        staleCanvases.add(c.canvasId);
+      }
+    }
+    for (const canvasId of staleCanvases) broadcastPresence(canvasId);
+  }, 30_000);
+  app.addHook('onClose', async () => clearInterval(heartbeat));
+
   /** Notify + disconnect a canvas's sockets (all of them, or one removed user's). */
   const kick = (canvasId: string, reason: 'deleted' | 'removed', userId?: string) => {
     const gone = JSON.stringify({ type: 'canvas_gone', reason } satisfies ServerMessage);
@@ -110,8 +146,11 @@ export async function buildApp(dbUrl: string) {
         return;
       }
       const clientId = randomUUID();
-      const client: WsClient = { socket, clientId, canvasId, userId: user.id, username: user.username };
+      const client: WsClient = { socket, clientId, canvasId, userId: user.id, username: user.username, isAlive: true };
       wsClients.add(client);
+      socket.on('pong', () => {
+        client.isAlive = true;
+      });
       socket.send(JSON.stringify({ type: 'hello', clientId } satisfies ServerMessage));
       broadcastPresence(canvasId);
       socket.on('close', () => {

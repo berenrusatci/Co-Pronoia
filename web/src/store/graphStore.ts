@@ -82,7 +82,7 @@ interface GraphStore {
   createRegion: (data: { name: string; x: number; y: number; width: number; height: number; color?: string }) => Promise<void>;
   updateRegion: (id: string, data: Partial<{ name: string; x: number; y: number; width: number; height: number; color: string }>) => Promise<void>;
   deleteRegion: (id: string) => Promise<void>;
-  setRegionMembers: (id: string, userIds: string[]) => Promise<void>;
+  setRegionMembers: (id: string, userIds: string[], roleIds?: string[]) => Promise<void>;
 }
 
 let ws: WebSocket | null = null;
@@ -131,6 +131,11 @@ export const useGraphStore = create<GraphStore>((set, get) => {
   const handleOutcome = (outcome: CommitOutcome) => {
     if (outcome.result === 'committed') {
       applyState(outcome.state, outcome.commit);
+      if (outcome.droppedMoves) {
+        set({
+          notice: `${outcome.droppedMoves} konum değişikliğiniz uygulanmadı — o düğümler ana hatta zaten taşınmıştı (ana hat esas alındı).`,
+        });
+      }
     } else {
       set((s) => ({
         branches: [outcome.branch, ...s.branches.filter((b) => b.id !== outcome.branch.id)],
@@ -452,9 +457,9 @@ export const useGraphStore = create<GraphStore>((set, get) => {
         set({ error: err instanceof ApiError ? err.message : String(err) });
       }
     },
-    setRegionMembers: async (id, userIds) => {
+    setRegionMembers: async (id, userIds, roleIds) => {
       try {
-        const { region } = await api.setRegionMembers(id, userIds);
+        const { region } = await api.setRegionMembers(id, userIds, roleIds);
         set((s) => ({ regions: s.regions.map((r) => (r.id === id ? region : r)) }));
       } catch (err) {
         set({ error: err instanceof ApiError ? err.message : String(err) });

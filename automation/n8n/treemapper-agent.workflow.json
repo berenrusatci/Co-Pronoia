@@ -1,0 +1,250 @@
+{
+  "name": "TreeMapper Gemini Ajanı",
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "treemapper-agent",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "login",
+      "name": "Giriş",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [200, 0],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.TM_BASE_URL }}/api/auth/login",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ username: $env.TM_BOT_USERNAME, password: $env.TM_BOT_PASSWORD }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "prep",
+      "name": "Hazırlık",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [400, 0],
+      "parameters": {
+        "jsCode": "const login = $input.first().json;\nlet setCookie = (login.headers || {})['set-cookie'];\nif (Array.isArray(setCookie)) setCookie = setCookie.join('; ');\nconst m = /tm_session=([^;]+)/.exec(setCookie || '');\nif (!m) throw new Error('Giriş başarısız: tm_session çerezi alınamadı. TM_BOT_USERNAME / TM_BOT_PASSWORD değerlerini kontrol edin.');\nconst body = $('Webhook').first().json.body || {};\nconst canvasQuery = String(body.canvas || '').trim();\nconst prompt = String(body.prompt || '').trim();\nif (!canvasQuery) throw new Error('İstek gövdesinde \"canvas\" alanı gerekli (kanvas adı veya id).');\nif (!prompt) throw new Error('İstek gövdesinde \"prompt\" alanı gerekli.');\nreturn [{ json: { cookie: 'tm_session=' + m[1], canvasQuery, prompt } }];"
+      }
+    },
+    {
+      "id": "canvases",
+      "name": "Kanvaslar",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [600, 0],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.TM_BASE_URL }}/api/canvases",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Cookie", "value": "={{ $json.cookie }}" }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "findCanvas",
+      "name": "Kanvası bul",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [800, 0],
+      "parameters": {
+        "jsCode": "const prep = $('Hazırlık').first().json;\nconst canvases = $input.first().json.canvases || [];\nconst q = prep.canvasQuery.toLowerCase();\nconst canvas =\n  canvases.find((c) => c.id === prep.canvasQuery) ||\n  canvases.find((c) => c.name.toLowerCase() === q) ||\n  canvases.find((c) => c.name.toLowerCase().includes(q));\nif (!canvas) throw new Error('Kanvas bulunamadı: \"' + prep.canvasQuery + '\". Bot kullanıcının o kanvasa üye olduğundan emin olun (davet linkiyle ekleyin).');\nreturn [{ json: { ...prep, canvasId: canvas.id, canvasName: canvas.name, role: canvas.role } }];"
+      }
+    },
+    {
+      "id": "state",
+      "name": "Durum",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1000, 0],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.TM_BASE_URL }}/api/canvases/{{ $json.canvasId }}/state",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Cookie", "value": "={{ $json.cookie }}" }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "regions",
+      "name": "Bölgeler",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 0],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.TM_BASE_URL }}/api/canvases/{{ $('Kanvası bul').first().json.canvasId }}/regions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Cookie", "value": "={{ $('Kanvası bul').first().json.cookie }}" }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "buildContext",
+      "name": "Bağlam",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1400, 0],
+      "parameters": {
+        "jsCode": "const found = $('Kanvası bul').first().json;\nconst state = $('Durum').first().json;\nconst regions = $input.first().json.regions || [];\n\nconst inRegion = (n, r) =>\n  n.x != null && n.y != null &&\n  n.x >= r.x && n.x <= r.x + r.width &&\n  n.y >= r.y && n.y <= r.y + r.height;\n\nconst nodes = state.nodes.map((n) => ({\n  id: n.id,\n  parentId: n.parentId,\n  title: n.title,\n  description: (n.description || '').slice(0, 300),\n  nodeType: n.nodeType,\n  status: n.status,\n  x: n.x,\n  y: n.y,\n  regions: regions.filter((r) => inRegion(n, r)).map((r) => r.name),\n}));\nconst edges = state.edges.map((e) => ({\n  id: e.id, sourceId: e.sourceId, targetId: e.targetId,\n  kind: e.kind, direction: e.direction, label: e.label,\n}));\nconst regionInfo = regions.map((r) => ({ id: r.id, name: r.name, x: r.x, y: r.y, width: r.width, height: r.height }));\nconst root = state.nodes.find((n) => n.parentId === null);\n\nconst system = [\n  'Sen TreeMapper adlı iş birlikli planlama uygulaması için çalışan bir ajansın. Sana bir kanvasın güncel durumu (düğümler, kenarlar, bölgeler) ve kullanıcının doğal dildeki isteği verilir.',\n  '',\n  'YALNIZCA geçerli bir JSON nesnesi döndür (markdown, kod bloğu, ek metin YOK). İki mod var:',\n  '1) Bilgi/özet isteği (\\\"özetle\\\", \\\"anlat\\\", \\\"listele\\\", \\\"durum ne\\\"): {\\\"mode\\\":\\\"summary\\\",\\\"reply\\\":\\\"<Türkçe yanıt>\\\"}',\n  '2) Değişiklik/diyagram isteği (\\\"çiz\\\", \\\"ekle\\\", \\\"oluştur\\\", \\\"diyagramını yap\\\"): {\\\"mode\\\":\\\"diagram\\\",\\\"reply\\\":\\\"<yapılanın Türkçe özeti>\\\",\\\"message\\\":\\\"<kısa commit mesajı>\\\",\\\"ops\\\":[...]}',\n  '',\n  'ops dizisindeki geçerli işlemler (intent şemaları — alanlara birebir uy):',\n  '- {\\\"op\\\":\\\"add_node\\\",\\\"id\\\":\\\"<benzersiz kısa id>\\\",\\\"title\\\":\\\"...\\\",\\\"parentId\\\":\\\"<mevcut düğüm id>\\\",\\\"description\\\":\\\"...\\\",\\\"nodeType\\\":\\\"task|idea|feature|milestone\\\",\\\"status\\\":\\\"planned|in_progress|done\\\",\\\"x\\\":<sayı>,\\\"y\\\":<sayı>}',\n  '- {\\\"op\\\":\\\"add_edge\\\",\\\"sourceId\\\":\\\"...\\\",\\\"targetId\\\":\\\"...\\\",\\\"kind\\\":\\\"flow|loop|dependency|relation\\\",\\\"label\\\":\\\"...\\\",\\\"direction\\\":\\\"directed|bidirectional\\\"}',\n  '- {\\\"op\\\":\\\"update_node\\\",\\\"id\\\":\\\"...\\\",\\\"fields\\\":{\\\"title\\\"?,\\\"description\\\"?,\\\"nodeType\\\"?,\\\"status\\\"?,\\\"parentId\\\"?}}',\n  '- {\\\"op\\\":\\\"move_node\\\",\\\"id\\\":\\\"...\\\",\\\"x\\\":<sayı>,\\\"y\\\":<sayı>}',\n  '- {\\\"op\\\":\\\"delete_node\\\",\\\"id\\\":\\\"...\\\"} ve {\\\"op\\\":\\\"delete_edge\\\",\\\"id\\\":\\\"...\\\"}',\n  '',\n  'KURALLAR:',\n  '- Yeni düğümlere kendin id ver (ör. \\\"ai-a1\\\") ve kenarlarda bu id\\'leri kullan; mevcut id\\'lerle çakışmasın.',\n  '- Yeni düğümlerde parentId olarak kullanıcı başka bir düğüm belirtmediyse kök düğümün id\\'sini kullan.',\n  '- Kullanıcı bir BÖLGE adı verdiyse yeni düğümlerin x/y koordinatlarını o bölgenin dikdörtgeni İÇİNE yerleştir (bir düğüm yaklaşık 220x100 birim yer kaplar; düğümleri en az 240 birim yatay / 130 birim dikey aralıkla ızgara gibi diz, dikdörtgen kenarlarından en az 20 birim içeride kalsın). Akış diyagramlarında akış yönünde sırala.',\n  '- Bölge belirtilmediyse x/y VERME (null bırakılır, düğüm bölge dışı sayılır) ya da bölgelerin dışında bir koordinat seç.',\n  '- Özet/analiz isteklerinde ASLA ops üretme; mode \\\"summary\\\" olsun.',\n  '- Kullanıcı açıkça silme istemedikçe delete_node / delete_edge kullanma.',\n  '- Kullanıcı bir bölgeden bahsediyorsa düğümlerin \\\"regions\\\" alanına bakarak o bölgedeki düğümleri esas al.',\n  '- reply her zaman Türkçe, kısa ve net olsun.',\n].join('\\n');\n\nconst userText = [\n  'Kanvas: ' + found.canvasName,\n  'Kök düğüm id: ' + (root ? root.id : 'yok'),\n  '',\n  'BÖLGELER: ' + JSON.stringify(regionInfo),\n  '',\n  'DÜĞÜMLER: ' + JSON.stringify(nodes),\n  '',\n  'KENARLAR: ' + JSON.stringify(edges),\n  '',\n  'KULLANICI İSTEĞİ: ' + found.prompt,\n].join('\\n');\n\nconst geminiBody = {\n  system_instruction: { parts: [{ text: system }] },\n  contents: [{ role: 'user', parts: [{ text: userText }] }],\n  generationConfig: { temperature: 0.2, responseMimeType: 'application/json' },\n};\n\nreturn [{ json: { ...found, headSeq: state.headSeq, geminiBody } }];"
+      }
+    },
+    {
+      "id": "gemini",
+      "name": "Gemini",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1600, 0],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/{{ $env.GEMINI_MODEL || 'gemini-2.5-flash' }}:generateContent",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-goog-api-key", "value": "={{ $env.GEMINI_API_KEY }}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.geminiBody) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "parse",
+      "name": "Yanıtı çöz",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1800, 0],
+      "parameters": {
+        "jsCode": "const ctx = $('Bağlam').first().json;\nconst res = $input.first().json;\nlet text = (res.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('');\ntext = text.trim().replace(/^```(json)?\\s*/i, '').replace(/```\\s*$/, '').trim();\nlet out;\ntry {\n  out = JSON.parse(text);\n} catch {\n  out = { mode: 'summary', reply: text || 'Modelden kullanılabilir bir yanıt alınamadı.' };\n}\nconst allowed = new Set(['add_node', 'update_node', 'delete_node', 'move_node', 'add_edge', 'delete_edge']);\nlet ops = Array.isArray(out.ops) ? out.ops.filter((o) => o && allowed.has(o.op)) : [];\nif (out.mode !== 'diagram') ops = [];\nif (ops.length > 0 && ctx.role === 'viewer') {\n  return [{ json: { hasOps: false, reply: 'Bot kullanıcı bu kanvasta \"viewer\" rolünde olduğu için değişiklik yapamıyorum. İstenen değişiklik: ' + String(out.reply || ''), cookie: ctx.cookie, canvasId: ctx.canvasId } }];\n}\nreturn [{ json: {\n  cookie: ctx.cookie,\n  canvasId: ctx.canvasId,\n  headSeq: ctx.headSeq,\n  reply: String(out.reply || ''),\n  message: String(out.message || 'n8n ajan değişikliği'),\n  ops,\n  hasOps: ops.length > 0,\n} }];"
+      }
+    },
+    {
+      "id": "needsCommit",
+      "name": "Commit gerekli mi?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [2000, 0],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            { "value1": "={{ $json.hasOps }}", "value2": true }
+          ]
+        }
+      }
+    },
+    {
+      "id": "commit",
+      "name": "Commit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2200, -100],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.TM_BASE_URL }}/api/canvases/{{ $json.canvasId }}/commit",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Cookie", "value": "={{ $json.cookie }}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ message: $json.message, ops: $json.ops, baseSeq: $json.headSeq, clientId: 'n8n-ajan' }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "commitResult",
+      "name": "Commit sonucu",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2400, -100],
+      "parameters": {
+        "jsCode": "const parsed = $('Yanıtı çöz').first().json;\nconst outcome = $input.first().json;\nif (outcome.result === 'committed') {\n  return [{ json: { reply: parsed.reply, committed: true, commitSeq: outcome.commit.seq, opCount: parsed.ops.length } }];\n}\nif (outcome.result === 'branched') {\n  return [{ json: {\n    reply: parsed.reply + '\\n\\nNot: siz komut verirken kanvas değişip çakışma oluştuğu için değişiklikler \"' + outcome.branch.name + '\" dalına yazıldı. Kanvasta Dallar panelinden birleştirebilir veya iptal edebilirsiniz.',\n    committed: false,\n    branched: true,\n    branch: outcome.branch.name,\n  } }];\n}\nreturn [{ json: {\n  reply: 'Değişiklik uygulanamadı: ' + (outcome.error || JSON.stringify(outcome)) + '\\n\\nPlanlanan değişiklik: ' + parsed.reply,\n  committed: false,\n  error: outcome.error || 'bilinmeyen hata',\n} }];"
+      }
+    },
+    {
+      "id": "summaryResult",
+      "name": "Özet yanıtı",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2200, 100],
+      "parameters": {
+        "jsCode": "return [{ json: { reply: $input.first().json.reply, committed: false } }];"
+      }
+    },
+    {
+      "id": "respond",
+      "name": "Yanıt",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2600, 0],
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Giriş", "type": "main", "index": 0 }]] },
+    "Giriş": { "main": [[{ "node": "Hazırlık", "type": "main", "index": 0 }]] },
+    "Hazırlık": { "main": [[{ "node": "Kanvaslar", "type": "main", "index": 0 }]] },
+    "Kanvaslar": { "main": [[{ "node": "Kanvası bul", "type": "main", "index": 0 }]] },
+    "Kanvası bul": { "main": [[{ "node": "Durum", "type": "main", "index": 0 }]] },
+    "Durum": { "main": [[{ "node": "Bölgeler", "type": "main", "index": 0 }]] },
+    "Bölgeler": { "main": [[{ "node": "Bağlam", "type": "main", "index": 0 }]] },
+    "Bağlam": { "main": [[{ "node": "Gemini", "type": "main", "index": 0 }]] },
+    "Gemini": { "main": [[{ "node": "Yanıtı çöz", "type": "main", "index": 0 }]] },
+    "Yanıtı çöz": { "main": [[{ "node": "Commit gerekli mi?", "type": "main", "index": 0 }]] },
+    "Commit gerekli mi?": {
+      "main": [
+        [{ "node": "Commit", "type": "main", "index": 0 }],
+        [{ "node": "Özet yanıtı", "type": "main", "index": 0 }]
+      ]
+    },
+    "Commit": { "main": [[{ "node": "Commit sonucu", "type": "main", "index": 0 }]] },
+    "Commit sonucu": { "main": [[{ "node": "Yanıt", "type": "main", "index": 0 }]] },
+    "Özet yanıtı": { "main": [[{ "node": "Yanıt", "type": "main", "index": 0 }]] }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

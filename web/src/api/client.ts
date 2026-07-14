@@ -1,7 +1,16 @@
 import type {
-  BranchInfo, CanvasInfo, Commit, CommitSummary, EdgeDirection, EdgeKind, GraphState,
-  GroupInfo, GroupMemberInfo, GroupRole, MemberInfo, NodeFields, NodeType, OpInput, RegionInfo,
+  BranchInfo, CanvasAccess, CanvasInfo, Commit, CommitSummary, EdgeDirection, EdgeKind, GraphState,
+  GroupInfo, GroupMemberInfo, GroupRole, GroupRoleDefInfo, MemberInfo, NodeFields, NodeType,
+  OpInput, RegionInfo,
 } from '@treemapper/shared';
+
+export interface RoleDefInput {
+  name: string;
+  canManageMembers?: boolean;
+  canManageRoles?: boolean;
+  canCreateCanvas?: boolean;
+  defaultCanvasAccess?: CanvasAccess;
+}
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -48,7 +57,7 @@ const patch = <T>(url: string, body?: unknown) => withBody<T>('PATCH')(url, body
 const put = <T>(url: string, body?: unknown) => withBody<T>('PUT')(url, body);
 const del = <T>(url: string) => request<T>(url, { method: 'DELETE' });
 
-export type CommitResult = { result: 'committed'; commit: Commit; state: GraphState };
+export type CommitResult = { result: 'committed'; commit: Commit; state: GraphState; droppedMoves?: number };
 export type BranchedResult = { result: 'branched'; branch: BranchInfo; commit: Commit };
 export type CommitOutcome = CommitResult | BranchedResult;
 
@@ -109,8 +118,8 @@ export const api = {
   updateRegion: (id: string, data: Partial<{ name: string; x: number; y: number; width: number; height: number; color: string }>) =>
     patch<{ region: RegionInfo }>(`${base()}/regions/${id}`, data),
   deleteRegion: (id: string) => del<{ ok: boolean }>(`${base()}/regions/${id}`),
-  setRegionMembers: (id: string, userIds: string[]) =>
-    put<{ region: RegionInfo }>(`${base()}/regions/${id}/members`, { userIds }),
+  setRegionMembers: (id: string, userIds: string[], roleIds?: string[]) =>
+    put<{ region: RegionInfo }>(`${base()}/regions/${id}/members`, { userIds, ...(roleIds !== undefined ? { roleIds } : {}) }),
 };
 
 /** Dashboard-level endpoints (not canvas-scoped). */
@@ -122,13 +131,25 @@ export const canvasApi = {
     request<{ canvasName: string; invitedBy: string }>(`/api/invites/${encodeURIComponent(token)}`),
   acceptInvite: (token: string) => post<{ canvas: CanvasInfo }>(`/api/invites/${encodeURIComponent(token)}/accept`),
   deleteCanvas: (canvasId: string) => del<{ ok: boolean }>(`/api/canvases/${canvasId}`),
+  setRoleAccess: (canvasId: string, roleId: string, access: CanvasAccess | null) =>
+    put<{ ok: boolean }>(`/api/canvases/${canvasId}/role-access`, { roleId, access }),
+  getRoleAccess: (canvasId: string) =>
+    request<{ access: { roleId: string; access: CanvasAccess }[] }>(`/api/canvases/${canvasId}/role-access`),
   changePassword: (current: string, next: string) => post<{ ok: boolean }>('/api/auth/password', { current, next }),
 };
 
 /** Dashboard-level group endpoints. */
 export const groupApi = {
   list: () => request<{ groups: GroupInfo[] }>('/api/groups'),
-  create: (name: string) => post<{ group: GroupInfo }>('/api/groups', { name }),
+  create: (name: string, roles?: RoleDefInput[]) => post<{ group: GroupInfo }>('/api/groups', { name, roles }),
+  roles: (groupId: string) => request<{ roles: GroupRoleDefInfo[] }>(`/api/groups/${groupId}/roles`),
+  createRole: (groupId: string, role: RoleDefInput) =>
+    post<{ role: GroupRoleDefInfo }>(`/api/groups/${groupId}/roles`, role),
+  updateRole: (groupId: string, roleId: string, role: Partial<RoleDefInput>) =>
+    patch<{ role: GroupRoleDefInfo }>(`/api/groups/${groupId}/roles/${roleId}`, role),
+  deleteRole: (groupId: string, roleId: string) => del<{ ok: boolean }>(`/api/groups/${groupId}/roles/${roleId}`),
+  setMemberRoleDef: (groupId: string, userId: string, roleDefId: string | null) =>
+    patch<{ members: GroupMemberInfo[] }>(`/api/groups/${groupId}/members/${userId}`, { roleDefId }),
   members: (groupId: string) => request<{ members: GroupMemberInfo[] }>(`/api/groups/${groupId}/members`),
   approveMember: (groupId: string, userId: string) =>
     patch<{ members: GroupMemberInfo[] }>(`/api/groups/${groupId}/members/${userId}`, { status: 'approved' }),

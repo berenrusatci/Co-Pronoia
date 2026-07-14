@@ -85,9 +85,21 @@ export interface CanvasInfo {
   groupName: string | null;
 }
 
-/** admin: onaylar + davet gönderir · member: onaylandıktan sonra grubun kanvaslarına editör erişimi olur */
+/** admin: onaylar + davet gönderir · member: yetkileri atanmış özel rolünden (GroupRoleDefInfo) gelir */
 export type GroupRole = 'admin' | 'member';
 export type GroupMemberStatus = 'pending' | 'approved';
+/** Rolün bir grup kanvasına erişim düzeyi. */
+export type CanvasAccess = 'none' | 'view' | 'edit';
+
+/** Grup kurucusunun/yetkilinin tanımladığı özel rol ve yetkileri. */
+export interface GroupRoleDefInfo {
+  id: string;
+  name: string;
+  canManageMembers: boolean;
+  canManageRoles: boolean;
+  canCreateCanvas: boolean;
+  defaultCanvasAccess: CanvasAccess;
+}
 
 export interface GroupInfo {
   id: string;
@@ -106,6 +118,8 @@ export interface GroupMemberInfo {
   role: GroupRole;
   status: GroupMemberStatus;
   jobTitle: string | null;
+  roleDefId: string | null;
+  roleDefName: string | null;
   requestedAt: string;
 }
 
@@ -116,7 +130,9 @@ export interface MemberInfo {
   joinedAt: string;
 }
 
-/** Owner-defined rectangle: only its members (and the owner) may change nodes inside it. */
+/** Owner-defined rectangle: only its members (and the owner) may change nodes inside it.
+ * memberIds, doğrudan atanan kullanıcılar ile bölgeye erişimli rollerin üyelerinin
+ * birleşimi olarak server tarafında genişletilmiş gelir — regionGuard yalnızca bunu okur. */
 export interface RegionInfo {
   id: string;
   name: string;
@@ -127,6 +143,10 @@ export interface RegionInfo {
   color: string;
   memberIds: string[];
   memberNames: string[];
+  /** Yalnızca doğrudan atanan kullanıcılar (yönetim UI'ının checkbox durumu; memberIds bunun üst kümesi). */
+  directMemberIds: string[];
+  /** Bölgeye erişimi olan grup rolü id'leri (yönetim UI'ı için; enforcement memberIds üzerinden). */
+  roleIds: string[];
 }
 
 export interface GraphState {

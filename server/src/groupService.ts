@@ -1,6 +1,31 @@
 import type { PrismaClient } from '@prisma/client';
 import { nanoid } from 'nanoid';
-import type { GroupInfo, GroupMemberInfo, GroupRole, GroupMemberStatus } from '@treemapper/shared';
+import type {
+  CanvasAccess, GroupInfo, GroupMemberInfo, GroupRole, GroupRoleDefInfo, GroupMemberStatus,
+} from '@treemapper/shared';
+
+export interface RoleDefInput {
+  name: string;
+  canManageMembers?: boolean;
+  canManageRoles?: boolean;
+  canCreateCanvas?: boolean;
+  defaultCanvasAccess?: CanvasAccess;
+}
+
+const toRoleDefInfo = (r: {
+  id: string; name: string; canManageMembers: boolean; canManageRoles: boolean;
+  canCreateCanvas: boolean; defaultCanvasAccess: string;
+}): GroupRoleDefInfo => ({
+  id: r.id,
+  name: r.name,
+  canManageMembers: r.canManageMembers,
+  canManageRoles: r.canManageRoles,
+  canCreateCanvas: r.canCreateCanvas,
+  defaultCanvasAccess: r.defaultCanvasAccess as CanvasAccess,
+});
+
+const validAccess = (a: string | undefined): CanvasAccess =>
+  a === 'none' || a === 'view' || a === 'edit' ? a : 'edit';
 
 export async function listGroups(prisma: PrismaClient, userId: string): Promise<GroupInfo[]> {
   const rows = await prisma.groupMember.findMany({
@@ -36,9 +61,28 @@ export async function listGroups(prisma: PrismaClient, userId: string): Promise<
   }));
 }
 
-export async function createGroup(prisma: PrismaClient, name: string, userId: string): Promise<GroupInfo> {
+export async function createGroup(
+  prisma: PrismaClient,
+  name: string,
+  userId: string,
+  roles: RoleDefInput[] = [],
+): Promise<GroupInfo> {
   const group = await prisma.group.create({
-    data: { name, members: { create: { userId, role: 'admin', status: 'approved' } } },
+    data: {
+      name,
+      members: { create: { userId, role: 'admin', status: 'approved' } },
+      roleDefs: {
+        create: roles
+          .filter((r) => r.name.trim().length > 0)
+          .map((r) => ({
+            name: r.name.trim().slice(0, 60),
+            canManageMembers: r.canManageMembers ?? false,
+            canManageRoles: r.canManageRoles ?? false,
+            canCreateCanvas: r.canCreateCanvas ?? true,
+            defaultCanvasAccess: validAccess(r.defaultCanvasAccess),
+          })),
+      },
+    },
   });
   return {
     id: group.id,
@@ -66,7 +110,7 @@ export async function listGroupMembers(prisma: PrismaClient, groupId: string): P
   const rows = await prisma.groupMember.findMany({
     where: { groupId },
     orderBy: { requestedAt: 'asc' },
-    include: { user: { select: { username: true } } },
+    include: { user: { select: { username: true } }, roleDef: { select: { id: true, name: true } } },
   });
   return rows.map((m) => ({
     userId: m.userId,
@@ -74,8 +118,109 @@ export async function listGroupMembers(prisma: PrismaClient, groupId: string): P
     role: m.role as GroupRole,
     status: m.status as GroupMemberStatus,
     jobTitle: m.jobTitle,
+    roleDefId: m.roleDef?.id ?? null,
+    roleDefName: m.roleDef?.name ?? null,
     requestedAt: m.requestedAt.toISOString(),
   }));
+}
+
+// ---------- Özel roller (GroupRoleDef) ----------
+
+export async function listGroupRoles(prisma: PrismaClient, groupId: string): Promise<GroupRoleDefInfo[]> {
+  const rows = await prisma.groupRoleDef.findMany({ where: { groupId }, orderBy: { createdAt: 'asc' } });
+  return rows.map(toRoleDefInfo);
+}
+
+export async function createGroupRole(
+  prisma: PrismaClient,
+  groupId: string,
+  input: RoleDefInput,
+): Promise<GroupRoleDefInfo | { error: string }> {
+  const name = input.name.trim().slice(0, 60);
+  if (!name) return { error: 'rol adı gerekli' };
+  const row = await prisma.groupRoleDef.create({
+    data: {
+      groupId,
+      name,
+      canManageMembers: input.canManageMembers ?? false,
+      canManageRoles: input.canManageRoles ?? false,
+      canCreateCanvas: input.canCreateCanvas ?? true,
+      defaultCanvasAccess: validAccess(input.defaultCanvasAccess),
+    },
+  });
+  return toRoleDefInfo(row);
+}
+
+export async function updateGroupRole(
+  prisma: PrismaClient,
+  groupId: string,
+  roleId: string,
+  input: Partial<RoleDefInput>,
+): Promise<GroupRoleDefInfo | { error: string }> {
+  const existing = await prisma.groupRoleDef.findFirst({ where: { id: roleId, groupId } });
+  if (!existing) return { error: 'rol bulunamadı' };
+  const row = await prisma.groupRoleDef.update({
+    where: { id: roleId },
+    data: {
+      ...(input.name !== undefined ? { name: input.name.trim().slice(0, 60) || existing.name } : {}),
+      ...(input.canManageMembers !== undefined ? { canManageMembers: input.canManageMembers } : {}),
+      ...(input.canManageRoles !== undefined ? { canManageRoles: input.canManageRoles } : {}),
+      ...(input.canCreateCanvas !== undefined ? { canCreateCanvas: input.canCreateCanvas } : {}),
+      ...(input.defaultCanvasAccess !== undefined
+        ? { defaultCanvasAccess: validAccess(input.defaultCanvasAccess) }
+        : {}),
+    },
+  });
+  return toRoleDefInfo(row);
+}
+
+export async function deleteGroupRole(
+  prisma: PrismaClient,
+  groupId: string,
+  roleId: string,
+): Promise<boolean> {
+  const existing = await prisma.groupRoleDef.findFirst({ where: { id: roleId, groupId } });
+  if (!existing) return false;
+  await prisma.groupRoleDef.delete({ where: { id: roleId } }); // üyelerin roleDefId'si SetNull ile düşer
+  return true;
+}
+
+export async function setGroupMemberRoleDef(
+  prisma: PrismaClient,
+  groupId: string,
+  targetUserId: string,
+  roleDefId: string | null,
+): Promise<GroupMemberInfo[] | { error: string }> {
+  const target = await prisma.groupMember.findUnique({ where: { groupId_userId: { groupId, userId: targetUserId } } });
+  if (!target) return { error: 'üye bulunamadı' };
+  if (roleDefId !== null) {
+    const role = await prisma.groupRoleDef.findFirst({ where: { id: roleDefId, groupId } });
+    if (!role) return { error: 'rol bulunamadı' };
+  }
+  await prisma.groupMember.update({
+    where: { groupId_userId: { groupId, userId: targetUserId } },
+    data: { roleDefId },
+  });
+  return listGroupMembers(prisma, groupId);
+}
+
+/** Kullanıcının gruptaki yetki bayrakları: admin her şeyi yapar, değilse atanmış rolünden gelir. */
+export async function memberPermissions(
+  prisma: PrismaClient,
+  groupId: string,
+  userId: string,
+): Promise<{ canManageMembers: boolean; canManageRoles: boolean; canCreateCanvas: boolean } | null> {
+  const row = await prisma.groupMember.findUnique({
+    where: { groupId_userId: { groupId, userId } },
+    include: { roleDef: true },
+  });
+  if (!row || row.status !== 'approved') return null;
+  if (row.role === 'admin') return { canManageMembers: true, canManageRoles: true, canCreateCanvas: true };
+  return {
+    canManageMembers: row.roleDef?.canManageMembers ?? false,
+    canManageRoles: row.roleDef?.canManageRoles ?? false,
+    canCreateCanvas: row.roleDef?.canCreateCanvas ?? true,
+  };
 }
 
 async function approvedAdminCount(prisma: PrismaClient, groupId: string): Promise<number> {

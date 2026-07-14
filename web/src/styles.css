@@ -491,6 +491,29 @@ button.primary:disabled { opacity: .5; cursor: default; }
 }
 .canvas-folder .canvas-grid { margin-top: 10px; }
 
+/* Role definitions */
+.role-def-row {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin-top: 8px;
+  background: var(--bg-panel); font-size: 12.5px;
+}
+.role-def-row input[type="text"], .role-def-row input:not([type]) {
+  font: inherit; font-size: 13px; padding: 5px 8px; border: 1px solid var(--border-strong);
+  border-radius: 6px; background: var(--bg-panel); color: var(--text); width: 170px;
+}
+.role-def-row select {
+  font: inherit; font-size: 12px; padding: 4px 6px; border: 1px solid var(--border-strong);
+  border-radius: 6px; background: var(--bg-panel); color: var(--text);
+}
+.role-def-check { display: flex; align-items: center; gap: 4px; color: var(--text-muted); cursor: pointer; }
+.role-def-add { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; margin-top: 4px; }
+.role-def-add > button { border-radius: 6px; border: 1px solid var(--border-strong); padding: 5px 12px; cursor: pointer; font-size: 12.5px; }
+.group-roles { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
+.group-roles h5 { margin: 8px 0 4px; font-size: 11.5px; color: var(--text-faint); }
+.canvas-create-block { margin-bottom: 22px; }
+.canvas-create-block .canvas-create { margin-bottom: 0; }
+.region-picker-label { margin-top: 8px; font-size: 11px; color: var(--text-faint); font-weight: 600; }
+
 /* Groups */
 .groups-section { margin-top: 28px; }
 .group-list-grid { display: flex; flex-direction: column; gap: 10px; }

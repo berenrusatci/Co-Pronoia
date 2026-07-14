@@ -5,8 +5,8 @@ import { useCanvasStore } from '../store/canvasStore';
 import { useThemeStore } from '../store/themeStore';
 
 const views: { key: ViewMode; label: string }[] = [
-  { key: 'mindmap', label: 'Zihin Haritası' },
-  { key: 'flow', label: 'Akış Diyagramı' },
+  { key: 'flow', label: 'Zihin Haritası' },
+  { key: 'mindmap', label: 'Akış Diyagramı' },
   { key: 'timeline', label: 'Zaman Çizelgesi' },
 ];
 

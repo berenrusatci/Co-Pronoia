@@ -1,16 +1,66 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import type { CanvasInfo, GroupInfo, GroupMemberInfo } from '@treemapper/shared';
+import type { CanvasAccess, CanvasInfo, GroupInfo, GroupMemberInfo, GroupRoleDefInfo } from '@treemapper/shared';
 import { useCanvasStore } from '../store/canvasStore';
 import { useGroupStore } from '../store/groupStore';
 import { useAuthStore } from '../store/authStore';
 import { useThemeStore } from '../store/themeStore';
-import { canvasApi, ApiError } from '../api/client';
+import { canvasApi, groupApi, ApiError, type RoleDefInput } from '../api/client';
+
+const accessLabels: Record<CanvasAccess, string> = { none: 'erişim yok', view: 'görüntüleme', edit: 'düzenleme' };
+
+/** Grup kanvasının rol bazlı erişim ayarları (yalnızca kanvas sahibine görünür). */
+function CanvasRoleAccessPanel({ canvas }: { canvas: CanvasInfo }) {
+  const [roles, setRoles] = useState<GroupRoleDefInfo[]>([]);
+  const [overrides, setOverrides] = useState<Record<string, CanvasAccess | ''>>({});
+
+  useEffect(() => {
+    if (!canvas.groupId) return;
+    groupApi.roles(canvas.groupId).then(({ roles }) => setRoles(roles)).catch(() => setRoles([]));
+    canvasApi.getRoleAccess(canvas.id).then(({ access }) => {
+      const map: Record<string, CanvasAccess | ''> = {};
+      for (const a of access) map[a.roleId] = a.access;
+      setOverrides(map);
+    }).catch(() => {});
+  }, [canvas.groupId, canvas.id]);
+
+  if (roles.length === 0) return <p className="empty-note">Bu grupta tanımlı özel rol yok.</p>;
+
+  return (
+    <ul className="member-list">
+      {roles.map((r) => (
+        <li key={r.id} className="member-item">
+          <span className="member-name">{r.name}</span>
+          <span className="member-actions">
+            <select
+              value={overrides[r.id] ?? ''}
+              onChange={async (e) => {
+                const v = e.target.value as CanvasAccess | '';
+                setOverrides((o) => ({ ...o, [r.id]: v }));
+                try {
+                  await canvasApi.setRoleAccess(canvas.id, r.id, v === '' ? null : v);
+                } catch {
+                  setOverrides((o) => ({ ...o, [r.id]: '' }));
+                }
+              }}
+            >
+              <option value="">varsayılan ({accessLabels[r.defaultCanvasAccess]})</option>
+              <option value="edit">düzenleme</option>
+              <option value="view">görüntüleme</option>
+              <option value="none">erişim yok</option>
+            </select>
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 function CanvasCard({ canvas }: { canvas: CanvasInfo }) {
   const open = useCanvasStore((s) => s.open);
   const inviteLink = useCanvasStore((s) => s.inviteLink);
   const deleteCanvas = useCanvasStore((s) => s.deleteCanvas);
   const [copied, setCopied] = useState(false);
+  const [showAccess, setShowAccess] = useState(false);
 
   const copyInvite = async () => {
     const url = await inviteLink(canvas.id);
@@ -42,6 +92,11 @@ function CanvasCard({ canvas }: { canvas: CanvasInfo }) {
         <button onClick={copyInvite} title="Bu kanvasa üye ekleme linki oluştur ve kopyala">
           {copied ? 'Kopyalandı ✓' : '🔗 Davet linki'}
         </button>
+        {canvas.role === 'owner' && canvas.groupId && (
+          <button onClick={() => setShowAccess(!showAccess)} title="Grup rollerinin bu kanvasa erişimini ayarla">
+            🔐 Erişim
+          </button>
+        )}
         {canvas.role === 'owner' && (
           <button
             className="danger-sm"
@@ -54,11 +109,134 @@ function CanvasCard({ canvas }: { canvas: CanvasInfo }) {
           </button>
         )}
       </div>
+      {showAccess && canvas.groupId && <CanvasRoleAccessPanel canvas={canvas} />}
     </div>
   );
 }
 
 const groupRoleLabels: Record<string, string> = { admin: 'yönetici', member: 'üye' };
+
+/** Tek bir rol tanımı satırı: isim + yetki kutuları. Hem grup kurarken hem sonradan düzenlerken kullanılır. */
+function RoleDefRow({
+  value, onChange, onRemove,
+}: {
+  value: RoleDefInput;
+  onChange: (next: RoleDefInput) => void;
+  onRemove?: () => void;
+}) {
+  return (
+    <div className="role-def-row">
+      <input
+        placeholder="Rol adı (ör. Tasarımcı)"
+        value={value.name}
+        maxLength={60}
+        onChange={(e) => onChange({ ...value, name: e.target.value })}
+      />
+      <select
+        value={value.defaultCanvasAccess ?? 'edit'}
+        title="Grubun kanvaslarına varsayılan erişim"
+        onChange={(e) => onChange({ ...value, defaultCanvasAccess: e.target.value as CanvasAccess })}
+      >
+        <option value="edit">kanvas: düzenleme</option>
+        <option value="view">kanvas: görüntüleme</option>
+        <option value="none">kanvas: erişim yok</option>
+      </select>
+      <label className="role-def-check" title="Üyeleri onaylayabilir, çıkarabilir, davet edebilir">
+        <input
+          type="checkbox"
+          checked={value.canManageMembers ?? false}
+          onChange={(e) => onChange({ ...value, canManageMembers: e.target.checked })}
+        />
+        üye yönetimi
+      </label>
+      <label className="role-def-check" title="Rolleri ve erişimleri düzenleyebilir">
+        <input
+          type="checkbox"
+          checked={value.canManageRoles ?? false}
+          onChange={(e) => onChange({ ...value, canManageRoles: e.target.checked })}
+        />
+        rol yönetimi
+      </label>
+      <label className="role-def-check" title="Grup içinde yeni kanvas açabilir">
+        <input
+          type="checkbox"
+          checked={value.canCreateCanvas ?? true}
+          onChange={(e) => onChange({ ...value, canCreateCanvas: e.target.checked })}
+        />
+        kanvas açma
+      </label>
+      {onRemove && (
+        <button type="button" className="region-del" onClick={onRemove}>Sil</button>
+      )}
+    </div>
+  );
+}
+
+/** Grubun özel rollerini listeler/düzenler (admin ya da rol yönetme yetkisi olanlar). */
+function GroupRolesPanel({ groupId }: { groupId: string }) {
+  const [roles, setRoles] = useState<GroupRoleDefInfo[]>([]);
+  const [draft, setDraft] = useState<RoleDefInput>({ name: '', defaultCanvasAccess: 'edit', canCreateCanvas: true });
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = () =>
+    groupApi.roles(groupId).then(({ roles }) => setRoles(roles)).catch(() => setRoles([]));
+
+  useEffect(() => {
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groupId]);
+
+  const saveExisting = async (role: GroupRoleDefInfo, patch: Partial<RoleDefInput>) => {
+    try {
+      await groupApi.updateRole(groupId, role.id, patch);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err));
+    }
+  };
+
+  return (
+    <div className="group-roles">
+      <h5>Roller ({roles.length})</h5>
+      {roles.map((r) => (
+        <RoleDefRow
+          key={r.id}
+          value={r}
+          onChange={(next) => saveExisting(r, next)}
+          onRemove={async () => {
+            if (!window.confirm(`"${r.name}" rolü silinsin mi? Bu roldeki üyeler rolsüz kalır.`)) return;
+            try {
+              await groupApi.deleteRole(groupId, r.id);
+              await refresh();
+            } catch (err) {
+              setError(err instanceof ApiError ? err.message : String(err));
+            }
+          }}
+        />
+      ))}
+      <div className="role-def-add">
+        <RoleDefRow value={draft} onChange={setDraft} />
+        <button
+          type="button"
+          className="primary"
+          disabled={!draft.name.trim()}
+          onClick={async () => {
+            try {
+              await groupApi.createRole(groupId, draft);
+              setDraft({ name: '', defaultCanvasAccess: 'edit', canCreateCanvas: true });
+              await refresh();
+            } catch (err) {
+              setError(err instanceof ApiError ? err.message : String(err));
+            }
+          }}
+        >
+          + Rol ekle
+        </button>
+      </div>
+      {error && <div className="login-error" onClick={() => setError(null)}>{error}</div>}
+    </div>
+  );
+}
 
 function GroupMembersPanel({ groupId }: { groupId: string }) {
   const loadMembers = useGroupStore((s) => s.loadMembers);
@@ -67,11 +245,13 @@ function GroupMembersPanel({ groupId }: { groupId: string }) {
   const removeMember = useGroupStore((s) => s.removeMember);
   const loadGroups = useGroupStore((s) => s.loadGroups);
   const [members, setMembers] = useState<GroupMemberInfo[]>([]);
+  const [roles, setRoles] = useState<GroupRoleDefInfo[]>([]);
 
   const refresh = async () => setMembers(await loadMembers(groupId));
 
   useEffect(() => {
     refresh();
+    groupApi.roles(groupId).then(({ roles }) => setRoles(roles)).catch(() => setRoles([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groupId]);
 
@@ -135,6 +315,21 @@ function GroupMembersPanel({ groupId }: { groupId: string }) {
                 <option value="admin">yönetici</option>
                 <option value="member">üye</option>
               </select>
+              {m.role !== 'admin' && roles.length > 0 && (
+                <select
+                  value={m.roleDefId ?? ''}
+                  title="Özel rol ata"
+                  onChange={async (e) => {
+                    await groupApi.setMemberRoleDef(groupId, m.userId, e.target.value || null);
+                    await refresh();
+                  }}
+                >
+                  <option value="">rol yok</option>
+                  {roles.map((r) => (
+                    <option key={r.id} value={r.id}>{r.name}</option>
+                  ))}
+                </select>
+              )}
               <button
                 onClick={async () => {
                   await removeMember(groupId, m.userId);
@@ -155,6 +350,7 @@ function GroupMembersPanel({ groupId }: { groupId: string }) {
 function GroupCard({ group }: { group: GroupInfo }) {
   const inviteLink = useGroupStore((s) => s.inviteLink);
   const [expanded, setExpanded] = useState(false);
+  const [showRoles, setShowRoles] = useState(false);
   const [copied, setCopied] = useState(false);
   const isAdmin = group.myRole === 'admin';
 
@@ -189,8 +385,12 @@ function GroupCard({ group }: { group: GroupInfo }) {
         {isAdmin && (
           <button onClick={() => setExpanded(!expanded)}>{expanded ? 'Üyeleri gizle' : 'Üyeleri yönet'}</button>
         )}
+        {isAdmin && (
+          <button onClick={() => setShowRoles(!showRoles)}>{showRoles ? 'Rolleri gizle' : 'Rolleri yönet'}</button>
+        )}
       </div>
       {isAdmin && expanded && <GroupMembersPanel groupId={group.id} />}
+      {isAdmin && showRoles && <GroupRolesPanel groupId={group.id} />}
     </div>
   );
 }
@@ -200,29 +400,50 @@ function GroupsSection() {
   const createGroup = useGroupStore((s) => s.createGroup);
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
+  const [draftRoles, setDraftRoles] = useState<RoleDefInput[]>([]);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!name.trim() || busy) return;
     setBusy(true);
-    const group = await createGroup(name.trim());
+    const group = await createGroup(name.trim(), draftRoles.filter((r) => r.name.trim()));
     setBusy(false);
-    if (group) setName('');
+    if (group) {
+      setName('');
+      setDraftRoles([]);
+    }
   };
 
   return (
     <div className="groups-section">
       <h2>Gruplarım</h2>
-      <form className="canvas-create" onSubmit={submit}>
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Yeni grup adı…"
-          maxLength={80}
-        />
-        <button type="submit" className="login-btn" disabled={!name.trim() || busy}>
-          + Grup oluştur
-        </button>
+      <form className="canvas-create-block" onSubmit={submit}>
+        <div className="canvas-create">
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Yeni grup adı…"
+            maxLength={80}
+          />
+          <button
+            type="button"
+            className="pano-btn"
+            onClick={() => setDraftRoles((r) => [...r, { name: '', defaultCanvasAccess: 'edit', canCreateCanvas: true }])}
+          >
+            + Rol tanımla
+          </button>
+          <button type="submit" className="login-btn" disabled={!name.trim() || busy}>
+            + Grup oluştur
+          </button>
+        </div>
+        {draftRoles.map((r, i) => (
+          <RoleDefRow
+            key={i}
+            value={r}
+            onChange={(next) => setDraftRoles((all) => all.map((x, j) => (j === i ? next : x)))}
+            onRemove={() => setDraftRoles((all) => all.filter((_, j) => j !== i))}
+          />
+        ))}
       </form>
       {groups.length === 0 ? (
         <p className="empty-note">

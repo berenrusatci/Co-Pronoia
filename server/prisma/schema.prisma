@@ -49,28 +49,73 @@ model Canvas {
   commits   Commit[]
   branches  Branch[]
   regions   Region[]
+  roleAccess CanvasRoleAccess[]
 }
 
 model Group {
-  id        String        @id @default(cuid())
+  id        String         @id @default(cuid())
   name      String
-  createdAt DateTime      @default(now())
+  createdAt DateTime       @default(now())
   members   GroupMember[]
   canvases  Canvas[]
   invites   GroupInvite[]
+  roleDefs  GroupRoleDef[]
+}
+
+/// Grup kurucusunun tanımladığı özel rol: isim + yetki bayrakları.
+/// Kanvas ve bölge erişimleri bu role ayrı tablolarla (CanvasRoleAccess / RegionRoleAccess) bağlanır.
+model GroupRoleDef {
+  id                  String   @id @default(cuid())
+  groupId             String
+  group               Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  name                String
+  canManageMembers    Boolean  @default(false)
+  canManageRoles      Boolean  @default(false)
+  canCreateCanvas     Boolean  @default(true)
+  /// Açık CanvasRoleAccess kaydı olmayan grup kanvasları için geçerli erişim: none | view | edit
+  defaultCanvasAccess String   @default("edit")
+  createdAt           DateTime @default(now())
+  members             GroupMember[]
+  canvasAccess        CanvasRoleAccess[]
+  regionAccess        RegionRoleAccess[]
+
+  @@index([groupId])
 }
 
 model GroupMember {
   groupId     String
-  group       Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  group       Group         @relation(fields: [groupId], references: [id], onDelete: Cascade)
   userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  role        String   @default("member")
-  status      String   @default("pending")
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role        String        @default("member")
+  status      String        @default("pending")
   jobTitle    String?
-  requestedAt DateTime @default(now())
+  roleDefId   String?
+  roleDef     GroupRoleDef? @relation(fields: [roleDefId], references: [id], onDelete: SetNull)
+  requestedAt DateTime      @default(now())
 
   @@id([groupId, userId])
+}
+
+/// Rolün belirli bir grup kanvasına erişimi: none | view | edit.
+model CanvasRoleAccess {
+  canvasId String
+  canvas   Canvas       @relation(fields: [canvasId], references: [id], onDelete: Cascade)
+  roleId   String
+  role     GroupRoleDef @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  access   String
+
+  @@id([canvasId, roleId])
+}
+
+/// Rolün bölge üyeliği: kaydı olan rol o bölgedeki düğümlere dokunabilir.
+model RegionRoleAccess {
+  regionId String
+  region   Region       @relation(fields: [regionId], references: [id], onDelete: Cascade)
+  roleId   String
+  role     GroupRoleDef @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([regionId, roleId])
 }
 
 model GroupInvite {
@@ -102,9 +147,10 @@ model Region {
   y         Float
   width     Float
   height    Float
-  color     String         @default("#3b6fe0")
+  color     String         @default("#d97757")
   createdAt DateTime       @default(now())
   members   RegionMember[]
+  roleAccess RegionRoleAccess[]
 
   @@index([canvasId])
 }
