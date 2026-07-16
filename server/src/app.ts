@@ -15,6 +15,7 @@ import type { EmailSender } from './email.js';
 import { registerGoogleAuth } from './googleAuth.js';
 import { registerCanvasRoutes } from './canvasRoutes.js';
 import { registerGroupRoutes, registerGroupMemberRoutes } from './groupRoutes.js';
+import { registerAdminRoutes } from './adminRoutes.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -195,6 +196,17 @@ export async function buildApp(dbUrl: string, opts?: { emailSender?: EmailSender
       registerGroupMemberRoutes(scope, prisma);
     },
     { prefix: '/api/groups/:groupId' },
+  );
+
+  // Site yönetim paneli: yalnızca isAdmin kullanıcılar (401'i global hook verir).
+  await app.register(
+    async (scope) => {
+      scope.addHook('preHandler', async (req, reply) => {
+        if (!req.user?.isAdmin) return reply.code(403).send({ error: 'yönetici yetkisi gerekli' });
+      });
+      registerAdminRoutes(scope, prisma, broadcast, kick);
+    },
+    { prefix: '/api/admin' },
   );
 
   return { app, prisma, serviceFor, broadcast, wsClients };

@@ -1,4 +1,5 @@
 import type {
+  AdminCanvasInfo, AdminGroupInfo, AdminStats, AdminUserInfo,
   BranchInfo, CanvasAccess, CanvasInfo, Commit, CommitSummary, EdgeDirection, EdgeKind, GraphState,
   GroupInfo, GroupMemberInfo, GroupRole, GroupRoleDefInfo, MemberInfo, NodeFields, NodeType,
   OpInput, RegionInfo,
@@ -179,4 +180,39 @@ export const groupApi = {
     request<{ groupName: string; invitedBy: string }>(`/api/group-invites/${encodeURIComponent(token)}`),
   acceptInvite: (token: string, jobTitle: string) =>
     post<{ group: GroupInfo }>(`/api/group-invites/${encodeURIComponent(token)}/accept`, { jobTitle }),
+};
+
+/** Site yönetim paneli uçları (yalnızca isAdmin kullanıcılar; sunucu 403 ile korur). */
+export const adminApi = {
+  stats: () => request<{ stats: AdminStats }>('/api/admin/stats'),
+  users: (q = '') =>
+    request<{ users: AdminUserInfo[] }>(`/api/admin/users${q ? `?q=${encodeURIComponent(q)}` : ''}`),
+  setUserAdmin: (userId: string, isAdmin: boolean) =>
+    patch<{ ok: boolean }>(`/api/admin/users/${userId}`, { isAdmin }),
+  setUserPassword: (userId: string, password: string) =>
+    post<{ ok: boolean }>(`/api/admin/users/${userId}/password`, { password }),
+  revokeSessions: (userId: string) => del<{ ok: boolean; deleted: number }>(`/api/admin/users/${userId}/sessions`),
+  deleteUser: (userId: string) => del<{ ok: boolean }>(`/api/admin/users/${userId}`),
+  canvases: (q = '') =>
+    request<{ canvases: AdminCanvasInfo[] }>(`/api/admin/canvases${q ? `?q=${encodeURIComponent(q)}` : ''}`),
+  deleteCanvas: (canvasId: string) => del<{ ok: boolean }>(`/api/admin/canvases/${canvasId}`),
+  canvasMembers: (canvasId: string) =>
+    request<{ members: MemberInfo[] }>(`/api/admin/canvases/${canvasId}/members`),
+  setCanvasMemberRole: (canvasId: string, userId: string, role: 'editor' | 'viewer') =>
+    patch<{ members: MemberInfo[] }>(`/api/admin/canvases/${canvasId}/members/${userId}`, { role }),
+  removeCanvasMember: (canvasId: string, userId: string) =>
+    del<{ members: MemberInfo[] }>(`/api/admin/canvases/${canvasId}/members/${userId}`),
+  revokeCanvasInvites: (canvasId: string) =>
+    del<{ ok: boolean; deleted: number }>(`/api/admin/canvases/${canvasId}/invites`),
+  groups: (q = '') =>
+    request<{ groups: AdminGroupInfo[] }>(`/api/admin/groups${q ? `?q=${encodeURIComponent(q)}` : ''}`),
+  deleteGroup: (groupId: string) => del<{ ok: boolean }>(`/api/admin/groups/${groupId}`),
+  groupMembers: (groupId: string) =>
+    request<{ members: GroupMemberInfo[] }>(`/api/admin/groups/${groupId}/members`),
+  approveGroupMember: (groupId: string, userId: string) =>
+    patch<{ members: GroupMemberInfo[] }>(`/api/admin/groups/${groupId}/members/${userId}`, { status: 'approved' }),
+  setGroupMemberRole: (groupId: string, userId: string, role: GroupRole) =>
+    patch<{ members: GroupMemberInfo[] }>(`/api/admin/groups/${groupId}/members/${userId}`, { role }),
+  removeGroupMember: (groupId: string, userId: string) =>
+    del<{ members: GroupMemberInfo[] }>(`/api/admin/groups/${groupId}/members/${userId}`),
 };

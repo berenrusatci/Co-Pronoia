@@ -13,7 +13,7 @@ interface Credentials {
 function toAuthUser(user: User) {
   return {
     id: user.id, username: user.username, email: user.email,
-    displayName: user.displayName, avatarUrl: user.avatarUrl,
+    displayName: user.displayName, avatarUrl: user.avatarUrl, isAdmin: user.isAdmin,
   };
 }
 

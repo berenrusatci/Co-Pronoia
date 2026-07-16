@@ -6,6 +6,7 @@ export interface AuthUser {
   email: string | null;
   displayName: string | null;
   avatarUrl: string | null;
+  isAdmin: boolean;
 }
 
 interface AuthStore {

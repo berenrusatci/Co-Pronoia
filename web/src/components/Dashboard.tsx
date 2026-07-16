@@ -4,6 +4,7 @@ import { useCanvasStore } from '../store/canvasStore';
 import { useGroupStore } from '../store/groupStore';
 import { useAuthStore } from '../store/authStore';
 import { useThemeStore } from '../store/themeStore';
+import { useAdminStore } from '../store/adminStore';
 import { canvasApi, groupApi, ApiError, type RoleDefInput } from '../api/client';
 
 const accessLabels: Record<CanvasAccess, string> = { none: 'erişim yok', view: 'görüntüleme', edit: 'düzenleme' };
@@ -557,6 +558,7 @@ export function Dashboard() {
   const clearError = useCanvasStore((s) => s.clearError);
   const theme = useThemeStore((s) => s.theme);
   const toggleTheme = useThemeStore((s) => s.toggle);
+  const setAdminOpen = useAdminStore((s) => s.setOpen);
 
   const groups = useGroupStore((s) => s.groups);
   const groupsLoaded = useGroupStore((s) => s.listLoaded);
@@ -607,6 +609,9 @@ export function Dashboard() {
             {user?.avatarUrl && <img className="user-avatar" src={user.avatarUrl} alt="" />}
             {user?.displayName || user?.username}
           </span>
+          {user?.isAdmin && (
+            <button onClick={() => setAdminOpen(true)} title="Site yönetim paneli">🛡 Yönetim</button>
+          )}
           <button
             className="theme-toggle"
             onClick={toggleTheme}

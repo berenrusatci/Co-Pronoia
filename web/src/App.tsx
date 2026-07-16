@@ -18,6 +18,8 @@ import { AgentPanel } from './components/AgentPanel';
 import { LoginView } from './components/LoginView';
 import { GroupJoinPrompt } from './components/GroupJoinPrompt';
 import { Dashboard } from './components/Dashboard';
+import { AdminPanel } from './components/AdminPanel';
+import { useAdminStore } from './store/adminStore';
 import { Toolbar, ReadOnlyBanner, ErrorToast } from './components/Chrome';
 
 export default function App() {
@@ -26,6 +28,8 @@ export default function App() {
   const check = useAuthStore((s) => s.check);
   const dropSession = useAuthStore((s) => s.dropSession);
 
+  const adminOpen = useAdminStore((s) => s.open);
+  const setAdminOpen = useAdminStore((s) => s.setOpen);
   const activeCanvas = useCanvasStore((s) => s.active);
   const joinByToken = useCanvasStore((s) => s.joinByToken);
   const openCanvas = useCanvasStore((s) => s.open);
@@ -55,8 +59,11 @@ export default function App() {
 
   // Logging out (or a 401) drops back to the login screen with clean stores.
   useEffect(() => {
-    if (checked && !user) resetCanvases();
-  }, [checked, user, resetCanvases]);
+    if (checked && !user) {
+      resetCanvases();
+      setAdminOpen(false);
+    }
+  }, [checked, user, resetCanvases, setAdminOpen]);
 
   useEffect(() => {
     if (!user) return;
@@ -103,7 +110,7 @@ export default function App() {
       />
     );
   }
-  if (!activeCanvas) return <Dashboard />;
+  if (!activeCanvas) return adminOpen && user.isAdmin ? <AdminPanel /> : <Dashboard />;
   if (!loaded) return <div className="loading">Yükleniyor…</div>;
 
   return (

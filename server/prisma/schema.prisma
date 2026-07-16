@@ -14,6 +14,8 @@ model User {
   googleId     String?        @unique
   displayName  String?
   avatarUrl    String?
+  /// Site geneli yönetici: /api/admin/* uçlarına erişir. Kanvas/grup rollerinden bağımsızdır.
+  isAdmin      Boolean        @default(false)
   createdAt    DateTime       @default(now())
   sessions     Session[]
   commits      Commit[]

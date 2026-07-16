@@ -158,3 +158,53 @@ export interface GraphState {
   edges: PlanEdge[];
   headSeq: number;
 }
+
+// ---------- Site yönetim paneli (yalnızca isAdmin kullanıcılar) ----------
+
+export interface AdminStats {
+  userCount: number;
+  canvasCount: number;
+  groupCount: number;
+  commitCount: number;
+  /** expiresAt > şimdi olan oturum sayısı. */
+  activeSessionCount: number;
+  /** Son 7 günde kayıt olan kullanıcı sayısı. */
+  newUsers7d: number;
+}
+
+export interface AdminUserInfo {
+  id: string;
+  username: string;
+  email: string | null;
+  displayName: string | null;
+  isAdmin: boolean;
+  hasPassword: boolean;
+  hasGoogle: boolean;
+  createdAt: string;
+  ownedCanvasCount: number;
+  membershipCount: number;
+  groupCount: number;
+  sessionCount: number;
+  lastCommitAt: string | null;
+}
+
+export interface AdminCanvasInfo {
+  id: string;
+  name: string;
+  ownerId: string;
+  owner: string;
+  memberCount: number;
+  commitCount: number;
+  groupId: string | null;
+  groupName: string | null;
+  createdAt: string;
+}
+
+export interface AdminGroupInfo {
+  id: string;
+  name: string;
+  memberCount: number;
+  pendingCount: number;
+  canvasCount: number;
+  createdAt: string;
+}

@@ -34,6 +34,7 @@ export interface AuthUser {
   email: string | null;
   displayName: string | null;
   avatarUrl: string | null;
+  isAdmin: boolean;
 }
 
 declare module 'fastify' {
@@ -60,6 +61,7 @@ export async function resolveSession(prisma: PrismaClient, token: string | undef
     email: session.user.email,
     displayName: session.user.displayName,
     avatarUrl: session.user.avatarUrl,
+    isAdmin: session.user.isAdmin,
   };
 }
 
