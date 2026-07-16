@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from './app.js';
 import { testDbFactory } from './testDb.js';
 import { createCanvas } from './canvasService.js';
+import { captureEmails, registerVerified } from './testAuth.js';
 import { runAgent, type Llm } from './agent.js';
 import type { Actor } from './commitService.js';
 
@@ -24,12 +25,19 @@ async function freshCanvas() {
   const service = built.serviceFor(canvas.id);
   await service.commit([{ op: 'add_node', id: 'root', title: 'Kök' }]);
   const actor: Actor = { userId: owner.id, role: 'owner' };
-  const run = (llm: Llm, actorOverride?: Actor, detail?: 'proto' | 'detailed', selectedIds?: string[]) =>
+  const run = (
+    llm: Llm,
+    actorOverride?: Actor,
+    detail?: 'proto' | 'detailed',
+    selectedIds?: string[],
+    selectedRegionIds?: string[],
+  ) =>
     runAgent({
       prisma: built.prisma, service, canvasId: canvas.id, canvasName: canvas.name,
       prompt: 'test isteği', actor: actorOverride ?? actor, llm,
       ...(detail ? { detail } : {}),
       ...(selectedIds ? { selectedIds } : {}),
+      ...(selectedRegionIds ? { selectedRegionIds } : {}),
     });
   return { ...built, service, canvas, owner, actor, run };
 }
@@ -96,15 +104,12 @@ describe('agent', () => {
   });
 
   it('agent route validates prompt and requires GEMINI_API_KEY over HTTP', async () => {
-    const built = await buildApp(await db.fresh());
+    const { sender, sent } = captureEmails();
+    const built = await buildApp(await db.fresh(), { emailSender: sender });
     opened.push(built);
     const { app } = built;
-    let res = await app.inject({
-      method: 'POST', url: '/api/auth/register',
-      payload: { username: 'beren', password: 'sifre1', email: 'b@test.com' },
-    });
-    const cookies = { tm_session: res.cookies.find((c) => c.name === 'tm_session')!.value };
-    res = await app.inject({ method: 'POST', url: '/api/canvases', cookies, payload: { name: 'Plan' } });
+    const { cookies } = await registerVerified(app, sent, { username: 'beren', password: 'sifre1', email: 'b@test.com' });
+    let res = await app.inject({ method: 'POST', url: '/api/canvases', cookies, payload: { name: 'Plan' } });
     const canvasId = res.json().canvas.id as string;
 
     res = await app.inject({ method: 'POST', url: `/api/canvases/${canvasId}/agent`, cookies, payload: {} });
@@ -150,6 +155,37 @@ describe('agent', () => {
     await run(capture);
     expect(system).toContain('DETAY DÜZEYİ: PROTOTİP');
     expect(user).toContain('Yazabildiği bölgeler: HEPSİ');
+  });
+
+  it('threads a selected region: its description and every node inside it', async () => {
+    const { prisma, service, canvas, run } = await freshCanvas();
+    const region = await prisma.region.create({
+      data: {
+        canvasId: canvas.id, name: 'backend', x: 0, y: 0, width: 500, height: 400,
+        description: 'Sunucu tarafı işleri.',
+      },
+    });
+    await service.commit([
+      { op: 'add_node', id: 'in1', title: 'İç 1', x: 50, y: 50 },   // bölge içinde
+      { op: 'add_node', id: 'in2', title: 'İç 2', x: 60, y: 60 },   // bölge içinde
+      { op: 'add_node', id: 'out', title: 'Dış', x: 900, y: 900 },  // bölge dışında
+    ]);
+
+    let user = '';
+    const capture: Llm = async (_s, u) => {
+      user = u;
+      return JSON.stringify({ mode: 'summary', reply: 'ok' });
+    };
+    await run(capture, undefined, undefined, undefined, [region.id]);
+
+    expect(user).toContain('SEÇİLİ BÖLGELER');
+    expect(user).toContain('Sunucu tarafı işleri.');
+    expect(user).toContain('SEÇİLİ DÜĞÜMLER');
+    expect(user).toContain('"id":"in1"');
+    expect(user).toContain('"id":"in2"');
+    // Bölge dışındaki düğüm seçime dahil değil.
+    const selectedBlock = user.slice(user.indexOf('SEÇİLİ DÜĞÜMLER'));
+    expect(selectedBlock).not.toContain('"id":"out"');
   });
 
   it('threads selected nodes into the prompt, ignoring unknown ids', async () => {

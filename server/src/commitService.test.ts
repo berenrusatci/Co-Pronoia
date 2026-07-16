@@ -3,6 +3,7 @@ import { buildApp } from './app.js';
 import { testDbFactory } from './testDb.js';
 import { hashPassword, verifyPassword } from './auth.js';
 import { createCanvas } from './canvasService.js';
+import { captureEmails, registerVerified } from './testAuth.js';
 import type { CommitOutcome } from './commitService.js';
 import type { GraphState, OpInput } from '@treemapper/shared';
 
@@ -18,9 +19,10 @@ afterAll(async () => {
 }, 30000);
 
 async function fresh() {
-  const built = await buildApp(await db.fresh());
+  const { sender, sent } = captureEmails();
+  const built = await buildApp(await db.fresh(), { emailSender: sender });
   opened.push(built);
-  return built;
+  return { ...built, sent };
 }
 
 /** Blank canvas (no seed commit) so seq expectations start at 1. Engine tests bypass route-level membership. */
@@ -354,13 +356,21 @@ describe('auth', () => {
     expect(await verifyPassword('yanlis', hash)).toBe(false);
   });
 
-  it('register/login/me flow with cookies; protected routes 401 without session', async () => {
-    const { app } = await fresh();
+  it('register/verify/login/me flow with cookies; protected routes 401 without session', async () => {
+    const { app, sent } = await fresh();
 
     let res = await app.inject({ method: 'GET', url: '/api/canvases' });
     expect(res.statusCode).toBe(401);
 
+    // register no longer logs in: it emails a code and returns pending
     res = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'beren', password: 'sifre1', email: 'beren@test.com' } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ pending: true, email: 'beren@test.com' });
+    expect(res.cookies.find((c) => c.name === 'tm_session')).toBeUndefined();
+
+    // verifying the emailed code finishes registration and sets the session
+    const code = sent[sent.length - 1].text.match(/\b(\d{6})\b/)![1];
+    res = await app.inject({ method: 'POST', url: '/api/auth/verify-email', payload: { email: 'beren@test.com', code } });
     expect(res.statusCode).toBe(200);
     const cookie = res.cookies.find((c) => c.name === 'tm_session');
     expect(cookie).toBeDefined();
@@ -407,13 +417,9 @@ describe('auth', () => {
 describe('canvases & invites', () => {
   async function twoUsers() {
     const built = await fresh();
-    const reg1 = await built.app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'u1', password: 'pass1', email: 'u1@test.com' } });
-    const reg2 = await built.app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'u2', password: 'pass2', email: 'u2@test.com' } });
-    return {
-      ...built,
-      c1: { tm_session: reg1.cookies.find((c) => c.name === 'tm_session')!.value },
-      c2: { tm_session: reg2.cookies.find((c) => c.name === 'tm_session')!.value },
-    };
+    const r1 = await registerVerified(built.app, built.sent, { username: 'u1', password: 'pass1', email: 'u1@test.com' });
+    const r2 = await registerVerified(built.app, built.sent, { username: 'u2', password: 'pass2', email: 'u2@test.com' });
+    return { ...built, c1: r1.cookies, c2: r2.cookies };
   }
 
   it('membership gates every canvas route; invite link is the only way in', async () => {
@@ -474,11 +480,11 @@ describe('canvases & invites', () => {
 describe('roles, regions & owner tools', () => {
   async function canvasWithTwo() {
     const built = await fresh();
-    const reg1 = await built.app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'sahip', password: 'pass1', email: 'sahip@test.com' } });
-    const reg2 = await built.app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'uye', password: 'pass2', email: 'uye@test.com' } });
-    const c1 = { tm_session: reg1.cookies.find((c) => c.name === 'tm_session')!.value };
-    const c2 = { tm_session: reg2.cookies.find((c) => c.name === 'tm_session')!.value };
-    const u2Id = reg2.json().user.id as string;
+    const r1 = await registerVerified(built.app, built.sent, { username: 'sahip', password: 'pass1', email: 'sahip@test.com' });
+    const r2 = await registerVerified(built.app, built.sent, { username: 'uye', password: 'pass2', email: 'uye@test.com' });
+    const c1 = r1.cookies;
+    const c2 = r2.cookies;
+    const u2Id = r2.res.json().user.id as string;
     const canvas = (await built.app.inject({ method: 'POST', url: '/api/canvases', cookies: c1, payload: { name: 'Ekip' } })).json().canvas;
     const token = (await built.app.inject({ method: 'POST', url: `/api/canvases/${canvas.id}/invites`, cookies: c1 })).json().token;
     await built.app.inject({ method: 'POST', url: `/api/invites/${token}/accept`, cookies: c2 });
@@ -698,9 +704,8 @@ describe('roles, regions & owner tools', () => {
   });
 
   it('password change verifies the current password and rotates sessions', async () => {
-    const { app } = await fresh();
-    const reg = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'ayar', password: 'eski1', email: 'ayar@test.com' } });
-    const cookies = { tm_session: reg.cookies.find((c) => c.name === 'tm_session')!.value };
+    const { app, sent } = await fresh();
+    const { cookies } = await registerVerified(app, sent, { username: 'ayar', password: 'eski1', email: 'ayar@test.com' });
 
     let res = await app.inject({ method: 'POST', url: '/api/auth/password', cookies, payload: { current: 'yanlis', next: 'yeni1' } });
     expect(res.statusCode).toBe(401);
@@ -719,11 +724,9 @@ describe('roles, regions & owner tools', () => {
 
 describe('API integration', () => {
   it('full loop incl. invite + branches over HTTP', async () => {
-    const { app } = await fresh();
-    const reg = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'u1', password: 'pass1', email: 'u1@test.com' } });
-    const cookies = { tm_session: reg.cookies.find((c) => c.name === 'tm_session')!.value };
-    const reg2 = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'u2', password: 'pass2', email: 'u2@test.com' } });
-    const cookies2 = { tm_session: reg2.cookies.find((c) => c.name === 'tm_session')!.value };
+    const { app, sent } = await fresh();
+    const { cookies } = await registerVerified(app, sent, { username: 'u1', password: 'pass1', email: 'u1@test.com' });
+    const { cookies: cookies2 } = await registerVerified(app, sent, { username: 'u2', password: 'pass2', email: 'u2@test.com' });
 
     const post = (url: string, body?: unknown, c = cookies) =>
       app.inject({ method: 'POST', url, payload: body ?? {}, cookies: c }).then((r) => ({ code: r.statusCode, body: r.json() }));

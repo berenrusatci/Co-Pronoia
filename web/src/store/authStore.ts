@@ -12,28 +12,37 @@ interface AuthStore {
   user: AuthUser | null;
   checked: boolean;
   error: string | null;
+  /** Kayıt sonrası doğrulama bekleyen e-posta; doluysa LoginView kod adımını gösterir. */
+  pendingEmail: string | null;
   check: () => Promise<void>;
   login: (username: string, password: string) => Promise<boolean>;
   register: (username: string, password: string, email: string, displayName: string) => Promise<boolean>;
+  verifyEmail: (code: string) => Promise<boolean>;
+  resendCode: () => Promise<void>;
+  cancelPending: () => void;
   logout: () => Promise<void>;
   dropSession: () => void;
   updateProfile: (fields: { displayName?: string; avatarUrl?: string }) => Promise<boolean>;
 }
 
-async function authPost(url: string, body: unknown): Promise<{ ok: boolean; user?: AuthUser; error?: string }> {
+async function authPost(
+  url: string,
+  body: unknown,
+): Promise<{ ok: boolean; data: any; error?: string }> {
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
-  return res.ok ? { ok: true, user: data.user } : { ok: false, error: data.error ?? 'bilinmeyen hata' };
+  return res.ok ? { ok: true, data } : { ok: false, data, error: data.error ?? 'bilinmeyen hata' };
 }
 
-export const useAuthStore = create<AuthStore>((set) => ({
+export const useAuthStore = create<AuthStore>((set, get) => ({
   user: null,
   checked: false,
   error: null,
+  pendingEmail: null,
 
   check: async () => {
     try {
@@ -51,15 +60,32 @@ export const useAuthStore = create<AuthStore>((set) => ({
 
   login: async (username, password) => {
     const r = await authPost('/api/auth/login', { username, password });
-    set(r.ok ? { user: r.user, error: null } : { error: r.error });
+    set(r.ok ? { user: r.data.user, error: null } : { error: r.error });
     return r.ok;
   },
 
+  // Kayıt artık oturum açmaz: sunucu doğrulama maili gönderir, biz kod adımına geçeriz.
   register: async (username, password, email, displayName) => {
     const r = await authPost('/api/auth/register', { username, password, email, displayName });
-    set(r.ok ? { user: r.user, error: null } : { error: r.error });
+    set(r.ok ? { pendingEmail: r.data.email, error: null } : { error: r.error });
     return r.ok;
   },
+
+  verifyEmail: async (code) => {
+    const email = get().pendingEmail;
+    if (!email) return false;
+    const r = await authPost('/api/auth/verify-email', { email, code });
+    set(r.ok ? { user: r.data.user, pendingEmail: null, error: null } : { error: r.error });
+    return r.ok;
+  },
+
+  resendCode: async () => {
+    const email = get().pendingEmail;
+    if (!email) return;
+    await authPost('/api/auth/resend-code', { email });
+  },
+
+  cancelPending: () => set({ pendingEmail: null, error: null }),
 
   logout: async () => {
     await fetch('/api/auth/logout', { method: 'POST' });

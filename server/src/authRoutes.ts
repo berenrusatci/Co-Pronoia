@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { PrismaClient, User } from '@prisma/client';
-import { createSession, hashPassword, resolveSession, SESSION_COOKIE, sessionToken, verifyPassword, setSessionCookie } from './auth.js';
+import { createSession, generateCode, hashPassword, resolveSession, SESSION_COOKIE, sessionToken, verifyPassword, setSessionCookie } from './auth.js';
+import { defaultEmailSender, emailConfigured, isProd, type EmailSender } from './email.js';
 
 interface Credentials {
   username?: string;
@@ -18,7 +19,25 @@ function toAuthUser(user: User) {
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export function registerAuthRoutes(app: FastifyInstance, prisma: PrismaClient): void {
+/** Doğrulama kodunun geçerlilik süresi ve izin verilen hatalı deneme sayısı. */
+const CODE_TTL_MS = 10 * 60_000;
+const MAX_ATTEMPTS = 5;
+
+function verificationEmail(code: string): { subject: string; text: string } {
+  return {
+    subject: 'co-pronoia doğrulama kodunuz',
+    text: `Kayıt işleminizi tamamlamak için doğrulama kodunuz: ${code}\n\nBu kod 10 dakika içinde geçerliliğini yitirecek. Bu isteği siz yapmadıysanız bu e-postayı yok sayabilirsiniz.`,
+  };
+}
+
+export function registerAuthRoutes(
+  app: FastifyInstance,
+  prisma: PrismaClient,
+  emailSender: EmailSender = defaultEmailSender,
+): void {
+  // Kayıt: gerçek User oluşturmaz. Doğrulama kodunu e-postayla gönderir ve
+  // bekleyen kaydı EmailVerification tablosuna yazar. Kullanıcı verify-email ile
+  // kodu onaylayınca hesap oluşur (aşağıya bak).
   app.post<{ Body: Credentials }>('/api/auth/register', async (req, reply) => {
     const username = (req.body.username ?? '').trim();
     const password = req.body.password ?? '';
@@ -28,15 +47,82 @@ export function registerAuthRoutes(app: FastifyInstance, prisma: PrismaClient): 
       return reply.code(400).send({ error: 'kullanıcı adı en az 2 karakter olmalı' });
     if (password.length < 4) return reply.code(400).send({ error: 'şifre en az 4 karakter olmalı' });
     if (!EMAIL_RE.test(email)) return reply.code(400).send({ error: 'geçerli bir e-posta adresi girin' });
+    if (!emailConfigured() && isProd())
+      return reply.code(503).send({ error: 'e-posta doğrulama yapılandırılmamış' });
     const existingUsername = await prisma.user.findUnique({ where: { username } });
     if (existingUsername) return reply.code(409).send({ error: 'bu kullanıcı adı alınmış' });
     const existingEmail = await prisma.user.findUnique({ where: { email } });
     if (existingEmail) return reply.code(409).send({ error: 'bu e-posta adresi zaten kayıtlı' });
+
+    const code = generateCode();
+    const data = {
+      username,
+      passwordHash: await hashPassword(password),
+      displayName: displayName || null,
+      codeHash: await hashPassword(code),
+      expiresAt: new Date(Date.now() + CODE_TTL_MS),
+      attempts: 0,
+    };
+    // Aynı e-postayla tekrar kayıt: bekleyen kaydı tazele (yeni kod/şifre/kullanıcı adı).
+    await prisma.emailVerification.upsert({ where: { email }, create: { email, ...data }, update: data });
+    await emailSender({ to: email, ...verificationEmail(code) });
+    return { pending: true, email };
+  });
+
+  // Doğrulama: kodu onaylar, gerçek User'ı oluşturur ve oturum açar.
+  app.post<{ Body: { email?: string; code?: string } }>('/api/auth/verify-email', async (req, reply) => {
+    const email = (req.body.email ?? '').trim().toLowerCase();
+    const code = (req.body.code ?? '').trim();
+    const pending = await prisma.emailVerification.findUnique({ where: { email } });
+    if (!pending) return reply.code(400).send({ error: 'doğrulama isteği bulunamadı, yeniden kayıt olun' });
+    if (pending.expiresAt < new Date()) {
+      await prisma.emailVerification.delete({ where: { email } });
+      return reply.code(400).send({ error: 'kodun süresi doldu, yeniden kayıt olun' });
+    }
+    if (pending.attempts >= MAX_ATTEMPTS) {
+      await prisma.emailVerification.delete({ where: { email } });
+      return reply.code(400).send({ error: 'çok fazla hatalı deneme, yeniden kayıt olun' });
+    }
+    if (!(await verifyPassword(code, pending.codeHash))) {
+      await prisma.emailVerification.update({ where: { email }, data: { attempts: { increment: 1 } } });
+      return reply.code(400).send({ error: 'kod hatalı' });
+    }
+    // Kod doğru: yarış durumuna karşı benzersizliği tekrar kontrol et.
+    if (await prisma.user.findUnique({ where: { username: pending.username } })) {
+      await prisma.emailVerification.delete({ where: { email } });
+      return reply.code(409).send({ error: 'bu kullanıcı adı alınmış' });
+    }
+    if (await prisma.user.findUnique({ where: { email } })) {
+      await prisma.emailVerification.delete({ where: { email } });
+      return reply.code(409).send({ error: 'bu e-posta adresi zaten kayıtlı' });
+    }
     const user = await prisma.user.create({
-      data: { username, email, displayName: displayName || null, passwordHash: await hashPassword(password) },
+      data: {
+        username: pending.username,
+        email,
+        displayName: pending.displayName,
+        passwordHash: pending.passwordHash,
+      },
     });
+    await prisma.emailVerification.delete({ where: { email } });
     setSessionCookie(reply, await createSession(prisma, user.id));
     return { user: toAuthUser(user) };
+  });
+
+  // Kodu tekrar gönder. E-posta sızıntısını önlemek için bekleyen kayıt olsa da
+  // olmasa da { ok: true } döner.
+  app.post<{ Body: { email?: string } }>('/api/auth/resend-code', async (req, reply) => {
+    const email = (req.body.email ?? '').trim().toLowerCase();
+    const pending = await prisma.emailVerification.findUnique({ where: { email } });
+    if (pending) {
+      const code = generateCode();
+      await prisma.emailVerification.update({
+        where: { email },
+        data: { codeHash: await hashPassword(code), expiresAt: new Date(Date.now() + CODE_TTL_MS), attempts: 0 },
+      });
+      await emailSender({ to: email, ...verificationEmail(code) });
+    }
+    return { ok: true };
   });
 
   app.post<{ Body: Credentials }>('/api/auth/login', async (req, reply) => {

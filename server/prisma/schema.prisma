@@ -34,6 +34,19 @@ model Session {
   expiresAt DateTime
 }
 
+/// Kayıt sırasında e-posta doğrulaması bekleyen (henüz User olmayan) kayıtlar.
+/// Kod doğrulanınca buradaki alanlardan gerçek User oluşturulur ve satır silinir.
+model EmailVerification {
+  email        String   @id
+  username     String
+  passwordHash String
+  displayName  String?
+  codeHash     String
+  expiresAt    DateTime
+  attempts     Int      @default(0)
+  createdAt    DateTime @default(now())
+}
+
 model Canvas {
   id        String         @id @default(cuid())
   name      String

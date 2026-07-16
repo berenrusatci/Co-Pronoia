@@ -1,4 +1,4 @@
-import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
+import { randomBytes, randomInt, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import type { PrismaClient } from '@prisma/client';
 import type { FastifyReply, FastifyRequest } from 'fastify';
@@ -18,6 +18,11 @@ export async function verifyPassword(password: string, stored: string | null): P
   const key = await scryptAsync(password, Buffer.from(saltHex, 'hex'), 32);
   const expected = Buffer.from(keyHex, 'hex');
   return key.length === expected.length && timingSafeEqual(key, expected);
+}
+
+/** 6 haneli e-posta doğrulama kodu (000000–999999). Hash için hashPassword kullanılır. */
+export function generateCode(): string {
+  return String(randomInt(0, 1_000_000)).padStart(6, '0');
 }
 
 export const SESSION_COOKIE = 'tm_session';

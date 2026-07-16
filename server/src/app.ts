@@ -11,6 +11,7 @@ import { groupRole } from './groupService.js';
 import { resolveSession, sessionToken } from './auth.js';
 import { registerRoutes } from './routes.js';
 import { registerAuthRoutes } from './authRoutes.js';
+import type { EmailSender } from './email.js';
 import { registerGoogleAuth } from './googleAuth.js';
 import { registerCanvasRoutes } from './canvasRoutes.js';
 import { registerGroupRoutes, registerGroupMemberRoutes } from './groupRoutes.js';
@@ -41,7 +42,7 @@ export interface WsClient {
   isAlive: boolean;
 }
 
-export async function buildApp(dbUrl: string) {
+export async function buildApp(dbUrl: string, opts?: { emailSender?: EmailSender }) {
   const adapter = new PrismaPg({ connectionString: dbUrl });
   const prisma = new PrismaClient({ adapter });
 
@@ -160,7 +161,7 @@ export async function buildApp(dbUrl: string) {
     });
   });
 
-  registerAuthRoutes(app, prisma);
+  registerAuthRoutes(app, prisma, opts?.emailSender);
   if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
     await registerGoogleAuth(app, prisma);
   }
