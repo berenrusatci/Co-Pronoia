@@ -108,19 +108,37 @@ describe('kayıt e-posta doğrulama', () => {
     expect(newRes.statusCode).toBe(200);
   });
 
+  it('mail gönderimi patlarsa register 502, resend-code yine 200 döner', async () => {
+    const built = await buildApp(await db.fresh(), {
+      emailSender: async () => { throw new Error('SMTP down'); },
+    });
+    opened.push(built);
+    const res = await register(built.app, { username: 'irem', password: 'sifre123', email: 'irem@x.com' });
+    expect(res.statusCode).toBe(502);
+    expect(res.json().error).toContain('gönderilemedi');
+    // enumeration önleme: resend-code gönderim hatasında bile { ok: true }
+    const rr = await built.app.inject({ method: 'POST', url: '/api/auth/resend-code', payload: { email: 'irem@x.com' } });
+    expect(rr.statusCode).toBe(200);
+    expect(rr.json()).toEqual({ ok: true });
+  });
+
   it('prod + SMTP yoksa register 503 döner', async () => {
     const { app } = await freshApp();
     const prevEnv = process.env.NODE_ENV;
     const prevHost = process.env.SMTP_HOST;
+    const prevBrevo = process.env.BREVO_API_KEY;
     try {
       process.env.NODE_ENV = 'production';
       delete process.env.SMTP_HOST;
+      delete process.env.BREVO_API_KEY;
       const res = await register(app, { username: 'hakan', password: 'sifre123', email: 'hakan@x.com' });
       expect(res.statusCode).toBe(503);
     } finally {
       process.env.NODE_ENV = prevEnv;
       if (prevHost === undefined) delete process.env.SMTP_HOST;
       else process.env.SMTP_HOST = prevHost;
+      if (prevBrevo === undefined) delete process.env.BREVO_API_KEY;
+      else process.env.BREVO_API_KEY = prevBrevo;
     }
   });
 });

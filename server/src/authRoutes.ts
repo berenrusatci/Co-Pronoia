@@ -25,8 +25,8 @@ const MAX_ATTEMPTS = 5;
 
 function verificationEmail(code: string): { subject: string; text: string } {
   return {
-    subject: 'co-pronoia doğrulama kodunuz',
-    text: `Kayıt işleminizi tamamlamak için doğrulama kodunuz: ${code}\n\nBu kod 10 dakika içinde geçerliliğini yitirecek. Bu isteği siz yapmadıysanız bu e-postayı yok sayabilirsiniz.`,
+    subject: 'Co-pronoia doğrulama kodunuz',
+    text: `Co-pronoia kaydınızı tamamlamak için doğrulama kodunuz: ${code}\n\nBu kod 10 dakika içinde geçerliliğini yitirecek. Bu isteği siz yapmadıysanız bu e-postayı yok sayabilirsiniz.`,
   };
 }
 
@@ -65,7 +65,12 @@ export function registerAuthRoutes(
     };
     // Aynı e-postayla tekrar kayıt: bekleyen kaydı tazele (yeni kod/şifre/kullanıcı adı).
     await prisma.emailVerification.upsert({ where: { email }, create: { email, ...data }, update: data });
-    await emailSender({ to: email, ...verificationEmail(code) });
+    try {
+      await emailSender({ to: email, ...verificationEmail(code) });
+    } catch (err) {
+      req.log.error({ err }, 'doğrulama e-postası gönderilemedi');
+      return reply.code(502).send({ error: 'doğrulama e-postası gönderilemedi, daha sonra tekrar deneyin' });
+    }
     return { pending: true, email };
   });
 
@@ -120,7 +125,12 @@ export function registerAuthRoutes(
         where: { email },
         data: { codeHash: await hashPassword(code), expiresAt: new Date(Date.now() + CODE_TTL_MS), attempts: 0 },
       });
-      await emailSender({ to: email, ...verificationEmail(code) });
+      try {
+        await emailSender({ to: email, ...verificationEmail(code) });
+      } catch (err) {
+        req.log.error({ err }, 'doğrulama e-postası tekrar gönderilemedi');
+        // enumeration önleme sözleşmesi bozulmasın diye yine { ok: true } dönüyoruz
+      }
     }
     return { ok: true };
   });
