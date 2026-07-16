@@ -1,7 +1,7 @@
 import type { PrismaClient } from '@prisma/client';
 import { hashPassword } from './auth.js';
 
-export type BootstrapResult = 'skipped' | 'created' | 'promoted' | 'ok';
+export type BootstrapResult = 'skipped' | 'created' | 'promoted' | 'ok' | 'failed';
 
 /**
  * ADMIN_USERNAME/ADMIN_PASSWORD ile açılışta site yöneticisini idempotent kurar.
@@ -16,18 +16,24 @@ export async function bootstrapAdmin(prisma: PrismaClient): Promise<BootstrapRes
     console.log('[admin] ADMIN_USERNAME/ADMIN_PASSWORD tanımlı değil, yönetici kurulumu atlandı');
     return 'skipped';
   }
-  const existing = await prisma.user.findUnique({ where: { username } });
-  if (!existing) {
-    await prisma.user.create({
-      data: { username, passwordHash: await hashPassword(password), isAdmin: true },
-    });
-    console.log(`[admin] yönetici hesabı oluşturuldu: ${username}`);
-    return 'created';
+  // Kurulum hatası (örn. şeması güncellenmemiş DB) sunucuyu düşürmesin: logla ve devam et.
+  try {
+    const existing = await prisma.user.findUnique({ where: { username } });
+    if (!existing) {
+      await prisma.user.create({
+        data: { username, passwordHash: await hashPassword(password), isAdmin: true },
+      });
+      console.log(`[admin] yönetici hesabı oluşturuldu: ${username}`);
+      return 'created';
+    }
+    if (!existing.isAdmin) {
+      await prisma.user.update({ where: { id: existing.id }, data: { isAdmin: true } });
+      console.log(`[admin] mevcut kullanıcı yönetici yapıldı: ${username}`);
+      return 'promoted';
+    }
+    return 'ok';
+  } catch (err) {
+    console.error('[admin] yönetici kurulumu başarısız:', err instanceof Error ? err.message : err);
+    return 'failed';
   }
-  if (!existing.isAdmin) {
-    await prisma.user.update({ where: { id: existing.id }, data: { isAdmin: true } });
-    console.log(`[admin] mevcut kullanıcı yönetici yapıldı: ${username}`);
-    return 'promoted';
-  }
-  return 'ok';
 }

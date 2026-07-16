@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "prisma db push && tsx watch src/index.ts",
     "build": "prisma generate && tsc --noEmit",
-    "start": "tsx src/index.ts",
+    "start": "prisma db push && tsx src/index.ts",
     "test": "vitest run",
     "prepare": "prisma generate",
     "db:seed": "tsx prisma/seed.ts"
