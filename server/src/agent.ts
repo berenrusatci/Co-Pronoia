@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import type { GraphState, OpInput, RegionInfo } from '@treemapper/shared';
+import { buildFlowLayoutOps } from '@treemapper/shared';
 import {
   ConflictError, RegionError, ValidationError,
   type Actor, type CommitOutcome, type CommitService,
@@ -72,9 +73,10 @@ function buildSystemPrompt(detail: AgentDetail): string {
   return [
     'Sen TreeMapper adlı iş birlikli planlama uygulaması için çalışan bir ajansın. Sana bir kanvasın güncel durumu (düğümler, kenarlar, bölgeler), kullanıcının yetkileri ve doğal dildeki isteği verilir.',
     '',
-    'YALNIZCA geçerli bir JSON nesnesi döndür (markdown, kod bloğu, ek metin YOK). İki mod var:',
+    'YALNIZCA geçerli bir JSON nesnesi döndür (markdown, kod bloğu, ek metin YOK). Üç mod var:',
     '1) Bilgi/özet isteği ("özetle", "anlat", "listele", "durum ne"): {"mode":"summary","reply":"<Türkçe yanıt>"}',
     '2) Değişiklik/diyagram isteği ("çiz", "ekle", "oluştur", "diyagramını yap"): {"mode":"diagram","reply":"<yapılanın Türkçe özeti>","message":"<kısa commit mesajı>","ops":[...]}',
+    '3) Zihin haritası hiyerarşisini akış diyagramına dökme isteği ("zihin haritasını akışa dök", "hiyerarşiyi akış diyagramına aktar", "her bölgeyi ayrı diyagram olarak diz", "bölgeleri ayrı ayrı akışa çıkar"): {"mode":"layout","reply":"<Türkçe kısa yanıt>"} — ops ÜRETME, koordinat/kenar HESAPLAMA. Sunucu yerleşimi kendisi deterministik yapar; sen yalnızca bu modu döndür.',
     '',
     'ops dizisindeki geçerli işlemler (intent şemaları — alanlara birebir uy):',
     '- {"op":"add_node","id":"<benzersiz kısa id>","title":"...","parentId":"<mevcut düğüm id, isteğe bağlı>","description":"...","nodeType":"task|idea|feature|milestone","status":"planned|in_progress|done","x":<sayı>,"y":<sayı>}',
@@ -185,7 +187,7 @@ function buildUserText(
 const ALLOWED_OPS = new Set(['add_node', 'update_node', 'delete_node', 'move_node', 'add_edge', 'delete_edge']);
 
 /** Model çıktısını çöz: JSON değilse metni özet yanıtı say; ops yalnızca "diagram" modunda geçerli. */
-function parseModelOutput(raw: string): { reply: string; message: string; ops: OpInput[] } {
+function parseModelOutput(raw: string): { mode: string; reply: string; message: string; ops: OpInput[] } {
   const text = raw.trim().replace(/^```(json)?\s*/i, '').replace(/```\s*$/, '').trim();
   type ModelOut = { mode?: string; reply?: unknown; message?: unknown; ops?: unknown };
   let out: ModelOut | null = null;
@@ -210,6 +212,7 @@ function parseModelOutput(raw: string): { reply: string; message: string; ops: O
     : [];
   if (out.mode !== 'diagram') ops = [];
   return {
+    mode: String(out.mode ?? 'summary'),
     reply: String(out.reply ?? ''),
     message: String(out.message || 'ajan değişikliği'),
     ops,
@@ -299,17 +302,39 @@ export async function runAgent(opts: {
     buildUserText(canvasName, state, regions, actor, prompt, selectedIds),
   );
   const parsed = parseModelOutput(raw);
-  const { message } = parsed;
   let { reply } = parsed;
+  let message = parsed.message;
+  let ops: OpInput[];
 
-  // AI'ya kapalı bölgelere dokunan intent'leri sunucu tarafında ayıkla; gerisi normal işlenir.
-  const { kept: ops, blockedRegionNames } = filterAiClosedRegions(state, regions, parsed.ops);
-  if (blockedRegionNames.length > 0) {
-    const names = blockedRegionNames.map((n) => `"${n}"`).join(', ');
-    reply = `${reply}\n\nNot: ${names} bölgesi/bölgeleri AI'ya kapalı olduğu için oradaki işlemler atlandı.`;
+  if (parsed.mode === 'layout') {
+    // Zihin haritası hiyerarşisini akışa dök: yerleşimi/kenarları sunucu deterministik hesaplar.
+    // Yalnızca aktörün yazabildiği + AI'ya açık bölgeler dizilir; diğer bölgelerdeki düğümlere dokunulmaz.
+    const layoutRegions = writableRegions(regions, actor).filter((r) => r.aiAllowed);
+    const layoutIds = new Set(layoutRegions.map((r) => r.id));
+    ops = buildFlowLayoutOps(state, regions, layoutIds);
+    message = 'zihin haritası akışa döküldü';
+    const inRect = (n: { x: number | null; y: number | null }, r: RegionInfo) =>
+      n.x != null && n.y != null && n.x >= r.x && n.x <= r.x + r.width && n.y >= r.y && n.y <= r.y + r.height;
+    const skipped = regions
+      .filter((r) => !layoutIds.has(r.id) && state.nodes.some((n) => inRect(n, r)))
+      .map((r) => `"${r.name}"`);
+    if (skipped.length > 0)
+      reply = `${reply}\n\nNot: ${skipped.join(', ')} bölgesi/bölgeleri (yazma izni yok ya da AI'ya kapalı) atlandı.`;
+    if (ops.length === 0)
+      return {
+        reply: reply || 'Akışa dökülecek bir hiyerarşi bulunamadı (düğümler zaten yerleşik olabilir).',
+        committed: false,
+      };
+  } else {
+    // AI'ya kapalı bölgelere dokunan intent'leri sunucu tarafında ayıkla; gerisi normal işlenir.
+    const { kept, blockedRegionNames } = filterAiClosedRegions(state, regions, parsed.ops);
+    ops = kept;
+    if (blockedRegionNames.length > 0) {
+      const names = blockedRegionNames.map((n) => `"${n}"`).join(', ');
+      reply = `${reply}\n\nNot: ${names} bölgesi/bölgeleri AI'ya kapalı olduğu için oradaki işlemler atlandı.`;
+    }
+    if (ops.length === 0) return { reply, committed: false };
   }
-
-  if (ops.length === 0) return { reply, committed: false };
 
   if (actor.role === 'viewer') {
     return {

@@ -209,6 +209,42 @@ describe('agent', () => {
     expect(user).toContain('Bu bölge yalnızca güvenlik ekibi içindir.');
   });
 
+  it('layout mode dumps the mind-map hierarchy into the flow as one commit', async () => {
+    const { prisma, service, canvas, run } = await freshCanvas();
+    await prisma.region.create({
+      data: { canvasId: canvas.id, name: 'alan', x: 0, y: 0, width: 600, height: 500 },
+    });
+    // p1 → p2 hierarchy, both positioned inside "alan"; no flow edge exists between them yet.
+    await service.commit([
+      { op: 'add_node', id: 'p1', title: 'P1', x: 50, y: 50 },
+      { op: 'add_node', id: 'p2', parentId: 'p1', title: 'P2', x: 60, y: 60 },
+    ]);
+
+    const result = await run(asLlm({ mode: 'layout', reply: 'Zihin haritasını akışa döktüm.' }));
+    expect(result.committed).toBe(true);
+    const state = await service.getState();
+    expect(state.edges.some((e) => e.sourceId === 'p1' && e.targetId === 'p2' && e.kind === 'flow')).toBe(true);
+    expect(await service.rebuildCheck()).toBe(true);
+  });
+
+  it('layout mode skips nodes inside an AI-closed region and notes it', async () => {
+    const { prisma, service, canvas, run } = await freshCanvas();
+    await prisma.region.create({
+      data: { canvasId: canvas.id, name: 'gizli', x: 0, y: 0, width: 600, height: 500, aiAllowed: false },
+    });
+    await service.commit([
+      { op: 'add_node', id: 'g1', title: 'G1', x: 50, y: 50 },
+      { op: 'add_node', id: 'g2', parentId: 'g1', title: 'G2', x: 60, y: 60 },
+    ]);
+
+    const result = await run(asLlm({ mode: 'layout', reply: 'Akışa döktüm.' }));
+    expect(result.reply).toContain('gizli');
+    // The AI-closed region's nodes keep their original coordinates and get no hierarchy edge.
+    const state = await service.getState();
+    expect(state.nodes.find((n) => n.id === 'g1')).toMatchObject({ x: 50, y: 50 });
+    expect(state.edges.some((e) => e.sourceId === 'g1' && e.targetId === 'g2')).toBe(false);
+  });
+
   it('reports invalid ops as an error reply instead of throwing', async () => {
     const { service, run } = await freshCanvas();
     const result = await run(asLlm({

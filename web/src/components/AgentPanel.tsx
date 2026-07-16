@@ -33,8 +33,9 @@ export function AgentPanel() {
         {agentLog.length === 0 && (
           <p className="empty-note">
             Kanvasla doğal dilde konuşun. Örnekler: <em>"kanvası özetle"</em>, <em>"backend bölgesine üç
-            adımlı auth akışı çiz"</em>, <em>"tamamlanan düğümleri listele"</em>. Değişiklikler tek commit
-            olarak gider ve geçmişte "ajan:" mesajıyla görünür.
+            adımlı auth akışı çiz"</em>, <em>"tamamlanan düğümleri listele"</em>, <em>"zihin haritasını akış
+            diyagramına dök"</em> (her bölge ayrı diyagram olur). Değişiklikler tek commit olarak gider ve
+            geçmişte "ajan:" mesajıyla görünür.
           </p>
         )}
         {agentLog.map((entry, i) => (
