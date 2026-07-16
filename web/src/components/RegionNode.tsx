@@ -3,7 +3,7 @@ import type { RegionInfo } from '@treemapper/shared';
 import { useGraphStore } from '../store/graphStore';
 import { useCanvasStore } from '../store/canvasStore';
 
-export type RegionFlowNode = Node<{ region: RegionInfo }, 'region'>;
+export type RegionFlowNode = Node<{ region: RegionInfo; agentSelected?: boolean }, 'region'>;
 
 /** Translucent rectangle behind the graph; the owner can drag it and resize it when selected. */
 export function RegionNode({ data, selected }: NodeProps<RegionFlowNode>) {
@@ -11,7 +11,15 @@ export function RegionNode({ data, selected }: NodeProps<RegionFlowNode>) {
   const updateRegion = useGraphStore((s) => s.updateRegion);
   const r = data.region;
   return (
-    <div className="region-box" style={{ borderColor: r.color, background: `${r.color}18` }}>
+    <div
+      className="region-box"
+      style={{
+        borderColor: r.color,
+        background: `${r.color}18`,
+        // Ctrl+tık ile ajan bağlamına alınan bölge belirgin bir halka ile vurgulanır.
+        ...(data.agentSelected ? { boxShadow: `0 0 0 3px ${r.color}` } : {}),
+      }}
+    >
       {isOwner && (
         <NodeResizer
           isVisible={!!selected}

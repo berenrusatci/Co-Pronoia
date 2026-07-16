@@ -45,6 +45,8 @@ interface GraphStore {
   selectedNodeId: string | null;
   /** Çoklu seçim (Ctrl/Shift+tık): ajan komutlarına bağlam olarak gider. */
   selectedNodeIds: string[];
+  /** Ctrl/Shift+tık ile seçilen bölgeler: ajana açıklamaları ve içlerindeki düğümler bağlam olarak gider. */
+  selectedRegionIds: string[];
   sidePanel: 'none' | 'history' | 'connections' | 'branches' | 'members' | 'regions' | 'agent';
 
   /** Ajan paneli sohbeti; panel kapansa da kanvastan çıkana dek korunur. */
@@ -73,6 +75,8 @@ interface GraphStore {
   select: (id: string | null) => void;
   /** Ctrl/Shift+tık: düğümü çoklu seçime ekler/çıkarır. */
   toggleSelect: (id: string) => void;
+  /** Ctrl/Shift+tık: bölgeyi ajan bağlam seçimine ekler/çıkarır. */
+  toggleSelectRegion: (id: string) => void;
   togglePanel: (panel: 'history' | 'connections' | 'branches' | 'members' | 'regions' | 'agent') => void;
   clearError: () => void;
   clearNotice: () => void;
@@ -233,6 +237,7 @@ export const useGraphStore = create<GraphStore>((set, get) => {
     view: initialView(),
     selectedNodeId: null,
     selectedNodeIds: [],
+    selectedRegionIds: [],
     sidePanel: 'none',
     agentLog: [],
     agentBusy: false,
@@ -352,7 +357,7 @@ export const useGraphStore = create<GraphStore>((set, get) => {
       set({
         serverNodes: [], serverEdges: [], nodes: [], edges: [], pending: [],
         headSeq: 0, commits: [], branches: [], members: [], regions: [], activeUsers: [],
-        loaded: false, error: null, notice: null, selectedNodeId: null, selectedNodeIds: [], sidePanel: 'none',
+        loaded: false, error: null, notice: null, selectedNodeId: null, selectedNodeIds: [], selectedRegionIds: [], sidePanel: 'none',
         viewingSeq: null, viewingBranchId: null, viewingState: null,
         agentLog: [], agentBusy: false,
       }),
@@ -366,7 +371,7 @@ export const useGraphStore = create<GraphStore>((set, get) => {
       try {
         // Commit atarsa sunucu WS'ten clientId: null ile yayınlar; state oradan güncellenir.
         // Seçili düğümler komuta bağlam olarak eklenir ("şu adımları detaylandır" bunlara işaret eder).
-        const res = await api.agent(trimmed, get().agentDetail, get().selectedNodeIds);
+        const res = await api.agent(trimmed, get().agentDetail, get().selectedNodeIds, get().selectedRegionIds);
         set((s) => ({
           agentLog: [...s.agentLog, {
             who: 'agent',
@@ -386,13 +391,19 @@ export const useGraphStore = create<GraphStore>((set, get) => {
 
     setView: (view) => set({ view }),
     select: (selectedNodeId) =>
-      set({ selectedNodeId, selectedNodeIds: selectedNodeId ? [selectedNodeId] : [] }),
+      set({ selectedNodeId, selectedNodeIds: selectedNodeId ? [selectedNodeId] : [], selectedRegionIds: [] }),
     toggleSelect: (id) =>
       set((s) => {
         const has = s.selectedNodeIds.includes(id);
         const selectedNodeIds = has ? s.selectedNodeIds.filter((x) => x !== id) : [...s.selectedNodeIds, id];
         return { selectedNodeIds, selectedNodeId: has ? (selectedNodeIds.at(-1) ?? null) : id };
       }),
+    toggleSelectRegion: (id) =>
+      set((s) => ({
+        selectedRegionIds: s.selectedRegionIds.includes(id)
+          ? s.selectedRegionIds.filter((x) => x !== id)
+          : [...s.selectedRegionIds, id],
+      })),
     togglePanel: (panel) => set((s) => ({ sidePanel: s.sidePanel === panel ? 'none' : panel })),
     clearError: () => set({ error: null }),
     clearNotice: () => set({ notice: null }),
@@ -515,7 +526,10 @@ export const useGraphStore = create<GraphStore>((set, get) => {
     deleteRegion: async (id) => {
       try {
         await api.deleteRegion(id);
-        set((s) => ({ regions: s.regions.filter((r) => r.id !== id) }));
+        set((s) => ({
+          regions: s.regions.filter((r) => r.id !== id),
+          selectedRegionIds: s.selectedRegionIds.filter((x) => x !== id),
+        }));
       } catch (err) {
         set({ error: err instanceof ApiError ? err.message : String(err) });
       }

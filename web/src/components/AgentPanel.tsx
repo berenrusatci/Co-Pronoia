@@ -8,11 +8,17 @@ export function AgentPanel() {
   const agentDetail = useGraphStore((s) => s.agentDetail);
   const setAgentDetail = useGraphStore((s) => s.setAgentDetail);
   const selectedNodeIds = useGraphStore((s) => s.selectedNodeIds);
+  const selectedRegionIds = useGraphStore((s) => s.selectedRegionIds);
   const nodes = useGraphStore((s) => s.nodes);
+  const regions = useGraphStore((s) => s.regions);
   const toggleSelect = useGraphStore((s) => s.toggleSelect);
+  const toggleSelectRegion = useGraphStore((s) => s.toggleSelectRegion);
   const selectedNodes = selectedNodeIds
     .map((id) => nodes.find((n) => n.id === id))
     .filter((n): n is NonNullable<typeof n> => n !== undefined);
+  const selectedRegions = selectedRegionIds
+    .map((id) => regions.find((r) => r.id === id))
+    .filter((r): r is NonNullable<typeof r> => r !== undefined);
   const [prompt, setPrompt] = useState('');
   const logRef = useRef<HTMLDivElement>(null);
 
@@ -48,9 +54,15 @@ export function AgentPanel() {
         {agentBusy && <div className="agent-msg agent thinking">Düşünüyor…</div>}
       </div>
       <div className="agent-input">
-        {selectedNodes.length > 0 && (
-          <div className="agent-selection" title="Seçili düğümler komuta bağlam olarak gider — 'bu adımları detaylandır' bunlara işaret eder. Ctrl+tık ile çoğaltın, × ile çıkarın.">
+        {(selectedNodes.length > 0 || selectedRegions.length > 0) && (
+          <div className="agent-selection" title="Seçili düğümler/bölgeler komuta bağlam olarak gider — 'bu adımları detaylandır' bunlara işaret eder. Bölge seçince açıklaması ve içindeki tüm düğümler de gönderilir. Ctrl+tık ile çoğaltın, × ile çıkarın.">
             <span className="agent-selection-label">Seçili:</span>
+            {selectedRegions.map((r) => (
+              <span key={r.id} className="agent-selection-chip" style={{ borderColor: r.color }}>
+                ▢ {r.name}
+                <button onClick={() => toggleSelectRegion(r.id)} title="Seçimden çıkar">×</button>
+              </span>
+            ))}
             {selectedNodes.map((n) => (
               <span key={n.id} className="agent-selection-chip">
                 {n.title}

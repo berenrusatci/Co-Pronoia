@@ -29,7 +29,9 @@ export function FlowView() {
   const connect = useGraphStore((s) => s.connect);
   const select = useGraphStore((s) => s.select);
   const toggleSelect = useGraphStore((s) => s.toggleSelect);
+  const toggleSelectRegion = useGraphStore((s) => s.toggleSelectRegion);
   const selectedNodeIds = useGraphStore((s) => s.selectedNodeIds);
+  const selectedRegionIds = useGraphStore((s) => s.selectedRegionIds);
   const isOwner = useCanvasStore((s) => s.active?.role === 'owner');
 
   const initialNodes = useMemo<CanvasNode[]>(() => {
@@ -39,9 +41,9 @@ export function FlowView() {
       position: { x: region.x, y: region.y },
       width: region.width,
       height: region.height,
-      data: { region },
+      data: { region, agentSelected: selectedRegionIds.includes(region.id) },
       draggable: isOwner && !readOnly,
-      selectable: isOwner && !readOnly,
+      selectable: !readOnly,
       zIndex: -10,
     }));
     let unplaced = 0;
@@ -54,7 +56,7 @@ export function FlowView() {
       selected: selectedNodeIds.includes(plan.id),
     }));
     return [...regionNodes, ...cardNodes];
-  }, [nodes, regions, selectedNodeIds, isOwner, readOnly]);
+  }, [nodes, regions, selectedNodeIds, selectedRegionIds, isOwner, readOnly]);
 
   // Local copy so dragging is smooth; server state re-syncs it after each commit.
   const [rfNodes, setRfNodes] = useState<CanvasNode[]>(initialNodes);
@@ -126,10 +128,15 @@ export function FlowView() {
       onNodesChange={onNodesChange}
       onConnect={readOnly ? undefined : onConnect}
       onNodeDragStop={onNodeDragStop}
-      onNodeClick={(e, node) =>
-        node.type !== 'region' &&
-        (e.ctrlKey || e.metaKey || e.shiftKey ? toggleSelect(node.id) : select(node.id))
-      }
+      onNodeClick={(e, node) => {
+        const multi = e.ctrlKey || e.metaKey || e.shiftKey;
+        if (node.type === 'region') {
+          // Ctrl/Shift+tık: bölgeyi ajan bağlamına al. Düz tık sahibin taşıma/yeniden boyutlandırması içindir.
+          if (multi) toggleSelectRegion(node.id.slice(REGION_PREFIX.length));
+        } else {
+          multi ? toggleSelect(node.id) : select(node.id);
+        }
+      }}
       onPaneClick={() => select(null)}
       nodesDraggable={!readOnly}
       nodesConnectable={!readOnly}

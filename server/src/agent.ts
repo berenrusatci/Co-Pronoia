@@ -113,12 +113,21 @@ function writableRegions(regions: RegionInfo[], actor: Actor): RegionInfo[] {
 
 function buildUserText(
   canvasName: string, state: GraphState, regions: RegionInfo[], actor: Actor,
-  prompt: string, selectedIds: string[],
+  prompt: string, selectedIds: string[], selectedRegionIds: string[],
 ): string {
   const inRegion = (n: { x: number | null; y: number | null }, r: RegionInfo) =>
     n.x != null && n.y != null &&
     n.x >= r.x && n.x <= r.x + r.width &&
     n.y >= r.y && n.y <= r.y + r.height;
+
+  // Seçili bölgeler: açıklamaları bağlam olarak gider, içlerindeki tüm düğümler de seçime katılır.
+  const selectedRegions = selectedRegionIds
+    .map((id) => regions.find((r) => r.id === id))
+    .filter((r): r is RegionInfo => r !== undefined);
+  const regionNodeIds = state.nodes
+    .filter((n) => selectedRegions.some((r) => inRegion(n, r)))
+    .map((n) => n.id);
+  const effectiveSelectedIds = [...new Set([...selectedIds, ...regionNodeIds])];
 
   const nodes = state.nodes.map((n) => ({
     id: n.id,
@@ -168,14 +177,22 @@ function buildUserText(
     '',
     `KENARLAR: ${JSON.stringify(edges)}`,
     '',
+    ...(selectedRegions.length > 0
+      ? [
+          `SEÇİLİ BÖLGELER (kullanıcı bunları kanvasta işaretledi; açıklamalarını bağlam/yönerge olarak kullan, komutun hedefi bu bölgeler ve içlerindeki düğümlerdir): ${JSON.stringify(
+            selectedRegions.map((r) => ({ id: r.id, name: r.name, description: r.description.slice(0, 500), aiAllowed: r.aiAllowed })),
+          )}`,
+          '',
+        ]
+      : []),
     ...(() => {
-      const selected = selectedIds
+      const selected = effectiveSelectedIds
         .map((id) => state.nodes.find((n) => n.id === id))
         .filter((n): n is NonNullable<typeof n> => n !== undefined)
         .map((n) => ({ id: n.id, title: n.title }));
       return selected.length > 0
         ? [
-            `SEÇİLİ DÜĞÜMLER (kullanıcı bunları kanvasta işaretledi; istekteki "bu/şu adım(lar)", "seçili düğümler", "buradan sonrası" gibi ifadeler BUNLARA işaret eder — detaylandırma/değiştirme/devamını çizme komutlarını bu düğümler üzerinde uygula): ${JSON.stringify(selected)}`,
+            `SEÇİLİ DÜĞÜMLER (kullanıcı bunları kanvasta işaretledi ya da seçili bir bölgenin içindeler; istekteki "bu/şu adım(lar)", "seçili düğümler", "buradan sonrası" gibi ifadeler BUNLARA işaret eder — detaylandırma/değiştirme/devamını çizme komutlarını bu düğümler üzerinde uygula): ${JSON.stringify(selected)}`,
             '',
           ]
         : [];
@@ -291,15 +308,17 @@ export async function runAgent(opts: {
   detail?: AgentDetail;
   /** Kullanıcının kanvasta işaretlediği düğümler; "şu adımları detaylandır" bunlara işaret eder. */
   selectedIds?: string[];
+  /** Kullanıcının kanvasta işaretlediği bölgeler; açıklamaları + içlerindeki düğümler bağlam olur. */
+  selectedRegionIds?: string[];
   llm?: Llm;
 }): Promise<AgentResult> {
-  const { prisma, service, canvasId, canvasName, prompt, actor, detail = 'proto', selectedIds = [] } = opts;
+  const { prisma, service, canvasId, canvasName, prompt, actor, detail = 'proto', selectedIds = [], selectedRegionIds = [] } = opts;
   const llm: Llm = opts.llm ?? ((s, u) => geminiGenerate(s, u, modelsFor(detail)));
 
   const [state, regions] = await Promise.all([service.getState(), listRegions(prisma, canvasId)]);
   const raw = await llm(
     buildSystemPrompt(detail),
-    buildUserText(canvasName, state, regions, actor, prompt, selectedIds),
+    buildUserText(canvasName, state, regions, actor, prompt, selectedIds, selectedRegionIds),
   );
   const parsed = parseModelOutput(raw);
   let { reply } = parsed;

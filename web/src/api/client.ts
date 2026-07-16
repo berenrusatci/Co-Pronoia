@@ -131,8 +131,12 @@ export const api = {
   setRegionMembers: (id: string, userIds: string[], roleIds?: string[]) =>
     put<{ region: RegionInfo }>(`${base()}/regions/${id}/members`, { userIds, ...(roleIds !== undefined ? { roleIds } : {}) }),
 
-  agent: (prompt: string, detail: 'proto' | 'detailed' = 'proto', selectedIds: string[] = []) =>
-    post<AgentResponse>(`${base()}/agent`, { prompt, detail, selectedIds }),
+  agent: (
+    prompt: string,
+    detail: 'proto' | 'detailed' = 'proto',
+    selectedIds: string[] = [],
+    selectedRegionIds: string[] = [],
+  ) => post<AgentResponse>(`${base()}/agent`, { prompt, detail, selectedIds, selectedRegionIds }),
 };
 
 /** Dashboard-level endpoints (not canvas-scoped). */
