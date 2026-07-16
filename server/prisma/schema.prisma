@@ -148,6 +148,8 @@ model Region {
   width     Float
   height    Float
   color     String         @default("#d97757")
+  description String        @default("")
+  aiAllowed Boolean        @default(true)
   createdAt DateTime       @default(now())
   members   RegionMember[]
   roleAccess RegionRoleAccess[]

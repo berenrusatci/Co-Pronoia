@@ -123,9 +123,9 @@ export const api = {
   removeMember: (userId: string) => del<{ members: MemberInfo[] }>(`${base()}/members/${userId}`),
 
   getRegions: () => request<{ regions: RegionInfo[] }>(`${base()}/regions`),
-  createRegion: (data: { name: string; x: number; y: number; width: number; height: number; color?: string }) =>
+  createRegion: (data: { name: string; x: number; y: number; width: number; height: number; color?: string; description?: string; aiAllowed?: boolean }) =>
     post<{ region: RegionInfo }>(`${base()}/regions`, data),
-  updateRegion: (id: string, data: Partial<{ name: string; x: number; y: number; width: number; height: number; color: string }>) =>
+  updateRegion: (id: string, data: Partial<{ name: string; x: number; y: number; width: number; height: number; color: string; description: string; aiAllowed: boolean }>) =>
     patch<{ region: RegionInfo }>(`${base()}/regions/${id}`, data),
   deleteRegion: (id: string) => del<{ ok: boolean }>(`${base()}/regions/${id}`),
   setRegionMembers: (id: string, userIds: string[], roleIds?: string[]) =>

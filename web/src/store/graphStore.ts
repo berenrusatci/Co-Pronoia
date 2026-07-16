@@ -100,8 +100,8 @@ interface GraphStore {
   // Owner tools
   setMemberRole: (userId: string, role: 'editor' | 'viewer') => Promise<void>;
   removeMember: (userId: string) => Promise<void>;
-  createRegion: (data: { name: string; x: number; y: number; width: number; height: number; color?: string }) => Promise<void>;
-  updateRegion: (id: string, data: Partial<{ name: string; x: number; y: number; width: number; height: number; color: string }>) => Promise<void>;
+  createRegion: (data: { name: string; x: number; y: number; width: number; height: number; color?: string; description?: string; aiAllowed?: boolean }) => Promise<void>;
+  updateRegion: (id: string, data: Partial<{ name: string; x: number; y: number; width: number; height: number; color: string; description: string; aiAllowed: boolean }>) => Promise<void>;
   deleteRegion: (id: string) => Promise<void>;
   setRegionMembers: (id: string, userIds: string[], roleIds?: string[]) => Promise<void>;
 }

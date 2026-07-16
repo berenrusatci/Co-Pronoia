@@ -15,7 +15,18 @@ function RegionEntry({
 }) {
   const members = useGraphStore((s) => s.members);
   const setRegionMembers = useGraphStore((s) => s.setRegionMembers);
+  const updateRegion = useGraphStore((s) => s.updateRegion);
   const deleteRegion = useGraphStore((s) => s.deleteRegion);
+  const [desc, setDesc] = useState(region.description);
+
+  // Sunucudan bölge güncellenince (WS/başka istek) yerel taslağı senkronla.
+  useEffect(() => {
+    setDesc(region.description);
+  }, [region.description]);
+
+  const saveDesc = () => {
+    if (desc !== region.description) updateRegion(region.id, { description: desc });
+  };
 
   const toggleUser = (userId: string) => {
     const next = region.directMemberIds.includes(userId)
@@ -47,6 +58,24 @@ function RegionEntry({
       </div>
       {isOwner ? (
         <>
+          <label className="region-ai-toggle">
+            <input
+              type="checkbox"
+              checked={region.aiAllowed}
+              onChange={(e) => updateRegion(region.id, { aiAllowed: e.target.checked })}
+            />
+            AI bu bölgede çalışabilsin
+          </label>
+          <div className="region-picker-label">Bölge açıklaması (AI bağlam olarak kullanır)</div>
+          <textarea
+            className="region-desc"
+            value={desc}
+            onChange={(e) => setDesc(e.target.value)}
+            onBlur={saveDesc}
+            placeholder="Bu bölge ne için? AI buraya iş yaparken bunu dikkate alır…"
+            maxLength={500}
+            rows={2}
+          />
           {groupRoles.length > 0 && (
             <>
               <div className="region-picker-label">Erişimli roller</div>
@@ -81,6 +110,8 @@ function RegionEntry({
       ) : (
         <div className="region-entry-members">
           {region.memberNames.length > 0 ? `Yetkili: ${region.memberNames.join(', ')}` : 'Henüz kimse atanmadı'}
+          {region.description && <div className="region-entry-desc">{region.description}</div>}
+          <div className="region-entry-ai">AI: {region.aiAllowed ? 'açık' : 'kapalı'}</div>
         </div>
       )}
     </li>

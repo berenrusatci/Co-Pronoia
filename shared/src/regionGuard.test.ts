@@ -14,7 +14,8 @@ const edge = (id: string, sourceId: string, targetId: string): PlanEdge => ({
 
 const region: RegionInfo = {
   id: 'r1', name: 'Backend', x: 0, y: 0, width: 300, height: 300,
-  color: '#3b6fe0', memberIds: ['member'], memberNames: ['üye'], directMemberIds: ['member'], roleIds: [],
+  color: '#3b6fe0', description: '', aiAllowed: true,
+  memberIds: ['member'], memberNames: ['üye'], directMemberIds: ['member'], roleIds: [],
 };
 
 /** `in` (100,100) inside the region, `out` (900,900) outside, edge e1: in→out, plus a placeless node. */

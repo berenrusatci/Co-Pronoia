@@ -168,6 +168,47 @@ describe('agent', () => {
     expect(user).not.toContain('SEÇİLİ DÜĞÜMLER');
   });
 
+  it('drops ops that touch an AI-closed region, keeps the rest, and notes it', async () => {
+    const { prisma, service, canvas, run } = await freshCanvas();
+    await prisma.region.create({
+      data: { canvasId: canvas.id, name: 'gizli', x: 0, y: 0, width: 500, height: 400, aiAllowed: false },
+    });
+    const result = await run(asLlm({
+      mode: 'diagram',
+      reply: 'İki düğüm ekledim.',
+      message: 'karışık',
+      ops: [
+        { op: 'add_node', id: 'inside', title: 'İç', x: 100, y: 100 },   // AI'ya kapalı bölgede → atlanır
+        { op: 'add_node', id: 'outside', title: 'Dış', x: 800, y: 100 }, // serbest → uygulanır
+      ],
+    }));
+    expect(result.committed).toBe(true);
+    expect(result.opCount).toBe(1);
+    expect(result.reply).toContain('gizli');
+    const ids = (await service.getState()).nodes.map((n) => n.id);
+    expect(ids).toContain('outside');
+    expect(ids).not.toContain('inside');
+  });
+
+  it('threads AI-closed regions and descriptions into the prompt', async () => {
+    const { prisma, canvas, run } = await freshCanvas();
+    await prisma.region.create({
+      data: {
+        canvasId: canvas.id, name: 'gizli', x: 0, y: 0, width: 500, height: 400,
+        aiAllowed: false, description: 'Bu bölge yalnızca güvenlik ekibi içindir.',
+      },
+    });
+    let user = '';
+    const capture: Llm = async (_s, u) => {
+      user = u;
+      return JSON.stringify({ mode: 'summary', reply: 'ok' });
+    };
+    await run(capture);
+    expect(user).toContain("AI'YA KAPALI bölgeler");
+    expect(user).toContain('"gizli"');
+    expect(user).toContain('Bu bölge yalnızca güvenlik ekibi içindir.');
+  });
+
   it('reports invalid ops as an error reply instead of throwing', async () => {
     const { service, run } = await freshCanvas();
     const result = await run(asLlm({

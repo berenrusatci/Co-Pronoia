@@ -89,6 +89,8 @@ function buildSystemPrompt(detail: AgentDetail): string {
     '- BÖLGE KURALI (kesin): Kullanıcı bir bölge adı verdiyse yeni düğümlerin TAMAMINA x/y koordinatı ver ve HEPSİ o bölgenin dikdörtgeninin İÇİNDE kalsın — koordinatları dikdörtgenin x/y/width/height değerlerinden hesapla, kenarlardan en az 20 birim içeride kal, tek düğüm bile dışarı taşmasın. Bir düğüm yaklaşık 220x100 birim yer kaplar; düğümleri en az 240 birim yatay / 130 birim dikey aralıkla ızgara gibi diz, bölgedeki mevcut düğümlerin üstüne bindirme. Akış diyagramlarında akış yönünde sırala.',
     '- Bölge belirtilmediyse x/y VERME (null bırakılır, düğüm bölge dışı sayılır) ya da bölgelerin dışında bir koordinat seç.',
     '- KULLANICININ YETKİSİ bölümüne uy: yazamadığı bölgelerdeki düğümlere/kenarlara DOKUNMA ve o bölgelerin içine yeni düğüm KOYMA; böyle bir istek gelirse mode "summary" ile nedenini açıkla.',
+    '- AI\'YA KAPALI BÖLGELER (kesin): "aiAllowed": false olan bölgelerdeki düğümlere/kenarlara DOKUNMA ve o bölgelerin içine yeni düğüm KOYMA — bu bölgelerde AI çalışması yasaktır, kullanıcı orada bir iş istese bile. Böyle bir istek gelirse o bölge için yapamayacağını reply\'de kısaca belirt AMA istekteki AI\'ya açık/bölge dışı diğer işleri normal şekilde yapmaya devam et (mümkünse yine mode "diagram" döndür).',
+    '- BÖLGE AÇIKLAMALARI: Her bölgenin "description" alanı varsa, o bölgenin içinde ya da onunla ilgili iş üretirken açıklamayı bağlam/yönerge olarak kullan (ör. o bölgeye eklediğin düğümlerin içeriği açıklamaya uygun olsun).',
     '- Özet/analiz isteklerinde ASLA ops üretme; mode "summary" olsun.',
     '- Kullanıcı açıkça silme istemedikçe delete_node / delete_edge kullanma.',
     '- Kullanıcı bir bölgeden bahsediyorsa düğümlerin "regions" alanına bakarak o bölgedeki düğümleri esas al.',
@@ -131,9 +133,13 @@ function buildUserText(
     id: e.id, sourceId: e.sourceId, targetId: e.targetId,
     kind: e.kind, direction: e.direction, label: e.label,
   }));
-  const regionInfo = regions.map((r) => ({ id: r.id, name: r.name, x: r.x, y: r.y, width: r.width, height: r.height }));
+  const regionInfo = regions.map((r) => ({
+    id: r.id, name: r.name, x: r.x, y: r.y, width: r.width, height: r.height,
+    aiAllowed: r.aiAllowed, description: r.description.slice(0, 500),
+  }));
 
   const writable = writableRegions(regions, actor);
+  const aiClosed = regions.filter((r) => !r.aiAllowed);
   const permission =
     actor.role === 'viewer'
       ? 'rol: viewer — salt okunur, HİÇBİR değişiklik yapamaz.'
@@ -143,7 +149,11 @@ function buildUserText(
             : writable.length === 0
               ? 'HİÇBİRİ (yalnızca bölge dışı alan)'
               : writable.map((r) => `"${r.name}"`).join(', ')
-        }. Bölge dışı alan serbest.`;
+        }. Bölge dışı alan serbest.${
+          aiClosed.length > 0
+            ? ` AI'YA KAPALI bölgeler (dokunma, içine düğüm koyma): ${aiClosed.map((r) => `"${r.name}"`).join(', ')}.`
+            : ''
+        }`;
 
   return [
     `Kanvas: ${canvasName}`,
@@ -207,6 +217,64 @@ function parseModelOutput(raw: string): { reply: string; message: string; ops: O
 }
 
 /**
+ * AI'ya kapalı ("aiAllowed": false) bölgelere dokunan intent'leri ayıklar — model kuralı
+ * dinlemese bile sunucu tarafında güvence. Kapalı bölge yoksa hepsi geçer. Bir koordinatın
+ * kapalı bir bölge dikdörtgeninin içinde olması "dokunma" sayılır; kenarlar uç düğümlerine bağlıdır.
+ * `kept` = uygulanacak ops, `blockedRegionNames` = engellenen kapalı bölge adları (yanıt notu için).
+ */
+function filterAiClosedRegions(
+  state: GraphState, regions: RegionInfo[], ops: OpInput[],
+): { kept: OpInput[]; blockedRegionNames: string[] } {
+  const closed = regions.filter((r) => !r.aiAllowed);
+  if (closed.length === 0) return { kept: ops, blockedRegionNames: [] };
+
+  // Düğüm konumları: mevcut düğümler + bu partide eklenen düğümler (kenar uçları için).
+  const pos = new Map<string, { x: number | null; y: number | null }>();
+  for (const n of state.nodes) pos.set(n.id, { x: n.x, y: n.y });
+  for (const op of ops) if (op.op === 'add_node' && op.id) pos.set(op.id, { x: op.x ?? null, y: op.y ?? null });
+
+  const blockingRegion = (x: number | null | undefined, y: number | null | undefined): RegionInfo | null => {
+    if (x == null || y == null) return null;
+    for (const r of closed) if (x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height) return r;
+    return null;
+  };
+  const nodeRegion = (id: string): RegionInfo | null => {
+    const p = pos.get(id);
+    return p ? blockingRegion(p.x, p.y) : null;
+  };
+  const edgeRegion = (sourceId: string, targetId: string): RegionInfo | null =>
+    nodeRegion(sourceId) ?? nodeRegion(targetId);
+
+  const blocked = new Set<string>();
+  const kept: OpInput[] = [];
+  for (const op of ops) {
+    let hit: RegionInfo | null = null;
+    switch (op.op) {
+      case 'add_node':
+        hit = blockingRegion(op.x, op.y);
+        break;
+      case 'update_node':
+      case 'delete_node':
+      case 'move_node':
+        hit = nodeRegion(op.id);
+        if (!hit && op.op === 'move_node') hit = blockingRegion(op.x, op.y); // hedef de kapalı bölgede olamaz
+        break;
+      case 'add_edge':
+        hit = edgeRegion(op.sourceId, op.targetId);
+        break;
+      case 'delete_edge': {
+        const edge = state.edges.find((e) => e.id === op.id);
+        hit = edge ? edgeRegion(edge.sourceId, edge.targetId) : null;
+        break;
+      }
+    }
+    if (hit) blocked.add(hit.name);
+    else kept.push(op);
+  }
+  return { kept, blockedRegionNames: [...blocked] };
+}
+
+/**
  * Kanvas üstünde tek atımlık ajan turu: durumu topla → modele sor → gerekiyorsa tek commit at.
  * Actor isteği yapan kullanıcıdır: bölge ve rol kuralları normal commit'lerle birebir aynı işler.
  */
@@ -230,7 +298,16 @@ export async function runAgent(opts: {
     buildSystemPrompt(detail),
     buildUserText(canvasName, state, regions, actor, prompt, selectedIds),
   );
-  const { reply, message, ops } = parseModelOutput(raw);
+  const parsed = parseModelOutput(raw);
+  const { message } = parsed;
+  let { reply } = parsed;
+
+  // AI'ya kapalı bölgelere dokunan intent'leri sunucu tarafında ayıkla; gerisi normal işlenir.
+  const { kept: ops, blockedRegionNames } = filterAiClosedRegions(state, regions, parsed.ops);
+  if (blockedRegionNames.length > 0) {
+    const names = blockedRegionNames.map((n) => `"${n}"`).join(', ');
+    reply = `${reply}\n\nNot: ${names} bölgesi/bölgeleri AI'ya kapalı olduğu için oradaki işlemler atlandı.`;
+  }
 
   if (ops.length === 0) return { reply, committed: false };
 

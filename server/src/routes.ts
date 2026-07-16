@@ -251,7 +251,7 @@ export function registerRoutes(
     regions: await listRegions(prisma, scoped(req).canvasId),
   }));
 
-  type RegionBody = { name?: string; x?: number; y?: number; width?: number; height?: number; color?: string };
+  type RegionBody = { name?: string; x?: number; y?: number; width?: number; height?: number; color?: string; description?: string; aiAllowed?: boolean };
   /** Present rect fields must be finite numbers (width/height positive); `required` demands all four. */
   const rectError = (b: RegionBody | undefined, required: boolean): string | null => {
     for (const key of ['x', 'y', 'width', 'height'] as const) {
@@ -276,6 +276,8 @@ export function registerRoutes(
     const region = await createRegion(prisma, canvasId, {
       name, x: req.body.x!, y: req.body.y!, width: req.body.width!, height: req.body.height!,
       ...(req.body.color ? { color: req.body.color } : {}),
+      ...(req.body.description !== undefined ? { description: req.body.description.slice(0, 500) } : {}),
+      ...(req.body.aiAllowed !== undefined ? { aiAllowed: req.body.aiAllowed } : {}),
     });
     broadcast(canvasId, { type: 'regions', regions: await listRegions(prisma, canvasId) });
     return { region };
@@ -296,6 +298,8 @@ export function registerRoutes(
       data.name = name;
     }
     if (req.body?.color !== undefined) data.color = req.body.color;
+    if (req.body?.description !== undefined) data.description = req.body.description.slice(0, 500);
+    if (req.body?.aiAllowed !== undefined) data.aiAllowed = !!req.body.aiAllowed;
     const region = await updateRegion(prisma, canvasId, req.params.id, data);
     if (!region) return reply.code(404).send({ error: 'bölge bulunamadı' });
     broadcast(canvasId, { type: 'regions', regions: await listRegions(prisma, canvasId) });

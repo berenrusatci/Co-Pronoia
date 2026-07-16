@@ -204,6 +204,7 @@ const regionInclude = {
 
 type RegionRow = {
   id: string; name: string; x: number; y: number; width: number; height: number; color: string;
+  description: string; aiAllowed: boolean;
   members: { userId: string; user: { username: string } }[];
   roleAccess: {
     roleId: string;
@@ -218,6 +219,7 @@ const toRegionInfo = (r: RegionRow): RegionInfo => {
   for (const ra of r.roleAccess) for (const m of ra.role.members) byId.set(m.userId, m.user.username);
   return {
     id: r.id, name: r.name, x: r.x, y: r.y, width: r.width, height: r.height, color: r.color,
+    description: r.description, aiAllowed: r.aiAllowed,
     memberIds: [...byId.keys()],
     memberNames: [...byId.values()],
     directMemberIds: r.members.map((m) => m.userId),
@@ -237,7 +239,7 @@ export async function listRegions(prisma: PrismaClient, canvasId: string): Promi
 export async function createRegion(
   prisma: PrismaClient,
   canvasId: string,
-  data: { name: string; x: number; y: number; width: number; height: number; color?: string },
+  data: { name: string; x: number; y: number; width: number; height: number; color?: string; description?: string; aiAllowed?: boolean },
 ): Promise<RegionInfo> {
   const row = await prisma.region.create({
     data: { canvasId, ...data },
@@ -250,7 +252,7 @@ export async function updateRegion(
   prisma: PrismaClient,
   canvasId: string,
   regionId: string,
-  data: Partial<{ name: string; x: number; y: number; width: number; height: number; color: string }>,
+  data: Partial<{ name: string; x: number; y: number; width: number; height: number; color: string; description: string; aiAllowed: boolean }>,
 ): Promise<RegionInfo | null> {
   const existing = await prisma.region.findFirst({ where: { id: regionId, canvasId } });
   if (!existing) return null;

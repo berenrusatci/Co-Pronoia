@@ -29,6 +29,7 @@ export function RegionNode({ data, selected }: NodeProps<RegionFlowNode>) {
       )}
       <div className="region-label" style={{ background: r.color }}>
         {r.name}
+        {!r.aiAllowed && <span className="region-members-hint"> · 🚫AI</span>}
         {r.memberNames.length > 0 && <span className="region-members-hint"> · {r.memberNames.join(', ')}</span>}
       </div>
     </div>

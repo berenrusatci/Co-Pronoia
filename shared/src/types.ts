@@ -141,6 +141,10 @@ export interface RegionInfo {
   width: number;
   height: number;
   color: string;
+  /** Owner-written note about the region; the AI agent uses it as context for work inside the region. */
+  description: string;
+  /** When false, the built-in AI agent may not touch nodes inside this region (independent of user membership). */
+  aiAllowed: boolean;
   memberIds: string[];
   memberNames: string[];
   /** Yalnızca doğrudan atanan kullanıcılar (yönetim UI'ının checkbox durumu; memberIds bunun üst kümesi). */
