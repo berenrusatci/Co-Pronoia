@@ -81,6 +81,8 @@ Panelde iki bağımsız anahtar var:
 
 Kanvasta düğüm(leri) ve/veya bölge(leri) seçin (**Ctrl/Shift+tık** ile çoklu) — seçim ajan panelinde kaldırılabilir "Seçili:" rozetleri olarak görünür ve `selectedIds` ile ajana gider; *"bu adımları detaylandır"*, *"şu adımı yeniden adlandır"*, *"bundan sonrasını şöyle çiz"* gibi komutlar seçili öğelere uygulanır (bir bölge seçildiyse açıklaması ve içindeki tüm düğümler de bağlam olarak gider). Kanvas **sahibi** için ajan, çizim isteğine uygun görürse en fazla 4 yeni bölge de önerip oluşturabilir (`aiAllowed` zorla açık gelir); sahip olmayanlarda bu kapalıdır. Anahtar tanımlı değilse uç 503 döner.
 
+Üçüncü bir mod olarak **"zihin haritasını akışa dök"** isteği (`"hiyerarşiyi akış diyagramına aktar"`, `"her bölgeyi ayrı diyagram olarak diz"` gibi) ajanı `layout` moduna geçirir: bu modda LLM sadece isteği sınıflandırır, koordinat/kenar üretmez — yerleşim `shared/src/flowLayout.ts`'teki saf, deterministik bir motorla sunucu tarafında hesaplanır. Yazılabilir ve `aiAllowed` açık her bölgenin düğümleri kendi dikdörtgeni içinde düzenli bir ağaç olarak dizilir, bölge-içi `parentId` bağları akış kenarına dönüşür; bölgeler arası bağ kurulmaz, bölgesiz düğümler ayrı bir kümede toplanır, kapalı/izinsiz bölgelere dokunulmaz.
+
 ## Site yönetimi (admin paneli)
 
 `isAdmin` işaretli hesaplar Dashboard araç çubuğundaki **🛡** butonuyla site geneli bir yönetim paneli açar (kanvas/grup üyeliğinden bağımsız):
