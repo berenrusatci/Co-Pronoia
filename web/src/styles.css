@@ -306,6 +306,24 @@ body {
 body.exporting .react-flow__handle,
 body.exporting .add-child-btn,
 body.exporting .export-btn { visibility: hidden; }
+
+/* Ctrl+tık seçiminin açıklamaları: kanvasın solunda panel */
+.selection-info { border-left: none; border-right: 1px solid var(--border); }
+.selection-info-head { display: flex; align-items: center; justify-content: space-between; }
+.selection-info-close {
+  background: none; border: none; color: var(--text-muted); font-size: 18px; cursor: pointer; padding: 0 4px;
+}
+.selection-info-item { border-top: 1px solid var(--border); padding: 10px 0; }
+.selection-info-item:first-of-type { border-top: none; }
+.selection-info-title { display: flex; gap: 6px; align-items: center; font-size: 13px; }
+.selection-info-title strong { flex: 1; overflow-wrap: anywhere; }
+.selection-info-title button {
+  background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 14px; padding: 0 2px;
+}
+.selection-info-dot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+.selection-info-desc { margin: 6px 0 0; font-size: 12px; line-height: 1.5; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.selection-info-desc.empty { color: var(--text-faint); font-style: italic; }
+
 /* Login */
 .login-screen { display: grid; place-items: center; height: 100%; background: var(--bg-soft); }
 .login-card {

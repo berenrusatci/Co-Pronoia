@@ -61,6 +61,9 @@ interface GraphStore {
   /** PDF dışa aktarma sürüyor: kartlar/bölgeler açıklamalarını gösterir, zihin haritası ferah dizilir. */
   exporting: boolean;
   setExporting: (exporting: boolean) => void;
+  /** Ctrl+tık seçiminde solda açılan açıklama paneli. */
+  selectionInfoOpen: boolean;
+  setSelectionInfoOpen: (open: boolean) => void;
   askAgent: (prompt: string) => Promise<void>;
 
   /** WS identity: commits we POST carry this id so our own broadcasts are skipped. */
@@ -248,14 +251,15 @@ export const useGraphStore = create<GraphStore>((set, get) => {
     agentLog: [],
     agentBusy: false,
     agentDetail: 'proto',
+    agentStepwise: false,
+    exporting: false,
+    selectionInfoOpen: false,
     clientId: null,
     wsConnected: false,
     viewingSeq: null,
-    exporting: false,
     viewingBranchId: null,
     viewingState: null,
 
-    agentStepwise: false,
     load: async () => {
       try {
         const [state, { commits }, { branches }, { members }, { regions }] = await Promise.all([
@@ -367,20 +371,21 @@ export const useGraphStore = create<GraphStore>((set, get) => {
         headSeq: 0, commits: [], branches: [], members: [], regions: [], activeUsers: [],
         loaded: false, error: null, notice: null, selectedNodeId: null, selectedNodeIds: [], selectedRegionIds: [], sidePanel: 'none',
         viewingSeq: null, viewingBranchId: null, viewingState: null,
-        agentLog: [], agentBusy: false, exporting: false,
+        agentLog: [], agentBusy: false, exporting: false, selectionInfoOpen: false,
       }),
 
     setAgentDetail: (agentDetail) => set({ agentDetail }),
+    setAgentStepwise: (agentStepwise) => set({ agentStepwise }),
+    setExporting: (exporting) => set({ exporting }),
+    setSelectionInfoOpen: (selectionInfoOpen) => set({ selectionInfoOpen }),
 
     askAgent: async (prompt) => {
       const trimmed = prompt.trim();
       if (!trimmed || get().agentBusy) return;
-    setExporting: (exporting) => set({ exporting }),
       set((s) => ({ agentLog: [...s.agentLog, { who: 'user', text: trimmed }], agentBusy: true }));
       try {
         // Commit atarsa sunucu WS'ten clientId: null ile yayınlar; state oradan güncellenir.
         // Seçili düğümler komuta bağlam olarak eklenir ("şu adımları detaylandır" bunlara işaret eder).
-    setAgentStepwise: (agentStepwise) => set({ agentStepwise }),
         const res = await api.agent(trimmed, get().agentDetail, get().selectedNodeIds, get().selectedRegionIds, get().agentStepwise);
         set((s) => ({
           agentLog: [...s.agentLog, {
@@ -401,19 +406,25 @@ export const useGraphStore = create<GraphStore>((set, get) => {
 
     setView: (view) => set({ view }),
     select: (selectedNodeId) =>
-      set({ selectedNodeId, selectedNodeIds: selectedNodeId ? [selectedNodeId] : [], selectedRegionIds: [] }),
+      set({ selectedNodeId, selectedNodeIds: selectedNodeId ? [selectedNodeId] : [], selectedRegionIds: [], selectionInfoOpen: false }),
+    // Ctrl/Shift+tık seçimleri soldaki açıklama panelini açar; seçim boşalınca panel kapanır.
     toggleSelect: (id) =>
       set((s) => {
         const has = s.selectedNodeIds.includes(id);
         const selectedNodeIds = has ? s.selectedNodeIds.filter((x) => x !== id) : [...s.selectedNodeIds, id];
-        return { selectedNodeIds, selectedNodeId: has ? (selectedNodeIds.at(-1) ?? null) : id };
+        return {
+          selectedNodeIds,
+          selectedNodeId: has ? (selectedNodeIds.at(-1) ?? null) : id,
+          selectionInfoOpen: selectedNodeIds.length + s.selectedRegionIds.length > 0,
+        };
       }),
     toggleSelectRegion: (id) =>
-      set((s) => ({
-        selectedRegionIds: s.selectedRegionIds.includes(id)
+      set((s) => {
+        const selectedRegionIds = s.selectedRegionIds.includes(id)
           ? s.selectedRegionIds.filter((x) => x !== id)
-          : [...s.selectedRegionIds, id],
-      })),
+          : [...s.selectedRegionIds, id];
+        return { selectedRegionIds, selectionInfoOpen: selectedRegionIds.length + s.selectedNodeIds.length > 0 };
+      }),
     togglePanel: (panel) => set((s) => ({ sidePanel: s.sidePanel === panel ? 'none' : panel })),
     clearError: () => set({ error: null }),
     clearNotice: () => set({ notice: null }),

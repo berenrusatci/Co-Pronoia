@@ -15,6 +15,7 @@ import { BranchPanel } from './components/BranchPanel';
 import { MembersPanel } from './components/MembersPanel';
 import { RegionsPanel } from './components/RegionsPanel';
 import { AgentPanel } from './components/AgentPanel';
+import { SelectionInfoPanel } from './components/SelectionInfoPanel';
 import { LoginView } from './components/LoginView';
 import { GroupJoinPrompt } from './components/GroupJoinPrompt';
 import { Dashboard } from './components/Dashboard';
@@ -119,6 +120,7 @@ export default function App() {
       <ReadOnlyBanner />
       <ErrorToast />
       <div className="main-area">
+        {view !== 'timeline' && <SelectionInfoPanel />}
         <div className="canvas-area">
           <ReactFlowProvider>
             {view === 'flow' && <FlowView />}
