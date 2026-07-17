@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { useGroupStore } from '../store/groupStore';
+import { Brand } from './Logo';
 
 /** Shown after login when a `?grupDavet=` link is pending — asks for a job title before requesting to join. */
 export function GroupJoinPrompt({ onDone }: { onDone: () => void }) {
@@ -18,7 +19,7 @@ export function GroupJoinPrompt({ onDone }: { onDone: () => void }) {
   return (
     <div className="login-screen">
       <form className="login-card" onSubmit={submit}>
-        <h1><span className="brand-mark">✱</span> co-pronoia</h1>
+        <h1><Brand /></h1>
         <p className="login-sub">Bir grup davet linkiyle geldiniz. Katılma isteğiniz grup yöneticisinin onayına gönderilecek.</p>
         <label>
           Rolünüz / göreviniz

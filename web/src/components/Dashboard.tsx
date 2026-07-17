@@ -6,6 +6,7 @@ import { useAuthStore } from '../store/authStore';
 import { useThemeStore } from '../store/themeStore';
 import { useAdminStore } from '../store/adminStore';
 import { canvasApi, groupApi, ApiError, type RoleDefInput } from '../api/client';
+import { Brand } from './Logo';
 
 const accessLabels: Record<CanvasAccess, string> = { none: 'erişim yok', view: 'görüntüleme', edit: 'düzenleme' };
 
@@ -603,7 +604,7 @@ export function Dashboard() {
   return (
     <div className="dashboard">
       <div className="toolbar">
-        <span className="brand"><span className="brand-mark">✱</span> co-pronoia</span>
+        <span className="brand"><Brand /></span>
         <div className="toolbar-right">
           <span className="user-chip">
             {user?.avatarUrl && <img className="user-avatar" src={user.avatarUrl} alt="" />}

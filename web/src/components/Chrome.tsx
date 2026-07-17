@@ -3,6 +3,7 @@ import { useGraphStore, useReadOnly, type ViewMode } from '../store/graphStore';
 import { useAuthStore } from '../store/authStore';
 import { useCanvasStore } from '../store/canvasStore';
 import { useThemeStore } from '../store/themeStore';
+import { Brand } from './Logo';
 
 const views: { key: ViewMode; label: string }[] = [
   { key: 'flow', label: 'Zihin Haritası' },
@@ -68,7 +69,7 @@ export function Toolbar() {
 
   return (
     <div className="toolbar">
-      <span className="brand"><span className="brand-mark">✱</span> co-pronoia</span>
+      <span className="brand"><Brand /></span>
       <button className="pano-btn" onClick={leaveCanvas} title="Kanvas listesine dön">
         ← Pano
       </button>
