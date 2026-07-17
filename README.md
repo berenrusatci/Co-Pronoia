@@ -1,4 +1,4 @@
-# 🌳 TreeMapper
+# Co-Pronoia
 
 Ağaç tabanlı, **çok kullanıcılı** geliştirme planlama uygulaması. Planınızı düğümler halinde kurar; aynı veriyi üç görünümde sunar, her değişikliği yazarıyla birlikte numaralı bir commit olarak kaydeder ve eşzamanlı çakışmaları dallara ayırır.
 
