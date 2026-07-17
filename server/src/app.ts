@@ -4,7 +4,7 @@ import fastifyWebsocket from '@fastify/websocket';
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { randomUUID } from 'node:crypto';
-import type { CanvasRole, GroupRole, GroupMemberStatus, ServerMessage } from '@treemapper/shared';
+import type { CanvasRole, GroupRole, GroupMemberStatus, ServerMessage, SiteAppearance } from '@treemapper/shared';
 import { CommitService } from './commitService.js';
 import { memberRole } from './canvasService.js';
 import { groupRole } from './groupService.js';
@@ -16,6 +16,7 @@ import { registerGoogleAuth } from './googleAuth.js';
 import { registerCanvasRoutes } from './canvasRoutes.js';
 import { registerGroupRoutes, registerGroupMemberRoutes } from './groupRoutes.js';
 import { registerAdminRoutes } from './adminRoutes.js';
+import { getSiteAsset, LOGIN_PREVIEW } from './siteAssetService.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -69,7 +70,8 @@ export async function buildApp(dbUrl: string, opts?: { emailSender?: EmailSender
   app.decorateRequest('groupStatus', null);
   app.addHook('preHandler', async (req, reply) => {
     if (!req.url.startsWith('/api')) return;
-    if (req.url.startsWith('/api/auth/') || req.url === '/api/health') return;
+    // /api/site/*: giriş ekranı oturum açılmadan çizildiği için görünüm ayarı herkese açık.
+    if (req.url.startsWith('/api/auth/') || req.url.startsWith('/api/site/') || req.url === '/api/health') return;
     req.user = await resolveSession(prisma, sessionToken(req));
     if (!req.user) return reply.code(401).send({ error: 'oturum gerekli' });
   });
@@ -138,6 +140,32 @@ export async function buildApp(dbUrl: string, opts?: { emailSender?: EmailSender
   };
 
   app.get('/api/health', async () => ({ ok: true }));
+
+  // ---------- Herkese açık site görünümü (giriş ekranı için; oturum gerekmez) ----------
+
+  app.get('/api/site/appearance', async () => {
+    const asset = await getSiteAsset(prisma, LOGIN_PREVIEW);
+    // Yüklenen görsel kendi ucundan servis edilir; `v` damgası admin değiştirince cache'i kırar.
+    const loginPreview = asset?.url
+      ? asset.url
+      : asset?.data
+        ? `/api/site/login-preview?v=${asset.updatedAt.getTime()}`
+        : null;
+    return { appearance: { loginPreview } satisfies SiteAppearance };
+  });
+
+  app.get('/api/site/login-preview', async (_req, reply) => {
+    const asset = await getSiteAsset(prisma, LOGIN_PREVIEW);
+    if (!asset?.data || !asset.mimeType) return reply.code(404).send({ error: 'görsel yok' });
+    return reply
+      .header('Content-Type', asset.mimeType)
+      // Yüklenen içerik kendi origin'imizden çıkıyor: tarayıcı tipi tahmin etmesin ve
+      // doğrudan gezinilse bile hiçbir alt kaynak/script çalışmasın.
+      .header('X-Content-Type-Options', 'nosniff')
+      .header('Content-Security-Policy', "default-src 'none'; sandbox")
+      .header('Cache-Control', 'public, max-age=300')
+      .send(Buffer.from(asset.data));
+  });
 
   app.register(async (scope) => {
     scope.get<{ Querystring: { canvas?: string } }>('/api/ws', { websocket: true }, async (socket, req) => {

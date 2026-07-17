@@ -7,6 +7,9 @@ import {
 } from './adminService.js';
 import { deleteCanvas, listMembers, removeMember, setMemberRole } from './canvasService.js';
 import { approveMember, listGroupMembers, removeGroupMember, setGroupMemberRole } from './groupService.js';
+import {
+  clearSiteAsset, LOGIN_PREVIEW, MAX_BYTES, setSiteAssetUpload, setSiteAssetUrl,
+} from './siteAssetService.js';
 
 type Broadcast = (canvasId: string, msg: ServerMessage) => void;
 type Kick = (canvasId: string, reason: 'deleted' | 'removed', userId?: string) => void;
@@ -23,6 +26,30 @@ export function registerAdminRoutes(
   kick: Kick,
 ): void {
   app.get('/stats', async () => ({ stats: await getStats(prisma) }));
+
+  // ---------- Görünüm: giriş ekranı önizleme görseli ----------
+
+  app.put<{ Body: { dataUrl?: string; url?: string } }>(
+    '/appearance/login-preview',
+    // Base64 data URL gövdesi ham dosyadan ~%34 büyür; 2 MB'lık sınıra pay bırakılır.
+    { bodyLimit: Math.ceil(MAX_BYTES * 1.4) },
+    async (req, reply) => {
+      const { dataUrl, url } = req.body ?? {};
+      if (dataUrl && url) return reply.code(400).send({ error: 'Ya dosya ya adres gönderin, ikisini birden değil.' });
+      const result = dataUrl
+        ? await setSiteAssetUpload(prisma, LOGIN_PREVIEW, dataUrl)
+        : url
+          ? await setSiteAssetUrl(prisma, LOGIN_PREVIEW, url)
+          : ({ error: 'Görsel dosyası veya adresi gerekli.' } as const);
+      if ('error' in result) return reply.code(400).send(result);
+      return { ok: true };
+    },
+  );
+
+  app.delete('/appearance/login-preview', async () => {
+    await clearSiteAsset(prisma, LOGIN_PREVIEW);
+    return { ok: true };
+  });
 
   // ---------- Kullanıcılar ----------
 

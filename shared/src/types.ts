@@ -208,3 +208,12 @@ export interface AdminGroupInfo {
   canvasCount: number;
   createdAt: string;
 }
+
+/**
+ * Giriş ekranının adminden yönetilen görünümü. Oturum açmadan da okunur (`/api/site/appearance`),
+ * bu yüzden içinde yalnızca herkese açık olması amaçlanan alanlar bulunur.
+ */
+export interface SiteAppearance {
+  /** Giriş ekranındaki önizleme görselinin adresi; null ise paketle gelen örnek gösterilir. */
+  loginPreview: string | null;
+}

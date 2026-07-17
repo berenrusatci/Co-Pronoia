@@ -440,3 +440,82 @@ describe('grup yönetimi', () => {
     expect((await app.inject({ method: 'DELETE', url: `/api/admin/groups/${group.id}`, cookies })).statusCode).toBe(404);
   });
 });
+
+describe('görünüm: giriş ekranı önizleme görseli', () => {
+  // 1x1 saydam PNG.
+  const pngB64 =
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+  const pngDataUrl = `data:image/png;base64,${pngB64}`;
+  const setPreview = (app: App, cookies: Cookies, payload: { dataUrl?: string; url?: string }) =>
+    app.inject({ method: 'PUT', url: '/api/admin/appearance/login-preview', payload, cookies });
+
+  it('görünüm ucu oturumsuz okunur ve ayarsızken boş döner', async () => {
+    const { app } = await freshApp();
+    const res = await app.inject({ method: 'GET', url: '/api/site/appearance' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().appearance.loginPreview).toBeNull();
+    // Görsel yokken ucun kendisi 404 verir (istemci paketteki örneğe düşer).
+    expect((await app.inject({ method: 'GET', url: '/api/site/login-preview' })).statusCode).toBe(404);
+  });
+
+  it('yalnızca yönetici değiştirebilir', async () => {
+    const { app, sent } = await freshApp();
+    expect((await app.inject({ method: 'PUT', url: '/api/admin/appearance/login-preview', payload: { dataUrl: pngDataUrl } })).statusCode).toBe(401);
+    const { cookies } = await registerVerified(app, sent, { username: 'ayse', password: 'sifre123', email: 'a@x.com' });
+    expect((await setPreview(app, cookies, { dataUrl: pngDataUrl })).statusCode).toBe(403);
+  });
+
+  it('yüklenen görsel kaydedilir, oturumsuz servis edilir ve varsayılana dönülebilir', async () => {
+    const { app, prisma, sent } = await freshApp();
+    const { cookies } = await adminUser(app, prisma, sent);
+
+    expect((await setPreview(app, cookies, { dataUrl: pngDataUrl })).statusCode).toBe(200);
+
+    // Oturumsuz istemci hem adresi hem baytları alabilmeli.
+    const appearance = await app.inject({ method: 'GET', url: '/api/site/appearance' });
+    const url = appearance.json().appearance.loginPreview as string;
+    expect(url).toMatch(/^\/api\/site\/login-preview\?v=\d+$/);
+
+    const img = await app.inject({ method: 'GET', url });
+    expect(img.statusCode).toBe(200);
+    expect(img.headers['content-type']).toBe('image/png');
+    expect(img.headers['x-content-type-options']).toBe('nosniff');
+    expect(img.rawPayload.equals(Buffer.from(pngB64, 'base64'))).toBe(true);
+
+    expect((await app.inject({ method: 'DELETE', url: '/api/admin/appearance/login-preview', cookies })).statusCode).toBe(200);
+    expect((await app.inject({ method: 'GET', url: '/api/site/appearance' })).json().appearance.loginPreview).toBeNull();
+  });
+
+  it('dış adres kaydedilir ve yüklenen baytların yerini alır', async () => {
+    const { app, prisma, sent } = await freshApp();
+    const { cookies } = await adminUser(app, prisma, sent);
+
+    await setPreview(app, cookies, { dataUrl: pngDataUrl });
+    expect((await setPreview(app, cookies, { url: 'https://ornek.com/a.png' })).statusCode).toBe(200);
+
+    expect((await app.inject({ method: 'GET', url: '/api/site/appearance' })).json().appearance.loginPreview)
+      .toBe('https://ornek.com/a.png');
+    // Adrese geçilince eski baytlar temizlenir.
+    expect((await app.inject({ method: 'GET', url: '/api/site/login-preview' })).statusCode).toBe(404);
+  });
+
+  it('geçersiz tür, bozuk veri ve tehlikeli şema reddedilir', async () => {
+    const { app, prisma, sent } = await freshApp();
+    const { cookies } = await adminUser(app, prisma, sent);
+
+    // SVG bilerek dışarıda: aynı origin'den servis edilince script çalıştırabilir.
+    expect((await setPreview(app, cookies, { dataUrl: 'data:image/svg+xml;base64,PHN2Zy8+' })).statusCode).toBe(400);
+    expect((await setPreview(app, cookies, { dataUrl: 'merhaba' })).statusCode).toBe(400);
+    expect((await setPreview(app, cookies, { url: 'javascript:alert(1)' })).statusCode).toBe(400);
+    expect((await setPreview(app, cookies, {})).statusCode).toBe(400);
+    expect((await setPreview(app, cookies, { dataUrl: pngDataUrl, url: 'https://ornek.com/a.png' })).statusCode).toBe(400);
+    expect((await app.inject({ method: 'GET', url: '/api/site/appearance' })).json().appearance.loginPreview).toBeNull();
+  });
+
+  it('2 MB üstü görsel reddedilir', async () => {
+    const { app, prisma, sent } = await freshApp();
+    const { cookies } = await adminUser(app, prisma, sent);
+    const big = `data:image/png;base64,${Buffer.alloc(2 * 1024 * 1024 + 64, 1).toString('base64')}`;
+    expect((await setPreview(app, cookies, { dataUrl: big })).statusCode).toBe(400);
+  });
+});

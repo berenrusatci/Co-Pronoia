@@ -251,3 +251,14 @@ model Branch {
 
   @@index([canvasId, status])
 }
+
+/// Site geneli, adminin yönettiği görsel ayar (şu an tek anahtar: 'login_preview').
+/// Ya yüklenen dosya (data+mimeType) ya da dış bir adres (url) tutulur; ikisi de boşsa
+/// giriş ekranı paketle gelen örnek görseli gösterir. Kanvas verisiyle ilgisi yoktur.
+model SiteAsset {
+  key       String   @id
+  mimeType  String?
+  data      Bytes?
+  url       String?
+  updatedAt DateTime @updatedAt
+}

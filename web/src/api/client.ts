@@ -2,7 +2,7 @@ import type {
   AdminCanvasInfo, AdminGroupInfo, AdminStats, AdminUserInfo,
   BranchInfo, CanvasAccess, CanvasInfo, Commit, CommitSummary, EdgeDirection, EdgeKind, GraphState,
   GroupInfo, GroupMemberInfo, GroupRole, GroupRoleDefInfo, MemberInfo, NodeFields, NodeType,
-  OpInput, RegionInfo,
+  OpInput, RegionInfo, SiteAppearance,
 } from '@treemapper/shared';
 
 export interface RoleDefInput {
@@ -184,8 +184,16 @@ export const groupApi = {
 };
 
 /** Site yönetim paneli uçları (yalnızca isAdmin kullanıcılar; sunucu 403 ile korur). */
+/** Oturum gerektirmeyen site uçları — giriş ekranı bunları açılışta okur. */
+export const siteApi = {
+  appearance: () => request<{ appearance: SiteAppearance }>('/api/site/appearance'),
+};
+
 export const adminApi = {
   stats: () => request<{ stats: AdminStats }>('/api/admin/stats'),
+  setLoginPreview: (body: { dataUrl: string } | { url: string }) =>
+    put<{ ok: boolean }>('/api/admin/appearance/login-preview', body),
+  clearLoginPreview: () => del<{ ok: boolean }>('/api/admin/appearance/login-preview'),
   users: (q = '') =>
     request<{ users: AdminUserInfo[] }>(`/api/admin/users${q ? `?q=${encodeURIComponent(q)}` : ''}`),
   setUserAdmin: (userId: string, isAdmin: boolean) =>

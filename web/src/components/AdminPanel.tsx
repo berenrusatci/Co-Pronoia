@@ -2,12 +2,12 @@ import { useEffect, useState, type FormEvent } from 'react';
 import type {
   AdminCanvasInfo, AdminGroupInfo, AdminStats, AdminUserInfo, GroupMemberInfo, MemberInfo,
 } from '@treemapper/shared';
-import { adminApi, ApiError } from '../api/client';
+import { adminApi, ApiError, siteApi } from '../api/client';
 import { useAdminStore } from '../store/adminStore';
 import { useAuthStore } from '../store/authStore';
 import { useThemeStore } from '../store/themeStore';
 
-type AdminTab = 'overview' | 'users' | 'canvases' | 'groups';
+type AdminTab = 'overview' | 'users' | 'canvases' | 'groups' | 'appearance';
 
 const errText = (err: unknown) => (err instanceof ApiError ? err.message : String(err));
 const trDate = (iso: string) => new Date(iso).toLocaleDateString('tr-TR');
@@ -516,6 +516,132 @@ function GroupsSection({ onError }: { onError: (msg: string) => void }) {
   );
 }
 
+// ---------- Görünüm ----------
+
+/** Sunucudaki 2 MB'lık ham bayt sınırı (siteAssetService.MAX_BYTES) — dosya seçilirken erkenden uyarırız. */
+const MAX_PREVIEW_BYTES = 2 * 1024 * 1024;
+const DEFAULT_PREVIEW = '/login-preview.svg';
+
+const readAsDataUrl = (file: File) =>
+  new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error('Dosya okunamadı.'));
+    reader.readAsDataURL(file);
+  });
+
+/**
+ * Giriş ekranındaki önizleme görselini yönetir. Bilinçli olarak "gerçek bir kanvası seç" değil:
+ * admin kanvas içeriğini okuyamaz (bkz. CLAUDE.md) ve giriş ekranı herkese açıktır.
+ */
+function AppearanceSection({ onError }: { onError: (msg: string) => void }) {
+  const [current, setCurrent] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [url, setUrl] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const refresh = () =>
+    siteApi
+      .appearance()
+      .then(({ appearance }) => {
+        setCurrent(appearance.loginPreview);
+        setLoaded(true);
+      })
+      .catch((e) => onError(errText(e)));
+
+  useEffect(() => {
+    void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const run = async (action: () => Promise<unknown>, msg: string) => {
+    setBusy(true);
+    setNotice(null);
+    try {
+      await action();
+      await refresh();
+      setNotice(msg);
+    } catch (e) {
+      onError(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const pickFile = async (file: File | undefined) => {
+    if (!file) return;
+    if (file.size > MAX_PREVIEW_BYTES) {
+      onError(`Görsel çok büyük (${Math.round(file.size / 1024)} KB). En fazla 2 MB olabilir.`);
+      return;
+    }
+    const dataUrl = await readAsDataUrl(file).catch((e) => {
+      onError(errText(e));
+      return null;
+    });
+    if (dataUrl) await run(() => adminApi.setLoginPreview({ dataUrl }), 'Görsel yüklendi.');
+  };
+
+  return (
+    <>
+      <h2>Giriş ekranı görseli</h2>
+      <p className="empty-note" style={{ marginBottom: 16 }}>
+        Giriş ekranının sol panelinde görünen önizleme. Ayarlanmazsa paketle gelen örnek canvas
+        görseli gösterilir. Bu görseli giriş yapmamış herkes görür — özel kanvas içeriği koymayın.
+      </p>
+
+      <div className="admin-appearance">
+        <figure className="admin-preview-frame">
+          <img src={current ?? DEFAULT_PREVIEW} alt="Giriş ekranı önizlemesi" />
+          <figcaption>
+            {!loaded ? 'Yükleniyor…' : current ? 'Şu an: özel görsel' : 'Şu an: varsayılan örnek görsel'}
+          </figcaption>
+        </figure>
+
+        <div className="admin-appearance-controls">
+          <label className="admin-field">
+            Dosya yükle <small>(PNG, JPEG, WebP veya GIF · en fazla 2 MB)</small>
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              disabled={busy}
+              onChange={(e) => {
+                void pickFile(e.target.files?.[0]);
+                e.target.value = '';
+              }}
+            />
+          </label>
+
+          <form
+            className="admin-field"
+            onSubmit={(e: FormEvent) => {
+              e.preventDefault();
+              if (url.trim()) void run(() => adminApi.setLoginPreview({ url: url.trim() }), 'Adres kaydedildi.');
+            }}
+          >
+            <label htmlFor="admin-preview-url">Veya dış adres</label>
+            <div className="admin-field-row">
+              <input
+                id="admin-preview-url" value={url} onChange={(e) => setUrl(e.target.value)}
+                placeholder="https://…/onizleme.png" disabled={busy}
+              />
+              <button type="submit" className="login-btn" disabled={busy || !url.trim()}>Kaydet</button>
+            </div>
+          </form>
+
+          <button
+            type="button" className="pano-btn" disabled={busy || !current}
+            onClick={() => void run(() => adminApi.clearLoginPreview(), 'Varsayılan görsele dönüldü.')}
+          >
+            Varsayılana dön
+          </button>
+          {notice && <div className="admin-notice">✓ {notice}</div>}
+        </div>
+      </div>
+    </>
+  );
+}
+
 // ---------- Panel ----------
 
 const tabs: Array<[AdminTab, string]> = [
@@ -523,6 +649,7 @@ const tabs: Array<[AdminTab, string]> = [
   ['users', 'Kullanıcılar'],
   ['canvases', 'Kanvaslar'],
   ['groups', 'Gruplar'],
+  ['appearance', 'Görünüm'],
 ];
 
 export function AdminPanel() {
@@ -561,6 +688,7 @@ export function AdminPanel() {
         {tab === 'users' && <UsersSection selfId={user?.id ?? ''} onError={setError} />}
         {tab === 'canvases' && <CanvasesSection onError={setError} />}
         {tab === 'groups' && <GroupsSection onError={setError} />}
+        {tab === 'appearance' && <AppearanceSection onError={setError} />}
       </div>
       {error && (
         <div className="error-toast" onClick={() => setError(null)}>
