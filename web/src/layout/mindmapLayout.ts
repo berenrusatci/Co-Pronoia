@@ -9,8 +9,9 @@ export interface LayoutResult {
  * Horizontal tidy-tree layout from parentId links. Computed on the fly,
  * never persisted — flow-view coordinates are untouched.
  * Orphan roots (multiple parentless nodes) are stacked vertically.
+ * `expanded` = PDF dışa aktarma: kartlar açıklamalarıyla uzadığı için dikey aralık açılır.
  */
-export function computeMindmapLayout(nodes: PlanNode[]): LayoutResult {
+export function computeMindmapLayout(nodes: PlanNode[], expanded = false): LayoutResult {
   const positions = new Map<string, { x: number; y: number }>();
   if (nodes.length === 0) return { positions };
 
@@ -33,8 +34,8 @@ export function computeMindmapLayout(nodes: PlanNode[]): LayoutResult {
       children: (byParent.get(node.id) ?? []).map(build),
     });
     const h = hierarchy(build(root));
-    const nodeH = 70;
-    const nodeW = 260;
+    const nodeH = expanded ? 180 : 70;
+    const nodeW = expanded ? 300 : 260;
     const layout = tree<TreeDatum>().nodeSize([nodeH, nodeW]);
     const laid = layout(h);
     let minX = Infinity;

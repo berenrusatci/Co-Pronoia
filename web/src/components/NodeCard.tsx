@@ -11,6 +11,7 @@ const statusLabels: Record<NodeStatus, string> = { planned: 'planlandı', in_pro
 export function NodeCard({ data, selected }: NodeProps<FlowNode>) {
   const { plan, showChildButton } = data;
   const addNode = useGraphStore((s) => s.addNode);
+  const exporting = useGraphStore((s) => s.exporting);
   const readOnly = useReadOnly();
 
   return (
@@ -24,6 +25,7 @@ export function NodeCard({ data, selected }: NodeProps<FlowNode>) {
         <span className={`status-pill status-${plan.status}`}>{statusLabels[plan.status]}</span>
         <span className="commit-badge">{plan.createdCommit === 0 ? 'yeni•' : `#${plan.createdCommit}`}</span>
       </div>
+      {exporting && plan.description && <div className="node-card-desc">{plan.description}</div>}
       {showChildButton && !readOnly && (
         <button
           className="add-child-btn"

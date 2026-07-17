@@ -9,6 +9,7 @@ export type RegionFlowNode = Node<{ region: RegionInfo; agentSelected?: boolean 
 export function RegionNode({ data, selected }: NodeProps<RegionFlowNode>) {
   const isOwner = useCanvasStore((s) => s.active?.role === 'owner');
   const updateRegion = useGraphStore((s) => s.updateRegion);
+  const exporting = useGraphStore((s) => s.exporting);
   const r = data.region;
   return (
     <div
@@ -40,6 +41,7 @@ export function RegionNode({ data, selected }: NodeProps<RegionFlowNode>) {
         {!r.aiAllowed && <span className="region-members-hint"> · 🚫AI</span>}
         {r.memberNames.length > 0 && <span className="region-members-hint"> · {r.memberNames.join(', ')}</span>}
       </div>
+      {exporting && r.description && <div className="region-desc">{r.description}</div>}
     </div>
   );
 }

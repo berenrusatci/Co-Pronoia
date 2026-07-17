@@ -58,6 +58,9 @@ interface GraphStore {
   /** Parça parça üretim (detay düzeyiyle birleşir): her parça ayrı istek + ayrı commit, canlı belirir. */
   agentStepwise: boolean;
   setAgentStepwise: (stepwise: boolean) => void;
+  /** PDF dışa aktarma sürüyor: kartlar/bölgeler açıklamalarını gösterir, zihin haritası ferah dizilir. */
+  exporting: boolean;
+  setExporting: (exporting: boolean) => void;
   askAgent: (prompt: string) => Promise<void>;
 
   /** WS identity: commits we POST carry this id so our own broadcasts are skipped. */
@@ -248,6 +251,7 @@ export const useGraphStore = create<GraphStore>((set, get) => {
     clientId: null,
     wsConnected: false,
     viewingSeq: null,
+    exporting: false,
     viewingBranchId: null,
     viewingState: null,
 
@@ -363,7 +367,7 @@ export const useGraphStore = create<GraphStore>((set, get) => {
         headSeq: 0, commits: [], branches: [], members: [], regions: [], activeUsers: [],
         loaded: false, error: null, notice: null, selectedNodeId: null, selectedNodeIds: [], selectedRegionIds: [], sidePanel: 'none',
         viewingSeq: null, viewingBranchId: null, viewingState: null,
-        agentLog: [], agentBusy: false,
+        agentLog: [], agentBusy: false, exporting: false,
       }),
 
     setAgentDetail: (agentDetail) => set({ agentDetail }),
@@ -371,6 +375,7 @@ export const useGraphStore = create<GraphStore>((set, get) => {
     askAgent: async (prompt) => {
       const trimmed = prompt.trim();
       if (!trimmed || get().agentBusy) return;
+    setExporting: (exporting) => set({ exporting }),
       set((s) => ({ agentLog: [...s.agentLog, { who: 'user', text: trimmed }], agentBusy: true }));
       try {
         // Commit atarsa sunucu WS'ten clientId: null ile yayınlar; state oradan güncellenir.

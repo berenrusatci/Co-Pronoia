@@ -281,6 +281,31 @@ body {
 }
 .agent-detail-switch button.active { background: var(--accent); color: #fff; }
 
+/* Görünümü PDF olarak indirme düğmesi (React Flow paneli, sağ üst) */
+.export-btn {
+  background: var(--bg-panel); color: var(--text-muted);
+  border: 1px solid var(--border-strong); border-radius: 8px;
+  padding: 5px 12px; font-size: 12px; cursor: pointer;
+}
+.export-btn:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
+.export-btn:disabled { opacity: 0.6; cursor: default; }
+
+/* PDF dışa aktarma modu: kart/bölge açıklamaları görünür, arayüz süsleri (tutamaçlar, + düğmesi) gizlenir */
+.node-card-desc {
+  margin-top: 6px; font-size: 11px; line-height: 1.45; color: var(--text-muted);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 5; overflow: hidden;
+}
+.region-desc {
+  position: absolute; top: 26px; left: 8px; right: 8px;
+  font-size: 11px; line-height: 1.45; color: var(--text);
+  background: color-mix(in srgb, var(--bg-panel) 85%, transparent);
+  padding: 4px 8px; border-radius: 8px;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden;
+}
+body.exporting .react-flow__handle,
+body.exporting .add-child-btn,
+body.exporting .export-btn { visibility: hidden; }
 /* Login */
 .login-screen { display: grid; place-items: center; height: 100%; background: var(--bg-soft); }
 .login-card {

@@ -9,6 +9,7 @@ import { NodeCard, type FlowNode } from '../components/NodeCard';
 import { RegionNode, type RegionFlowNode } from '../components/RegionNode';
 import { CurvedEdge, type CurvedFlowEdge } from '../components/CurvedEdge';
 import { kindStyles } from '../components/CurvedEdge';
+import { ExportButton } from '../components/ExportButton';
 
 const nodeTypes = { card: NodeCard, region: RegionNode };
 const edgeTypes = { curved: CurvedEdge };
@@ -146,6 +147,7 @@ export function FlowView() {
       <Background gap={20} />
       <Controls showInteractive={false} />
       <MiniMap pannable zoomable />
+      <ExportButton suffix="zihin-haritasi" />
     </ReactFlow>
   );
 }

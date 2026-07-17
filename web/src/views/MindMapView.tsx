@@ -3,6 +3,7 @@ import { Background, Controls, ReactFlow, type Edge } from '@xyflow/react';
 import { useGraphStore, useDisplayedGraph } from '../store/graphStore';
 import { NodeCard, type FlowNode } from '../components/NodeCard';
 import { computeMindmapLayout } from '../layout/mindmapLayout';
+import { ExportButton } from '../components/ExportButton';
 
 const nodeTypes = { card: NodeCard };
 
@@ -11,9 +12,10 @@ export function MindMapView() {
   const select = useGraphStore((s) => s.select);
   const toggleSelect = useGraphStore((s) => s.toggleSelect);
   const selectedNodeIds = useGraphStore((s) => s.selectedNodeIds);
+  const exporting = useGraphStore((s) => s.exporting);
 
   const { rfNodes, rfEdges } = useMemo(() => {
-    const { positions } = computeMindmapLayout(nodes);
+    const { positions } = computeMindmapLayout(nodes, exporting);
     const rfNodes: FlowNode[] = nodes.map((plan) => ({
       id: plan.id,
       type: 'card' as const,
@@ -33,7 +35,7 @@ export function MindMapView() {
         className: 'hierarchy-edge',
       }));
     return { rfNodes, rfEdges };
-  }, [nodes, selectedNodeIds]);
+  }, [nodes, selectedNodeIds, exporting]);
 
   return (
     <ReactFlow
@@ -51,6 +53,7 @@ export function MindMapView() {
     >
       <Background gap={20} />
       <Controls showInteractive={false} />
+      <ExportButton suffix="akis-diyagrami" />
     </ReactFlow>
   );
 }
