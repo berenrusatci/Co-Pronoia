@@ -4,3 +4,10 @@ server/data/
 *.log
 .DS_Store
 .env
+# Emacs otomatik kayıt/yedek dosyaları: `#.env#` gibi adlarla .env'in gizli anahtarlarını
+# birebir kopyalar ve `.env` kuralına takılmaz — bilerek ayrıca yok sayılıyor.
+\#*\#
+.#*
+*~
+# Claude Code yerel ayarları ve worktree'leri (içinde ayrı git depoları var).
+.claude/
