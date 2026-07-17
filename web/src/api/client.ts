@@ -137,7 +137,8 @@ export const api = {
     detail: 'proto' | 'detailed' = 'proto',
     selectedIds: string[] = [],
     selectedRegionIds: string[] = [],
-  ) => post<AgentResponse>(`${base()}/agent`, { prompt, detail, selectedIds, selectedRegionIds }),
+    stepwise = false,
+  ) => post<AgentResponse>(`${base()}/agent`, { prompt, detail, stepwise, selectedIds, selectedRegionIds }),
 };
 
 /** Dashboard-level endpoints (not canvas-scoped). */

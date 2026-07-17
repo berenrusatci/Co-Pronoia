@@ -52,9 +52,12 @@ interface GraphStore {
   /** Ajan paneli sohbeti; panel kapansa da kanvastan çıkana dek korunur. */
   agentLog: AgentChatEntry[];
   agentBusy: boolean;
-  /** Çizim ayrıntısı: proto = hızlı iskelet (3-6 düğüm), detailed = kapsamlı döküm. */
+  /** Çizim ayrıntısı: proto = hızlı iskelet (3-6 düğüm), detailed = kapsamlı döküm. Modeli bu seçer. */
   agentDetail: 'proto' | 'detailed';
   setAgentDetail: (detail: 'proto' | 'detailed') => void;
+  /** Parça parça üretim (detay düzeyiyle birleşir): her parça ayrı istek + ayrı commit, canlı belirir. */
+  agentStepwise: boolean;
+  setAgentStepwise: (stepwise: boolean) => void;
   askAgent: (prompt: string) => Promise<void>;
 
   /** WS identity: commits we POST carry this id so our own broadcasts are skipped. */
@@ -248,6 +251,7 @@ export const useGraphStore = create<GraphStore>((set, get) => {
     viewingBranchId: null,
     viewingState: null,
 
+    agentStepwise: false,
     load: async () => {
       try {
         const [state, { commits }, { branches }, { members }, { regions }] = await Promise.all([
@@ -371,7 +375,8 @@ export const useGraphStore = create<GraphStore>((set, get) => {
       try {
         // Commit atarsa sunucu WS'ten clientId: null ile yayınlar; state oradan güncellenir.
         // Seçili düğümler komuta bağlam olarak eklenir ("şu adımları detaylandır" bunlara işaret eder).
-        const res = await api.agent(trimmed, get().agentDetail, get().selectedNodeIds, get().selectedRegionIds);
+    setAgentStepwise: (agentStepwise) => set({ agentStepwise }),
+        const res = await api.agent(trimmed, get().agentDetail, get().selectedNodeIds, get().selectedRegionIds, get().agentStepwise);
         set((s) => ({
           agentLog: [...s.agentLog, {
             who: 'agent',

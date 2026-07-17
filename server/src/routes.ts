@@ -103,35 +103,38 @@ export function registerRoutes(
    * Üyelik preHandler'dan geçen herkes her kanvasta anında kullanabilir; actor istek sahibi
    * olduğundan rol/bölge kuralları normal commit'lerle aynıdır.
    */
-  app.post<{ Params: CanvasParams; Body: { prompt?: string; detail?: string; selectedIds?: string[]; selectedRegionIds?: string[] } }>('/agent', async (req, reply) => {
+  app.post<{ Params: CanvasParams; Body: { prompt?: string; detail?: string; stepwise?: boolean; selectedIds?: string[]; selectedRegionIds?: string[] } }>('/agent', async (req, reply) => {
     const { canvasId, service } = scoped(req);
     const prompt = (req.body?.prompt ?? '').trim();
     if (!prompt) return reply.code(400).send({ error: 'prompt gerekli' });
     if (!geminiConfigured())
       return reply.code(503).send({ error: 'ajan yapılandırılmamış: sunucuda GEMINI_API_KEY tanımlı değil' });
     const canvas = await prisma.canvas.findUnique({ where: { id: canvasId }, select: { name: true } });
-    let result;
     try {
-      result = await runAgent({
+      return await runAgent({
         prisma, service, canvasId, canvasName: canvas?.name ?? '', prompt, actor: actorOf(req),
         detail: req.body?.detail === 'detailed' ? 'detailed' : 'proto',
+        stepwise: req.body?.stepwise === true,
         selectedIds: Array.isArray(req.body?.selectedIds)
           ? req.body.selectedIds.filter((x): x is string => typeof x === 'string').slice(0, 50)
           : [],
         selectedRegionIds: Array.isArray(req.body?.selectedRegionIds)
           ? req.body.selectedRegionIds.filter((x): x is string => typeof x === 'string').slice(0, 20)
           : [],
+        // Parça parça modda her parça ayrı commit'tir; hepsi anında yayınlanır ki düğümler canlı belirsin.
+        onOutcome: (outcome) => {
+          if (outcome.result === 'committed') {
+            broadcast(canvasId, { type: 'commit', commit: outcome.commit, state: outcome.state, clientId: null });
+          } else {
+            broadcast(canvasId, { type: 'branch_created', branch: outcome.branch, clientId: null });
+          }
+        },
+        // Ajan bölge oluşturduysa (yalnızca sahip) panellerin anında görmesi için yayınla.
+        onRegions: (regions) => broadcast(canvasId, { type: 'regions', regions }),
       });
     } catch (err) {
       return reply.code(502).send({ error: `ajan çalıştırılamadı: ${err instanceof Error ? err.message : String(err)}` });
     }
-    if (result.outcome?.result === 'committed') {
-      broadcast(canvasId, { type: 'commit', commit: result.outcome.commit, state: result.outcome.state, clientId: null });
-    } else if (result.outcome?.result === 'branched') {
-      broadcast(canvasId, { type: 'branch_created', branch: result.outcome.branch, clientId: null });
-    }
-    const { outcome: _outcome, ...res } = result;
-    return res;
   });
 
   app.post<{ Params: CanvasParams & { seq: string }; Body: { clientId?: string } | null }>(

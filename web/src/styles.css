@@ -273,6 +273,7 @@ body {
 .agent-selection-chip button {
   border: none; background: none; color: inherit; cursor: pointer; font-size: 13px; padding: 0 3px; line-height: 1;
 }
+.agent-options { display: flex; gap: 6px; align-items: center; }
 .agent-detail-switch { display: flex; gap: 0; border: 1px solid var(--border-strong); border-radius: 8px; overflow: hidden; align-self: flex-start; }
 .agent-detail-switch button {
   border: none; background: var(--bg-panel); color: var(--text-muted);

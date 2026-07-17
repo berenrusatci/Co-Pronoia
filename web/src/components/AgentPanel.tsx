@@ -7,6 +7,8 @@ export function AgentPanel() {
   const askAgent = useGraphStore((s) => s.askAgent);
   const agentDetail = useGraphStore((s) => s.agentDetail);
   const setAgentDetail = useGraphStore((s) => s.setAgentDetail);
+  const agentStepwise = useGraphStore((s) => s.agentStepwise);
+  const setAgentStepwise = useGraphStore((s) => s.setAgentStepwise);
   const selectedNodeIds = useGraphStore((s) => s.selectedNodeIds);
   const selectedRegionIds = useGraphStore((s) => s.selectedRegionIds);
   const nodes = useGraphStore((s) => s.nodes);
@@ -71,21 +73,31 @@ export function AgentPanel() {
             ))}
           </div>
         )}
-        <div className="agent-detail-switch" title="Çizim isteklerinde ne kadar ayrıntıya girileceği">
-          <button
-            className={agentDetail === 'proto' ? 'active' : ''}
-            onClick={() => setAgentDetail('proto')}
-            title="Hızlı iskelet: 3-6 düğüm, kısa açıklamalar"
-          >
-            Prototip
-          </button>
-          <button
-            className={agentDetail === 'detailed' ? 'active' : ''}
-            onClick={() => setAgentDetail('detailed')}
-            title="Kapsamlı döküm: alt adımlar, açıklamalar, bağımlılık kenarları"
-          >
-            Detaylı
-          </button>
+        <div className="agent-options">
+          <div className="agent-detail-switch" title="Çizim isteklerinde ne kadar ayrıntıya girileceği">
+            <button
+              className={agentDetail === 'proto' ? 'active' : ''}
+              onClick={() => setAgentDetail('proto')}
+              title="Hızlı iskelet: 3-6 düğüm, kısa açıklamalar"
+            >
+              Prototip
+            </button>
+            <button
+              className={agentDetail === 'detailed' ? 'active' : ''}
+              onClick={() => setAgentDetail('detailed')}
+              title="Kapsamlı döküm: alt adımlar, açıklamalar, bağımlılık kenarları"
+            >
+              Detaylı
+            </button>
+          </div>
+          <div className="agent-detail-switch" title="Seçili detay düzeyiyle birleşir: iş bölümlere ayrılır, her parça ayrı istekle üretilip öncekine bağlanır; düğümler kanvasta adım adım belirir">
+            <button
+              className={agentStepwise ? 'active' : ''}
+              onClick={() => setAgentStepwise(!agentStepwise)}
+            >
+              + Parça parça
+            </button>
+          </div>
         </div>
         <textarea
           value={prompt}

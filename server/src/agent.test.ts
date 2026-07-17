@@ -281,6 +281,210 @@ describe('agent', () => {
     expect(state.edges.some((e) => e.sourceId === 'g1' && e.targetId === 'g2')).toBe(false);
   });
 
+  it('stepwise mode: each part is its own llm call and its own commit, connected to the previous', async () => {
+    const { prisma, service, canvas, actor } = await freshCanvas();
+    const calls: Array<{ system: string; user: string }> = [];
+    const llm: Llm = async (system, user) => {
+      calls.push({ system, user });
+      if (calls.length === 1) {
+        return JSON.stringify({
+          mode: 'diagram', reply: 'İlk parça hazır.', message: 'plan',
+          ops: [
+            { op: 'add_node', id: 'p1a', title: 'P1-A' },
+            { op: 'add_node', id: 'p1b', title: 'P1-B' },
+            { op: 'add_edge', sourceId: 'p1a', targetId: 'p1b', kind: 'flow' },
+          ],
+          parts: ['İkinci parça'],
+        });
+      }
+      return JSON.stringify({
+        mode: 'diagram', reply: 'İkinci parça hazır.', message: 'devam',
+        ops: [
+          { op: 'add_node', id: 'p2a', title: 'P2-A' },
+          { op: 'add_edge', sourceId: 'p1b', targetId: 'p2a', kind: 'flow' },
+        ],
+      });
+    };
+    const outcomes: string[] = [];
+    const result = await runAgent({
+      prisma, service, canvasId: canvas.id, canvasName: canvas.name,
+      prompt: 'büyük plan', actor, llm, detail: 'detailed', stepwise: true,
+      onOutcome: (o) => outcomes.push(o.result),
+    });
+
+    expect(calls).toHaveLength(2);
+    // Parça parça bir üretim biçimidir; detay düzeyi (model seçimiyle birlikte) kullanıcının seçtiği gibi kalır.
+    expect(calls[0].system).toContain('DETAY DÜZEYİ: DETAYLI');
+    expect(calls[0].system).toContain('ÜRETİM BİÇİMİ: PARÇA PARÇA');
+    expect(calls[1].user).toContain('ŞİMDİKİ PARÇA (2/2): "İkinci parça"');
+    // İkinci çağrı taze durumu görür: ilk parçanın düğümleri DÜĞÜMLER listesinde.
+    expect(calls[1].user).toContain('"id":"p1a"');
+
+    expect(result.committed).toBe(true);
+    expect(result.opCount).toBe(5);
+    expect(outcomes).toEqual(['committed', 'committed']);
+    expect(result.reply).toContain('İlk parça hazır.');
+    expect(result.reply).toContain('İkinci parça hazır.');
+
+    const state = await service.getState();
+    expect(state.nodes.map((n) => n.id).sort()).toEqual(['p1a', 'p1b', 'p2a', 'root']);
+    expect(state.edges.some((e) => e.sourceId === 'p1b' && e.targetId === 'p2a')).toBe(true);
+    expect((await service.getCommit(result.commitSeq!))!.message).toBe('ajan: İkinci parça (parça 2/2)');
+    expect((await service.getCommit(result.commitSeq! - 1))!.message).toBe('ajan: plan (parça 1/2)');
+    expect(await service.rebuildCheck()).toBe(true);
+  });
+
+  it('stepwise mode: a failing part stops the loop but keeps earlier commits', async () => {
+    const { prisma, service, canvas, actor } = await freshCanvas();
+    let callCount = 0;
+    const llm: Llm = async () => {
+      callCount++;
+      if (callCount === 1) {
+        return JSON.stringify({
+          mode: 'diagram', reply: 'İlk parça.', message: 'başlangıç',
+          ops: [{ op: 'add_node', id: 'ok1', title: 'Sağlam' }],
+          parts: ['Bozuk parça', 'Üçüncü parça'],
+        });
+      }
+      return JSON.stringify({
+        mode: 'diagram', reply: 'Bozuk.', message: 'bozuk',
+        ops: [{ op: 'add_node', id: 'bad1', parentId: 'yok-boyle-dugum', title: 'Bozuk' }],
+      });
+    };
+    const result = await runAgent({
+      prisma, service, canvasId: canvas.id, canvasName: canvas.name,
+      prompt: 'plan', actor, llm, stepwise: true,
+    });
+
+    expect(callCount).toBe(2); // üçüncü parçaya hiç geçilmedi
+    expect(result.committed).toBe(true); // ilk parça kanvasta duruyor
+    expect(result.error).toBeTruthy();
+    expect(result.reply).toContain('uygulanamadı');
+    const ids = (await service.getState()).nodes.map((n) => n.id);
+    expect(ids).toContain('ok1');
+    expect(ids).not.toContain('bad1');
+  });
+
+  it('ignores parts when stepwise is off', async () => {
+    const { service, run } = await freshCanvas();
+    let callCount = 0;
+    const llm: Llm = async () => {
+      callCount++;
+      return JSON.stringify({
+        mode: 'diagram', reply: 'Tamam.', message: 'tek atım',
+        ops: [{ op: 'add_node', id: 'd1', title: 'D' }],
+        parts: ['Fazladan parça'],
+      });
+    };
+    const result = await run(llm, undefined, 'detailed');
+    expect(callCount).toBe(1);
+    expect(result.committed).toBe(true);
+    expect((await service.getCommit(result.commitSeq!))!.message).toBe('ajan: tek atım');
+  });
+
+  it('stepwise mode: caps the part list and skips parts that produce no ops', async () => {
+    const { prisma, service, canvas, actor } = await freshCanvas();
+    let callCount = 0;
+    const llm: Llm = async () => {
+      callCount++;
+      if (callCount === 1) {
+        return JSON.stringify({
+          mode: 'diagram', reply: 'İlk.', message: 'ilk',
+          ops: [{ op: 'add_node', id: 'n1', title: 'N1' }],
+          parts: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'], // 5'e kırpılmalı
+        });
+      }
+      if (callCount === 2) {
+        // Op üretmeyen parça atlanır, döngü devam eder.
+        return JSON.stringify({ mode: 'summary', reply: 'Bu parçada iş yok.' });
+      }
+      return JSON.stringify({
+        mode: 'diagram', reply: `Parça ${callCount}.`, message: `p${callCount}`,
+        ops: [{ op: 'add_node', id: `n${callCount}`, title: `N${callCount}` }],
+      });
+    };
+    const result = await runAgent({
+      prisma, service, canvasId: canvas.id, canvasName: canvas.name,
+      prompt: 'plan', actor, llm, stepwise: true,
+    });
+
+    expect(callCount).toBe(6); // 1 ilk parça + en fazla 5 kalan
+    expect(result.committed).toBe(true);
+    expect(result.reply).toContain('işlem üretilmedi'); // atlanan parça notu
+    const ids = (await service.getState()).nodes.map((n) => n.id);
+    expect(ids).toEqual(expect.arrayContaining(['n1', 'n3', 'n4', 'n5', 'n6']));
+    expect(ids).not.toContain('n2');
+    expect(await service.rebuildCheck()).toBe(true);
+  });
+
+  it('owner agent creates regions with aiAllowed forced on, fills them, and skips invalid rects', async () => {
+    const { prisma, service, canvas, actor } = await freshCanvas();
+    let system = '';
+    const llm: Llm = async (s) => {
+      system = s;
+      return JSON.stringify({
+        mode: 'diagram', reply: 'Bölgeyi kurdum ve doldurdum.', message: 'yeni alan',
+        newRegions: [
+          { name: 'Ödeme Sistemi', x: 1000, y: 0, width: 800, height: 500, description: 'Ödeme akışı burada planlanır.' },
+          { name: 'Bozuk', x: 0, y: 0, width: -5, height: 100 }, // geçersiz dikdörtgen → atlanır
+        ],
+        ops: [{ op: 'add_node', id: 'pay1', title: 'Ödeme sağlayıcı seçimi', x: 1050, y: 50 }],
+      });
+    };
+    const regionUpdates: number[] = [];
+    const result = await runAgent({
+      prisma, service, canvasId: canvas.id, canvasName: canvas.name,
+      prompt: 'ödeme sistemi için bölge aç ve doldur', actor, llm,
+      onRegions: (regions) => regionUpdates.push(regions.length),
+    });
+
+    expect(system).toContain('BÖLGE OLUŞTURMA');
+    expect(result.committed).toBe(true);
+    expect(result.reply).toContain('"Ödeme Sistemi" bölgesi/bölgeleri oluşturuldu');
+
+    const rows = await prisma.region.findMany({ where: { canvasId: canvas.id } });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      name: 'Ödeme Sistemi', aiAllowed: true, description: 'Ödeme akışı burada planlanır.',
+      x: 1000, y: 0, width: 800, height: 500,
+    });
+    expect(regionUpdates).toEqual([1]);
+    expect((await service.getState()).nodes.some((n) => n.id === 'pay1')).toBe(true);
+  });
+
+  it('non-owner agents cannot create regions: newRegions are dropped with a note, ops still apply', async () => {
+    const { prisma, service, canvas, run } = await freshCanvas();
+    const editor = await prisma.user.create({ data: { username: 'ekin', passwordHash: 'x' } });
+    let system = '';
+    const llm: Llm = async (s) => {
+      system = s;
+      return JSON.stringify({
+        mode: 'diagram', reply: 'Bölge ve düğüm ekledim.', message: 'deneme',
+        newRegions: [{ name: 'Kaçak Bölge', x: 0, y: 600, width: 400, height: 300 }],
+        ops: [{ op: 'add_node', id: 'e1', title: 'Serbest düğüm' }],
+      });
+    };
+    const result = await run(llm, { userId: editor.id, role: 'editor' });
+
+    expect(system).toContain('"newRegions" alanı KULLANMA');
+    expect(result.committed).toBe(true);
+    expect(result.reply).toContain('bölge oluşturma yalnızca kanvas sahibine açık');
+    expect(await prisma.region.count({ where: { canvasId: canvas.id } })).toBe(0);
+    expect((await service.getState()).nodes.some((n) => n.id === 'e1')).toBe(true);
+  });
+
+  it('region-only diagram responses create the region without a commit', async () => {
+    const { prisma, canvas, run } = await freshCanvas();
+    const result = await run(asLlm({
+      mode: 'diagram', reply: 'Boş bölge açtım.', message: 'bölge',
+      newRegions: [{ name: 'Boş Alan', x: 2000, y: 0, width: 600, height: 400 }],
+      ops: [],
+    }));
+    expect(result.committed).toBe(false);
+    expect(result.reply).toContain('"Boş Alan" bölgesi/bölgeleri oluşturuldu');
+    expect(await prisma.region.count({ where: { canvasId: canvas.id, name: 'Boş Alan' } })).toBe(1);
+  });
+
   it('reports invalid ops as an error reply instead of throwing', async () => {
     const { service, run } = await freshCanvas();
     const result = await run(asLlm({

@@ -5,7 +5,7 @@ import {
   ConflictError, RegionError, ValidationError,
   type Actor, type CommitOutcome, type CommitService,
 } from './commitService.js';
-import { listRegions } from './canvasService.js';
+import { createRegion, listRegions } from './canvasService.js';
 
 /** Model çağrısı enjekte edilebilir: testler sahte bir LLM verir, route Gemini'yi kullanır. */
 export type Llm = (system: string, user: string) => Promise<string>;
@@ -18,14 +18,22 @@ export interface AgentResult {
   branched?: boolean;
   branch?: string;
   error?: string;
-  /** Committed/branched sonucu — route WS yayını için kullanır, HTTP yanıtından ayıklanır. */
-  outcome?: CommitOutcome;
 }
 
 export const geminiConfigured = (): boolean => Boolean(process.env.GEMINI_API_KEY);
 
-/** Çizim detay düzeyi: proto = hızlı iskelet, detailed = kapsamlı döküm. */
+/**
+ * Çizim detay düzeyi: proto = hızlı iskelet, detailed = kapsamlı döküm. Modeli bu seçer.
+ * `stepwise` (parça parça) bundan bağımsız bir bayraktır: iş parçalara bölünür, her parça
+ * seçili detay düzeyinde ayrı bir LLM çağrısı + ayrı bir commit olur.
+ */
 export type AgentDetail = 'proto' | 'detailed';
+
+/** Parça parça modda toplam parça üst sınırı (ilk parça + kalanlar). */
+const MAX_PARTS = 6;
+
+/** Bir turda modelin oluşturabileceği en fazla yeni bölge. */
+const MAX_NEW_REGIONS = 4;
 
 /**
  * Detay düzeyine göre model sırası: prototip hafif modeli (ayrı ve geniş ücretsiz kota),
@@ -69,7 +77,7 @@ async function geminiGenerate(system: string, user: string, models: string[]): P
   throw new Error(`Gemini isteği başarısız ${lastErr}`);
 }
 
-function buildSystemPrompt(detail: AgentDetail): string {
+function buildSystemPrompt(detail: AgentDetail, stepwise: boolean, canCreateRegions: boolean): string {
   return [
     'Sen TreeMapper adlı iş birlikli planlama uygulaması için çalışan bir ajansın. Sana bir kanvasın güncel durumu (düğümler, kenarlar, bölgeler), kullanıcının yetkileri ve doğal dildeki isteği verilir.',
     '',
@@ -97,11 +105,22 @@ function buildSystemPrompt(detail: AgentDetail): string {
     '- Kullanıcı açıkça silme istemedikçe delete_node / delete_edge kullanma.',
     '- Kullanıcı bir bölgeden bahsediyorsa düğümlerin "regions" alanına bakarak o bölgedeki düğümleri esas al.',
     '- SEÇİLİ DÜĞÜMLER verilmişse komutun hedefi onlardır: "detaylandır / alt adımlara böl" → her seçili düğüm için alt adımlar üret (kırılım istendiği için parentId olarak o seçili düğümün id\'sini kullanabilirsin); "değiştir / yeniden adlandır / durumunu güncelle" → update_node ile o düğümleri güncelle; "bundan sonrasını ... şekilde çiz" → akışı seçili düğümden devam ettir, ilk yeni düğümü ona bir kenarla bağla ve kullanıcı isterse seçili düğümden SONRAKİ mevcut akışı değiştir. Seçili düğümlerin konumuna yakın koordinatlar tercih et (bölge kuralı önceliklidir).',
+    ...(canCreateRegions
+      ? [
+          `- BÖLGE OLUŞTURMA: Kullanıcı yeni bir bölge/alan oluşturmayı isterse (ya da istek belirgin biçimde ayrı bir çalışma alanı gerektiriyorsa) diagram yanıtına "newRegions" dizisi ekle: [{"name":"...","x":<sayı>,"y":<sayı>,"width":<sayı>,"height":<sayı>,"description":"<bölgenin amacını anlatan 1-2 cümle>"}] (en fazla ${MAX_NEW_REGIONS}). Mevcut bölgelerle ve düğümlerle ÇAKIŞMAYAN boş bir alan seç; dikdörtgeni içine koyacağın düğümlere yetecek kadar büyük tut (düğüm başına ~240x130, ör. 6 düğüm için en az 800x500). Bölgeler sunucuda AI izni açık olarak oluşturulur ve kanvas sahibi tarafından yönetilir. Ardından ops'taki yeni düğümleri BÖLGE KURALI'na uyarak bu dikdörtgenin içine yerleştir ve içeriği bölgenin adına/açıklamasına uygun doldur.`,
+        ]
+      : ['- BÖLGE OLUŞTURMA yalnızca kanvas sahibinin ajanına açıktır; bu kullanıcı sahip değil — "newRegions" alanı KULLANMA. Bölge oluşturma isteğini mode "summary" ile kibarca reddet (diğer işleri normal yap).']),
     '- reply her zaman Türkçe, kısa ve net olsun.',
     '',
     detail === 'detailed'
       ? 'DETAY DÜZEYİ: DETAYLI. İsteği kapsamlı bir plana dök: ana adımları alt adımlara ayır (duruma göre 6-15 düğüm), her düğüme 1-2 cümlelik anlamlı bir description yaz, uygun nodeType/status seç, adımlar arasındaki bağımlılıkları dependency, ilgili kavramları relation kenarlarıyla bağla.'
       : 'DETAY DÜZEYİ: PROTOTİP. İsteğin en yalın iskeletini çiz: 3-6 düğümü geçme, description\'ları boş bırak ya da tek cümle tut, yalnızca ana akış kenarlarını ekle. Ayrıntıya girme — kullanıcı isterse sonra "detaylı" modda genişletir.',
+    ...(stepwise
+      ? [
+          '',
+          `ÜRETİM BİÇİMİ: PARÇA PARÇA. İsteği en fazla ${MAX_PARTS} mantıksal parçaya böl (parçalar birlikte isteği tam kapsasın). ŞİMDİ YALNIZCA İLK PARÇANIN düğümlerini üret — parça içeriği yukarıdaki DETAY DÜZEYİ kurallarına uysun (düğüm sayısı/description yoğunluğu parça başına geçerlidir). Diagram yanıtına ek bir "parts" alanı koy: KALAN parçaların kısa Türkçe başlıklarından oluşan dizi (en fazla ${MAX_PARTS - 1} öğe; istek tek parçada bitiyorsa boş dizi). Kalan parçalar sana sonraki isteklerde tek tek sorulacak.`,
+        ]
+      : []),
   ].join('\n');
 }
 
@@ -111,9 +130,18 @@ function writableRegions(regions: RegionInfo[], actor: Actor): RegionInfo[] {
   return regions.filter((r) => r.memberIds.includes(actor.userId));
 }
 
+/** İterative modda o an üretilen parça: follow-up isteklerin bağlamı. */
+interface CurrentPart {
+  title: string;
+  index: number; // 1 tabanlı
+  total: number;
+  remaining: string[];
+}
+
 function buildUserText(
   canvasName: string, state: GraphState, regions: RegionInfo[], actor: Actor,
   prompt: string, selectedIds: string[], selectedRegionIds: string[],
+  currentPart?: CurrentPart,
 ): string {
   const inRegion = (n: { x: number | null; y: number | null }, r: RegionInfo) =>
     n.x != null && n.y != null &&
@@ -198,15 +226,53 @@ function buildUserText(
         : [];
     })(),
     `KULLANICI İSTEĞİ: ${prompt}`,
+    ...(currentPart
+      ? [
+          '',
+          `ŞİMDİKİ PARÇA (${currentPart.index}/${currentPart.total}): "${currentPart.title}" — isteğin önceki parçaları yukarıdaki DÜĞÜMLER listesinde zaten var. YALNIZCA bu parçanın düğümlerini DETAY DÜZEYİ kurallarına göre üret ve mevcut düğümlere (özellikle önceki parçanın düğümlerine) kenarlarla bağla. Aynı kurallara uy; "parts" alanı DÖNDÜRME.${
+            currentPart.remaining.length > 0
+              ? ` KALAN PARÇALAR (şimdi üretme, sonra sorulacak): ${JSON.stringify(currentPart.remaining)}`
+              : ''
+          }`,
+        ]
+      : []),
   ].join('\n');
 }
 
 const ALLOWED_OPS = new Set(['add_node', 'update_node', 'delete_node', 'move_node', 'add_edge', 'delete_edge']);
 
-/** Model çıktısını çöz: JSON değilse metni özet yanıtı say; ops yalnızca "diagram" modunda geçerli. */
-function parseModelOutput(raw: string): { mode: string; reply: string; message: string; ops: OpInput[] } {
+/** Modelin oluşturmak istediği bölge — sunucu aiAllowed: true ile, sahibin kanvas ayarı olarak yaratır. */
+export interface NewRegionInput {
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  description?: string;
+}
+
+function parseNewRegions(value: unknown): NewRegionInput[] {
+  if (!Array.isArray(value)) return [];
+  const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+  const out: NewRegionInput[] = [];
+  for (const r of value) {
+    if (!r || typeof r !== 'object') continue;
+    const { name, x, y, width, height, description } = r as Record<string, unknown>;
+    if (typeof name !== 'string' || !name.trim()) continue;
+    if (!finite(x) || !finite(y) || !finite(width) || !finite(height) || width <= 0 || height <= 0) continue;
+    out.push({
+      name: name.trim().slice(0, 100), x, y, width, height,
+      ...(typeof description === 'string' && description.trim() ? { description: description.trim().slice(0, 500) } : {}),
+    });
+    if (out.length >= MAX_NEW_REGIONS) break;
+  }
+  return out;
+}
+
+/** Model çıktısını çöz: JSON değilse metni özet yanıtı say; ops/parts/newRegions yalnızca "diagram" modunda geçerli. */
+function parseModelOutput(raw: string): { mode: string; reply: string; message: string; ops: OpInput[]; parts: string[]; newRegions: NewRegionInput[] } {
   const text = raw.trim().replace(/^```(json)?\s*/i, '').replace(/```\s*$/, '').trim();
-  type ModelOut = { mode?: string; reply?: unknown; message?: unknown; ops?: unknown };
+  type ModelOut = { mode?: string; reply?: unknown; message?: unknown; ops?: unknown; parts?: unknown; newRegions?: unknown };
   let out: ModelOut | null = null;
   // Model ara sıra kapanış parantezlerini yutuyor; eksik }/] tamamlayarak da dene.
   for (const candidate of [text, text + '}', text + ']}', text + '"}']) {
@@ -227,12 +293,22 @@ function parseModelOutput(raw: string): { mode: string; reply: string; message: 
   let ops = Array.isArray(out.ops)
     ? (out.ops.filter((o) => o && typeof o === 'object' && ALLOWED_OPS.has((o as { op?: string }).op ?? '')) as OpInput[])
     : [];
-  if (out.mode !== 'diagram') ops = [];
+  let parts = Array.isArray(out.parts)
+    ? out.parts.filter((p): p is string => typeof p === 'string').map((p) => p.trim()).filter(Boolean).slice(0, MAX_PARTS - 1)
+    : [];
+  let newRegions = parseNewRegions(out.newRegions);
+  if (out.mode !== 'diagram') {
+    ops = [];
+    parts = [];
+    newRegions = [];
+  }
   return {
     mode: String(out.mode ?? 'summary'),
     reply: String(out.reply ?? ''),
     message: String(out.message || 'ajan değişikliği'),
     ops,
+    parts,
+    newRegions,
   };
 }
 
@@ -295,8 +371,12 @@ function filterAiClosedRegions(
 }
 
 /**
- * Kanvas üstünde tek atımlık ajan turu: durumu topla → modele sor → gerekiyorsa tek commit at.
+ * Kanvas üstünde ajan turu: durumu topla → modele sor → gerekiyorsa commit at.
  * Actor isteği yapan kullanıcıdır: bölge ve rol kuralları normal commit'lerle birebir aynı işler.
+ * Normalde her şey tek commit'tir; `stepwise` (parça parça) açıksa model işi parçalara böler ve
+ * her parça seçili detay düzeyinde ayrı bir LLM çağrısı + ayrı bir commit olur (onOutcome ile
+ * anında yayınlanır). Sahip ajanı ayrıca yeni bölge oluşturabilir (aiAllowed hep true) —
+ * bölge kullanıcının kanvas ayarı olarak yaratılır, yönetimi normal bölgelerle aynıdır.
  */
 export async function runAgent(opts: {
   prisma: PrismaClient;
@@ -306,18 +386,45 @@ export async function runAgent(opts: {
   prompt: string;
   actor: Actor;
   detail?: AgentDetail;
+  /** Parça parça üretim: iş parçalara bölünür, her parça ayrı LLM çağrısı + ayrı commit. */
+  stepwise?: boolean;
   /** Kullanıcının kanvasta işaretlediği düğümler; "şu adımları detaylandır" bunlara işaret eder. */
   selectedIds?: string[];
   /** Kullanıcının kanvasta işaretlediği bölgeler; açıklamaları + içlerindeki düğümler bağlam olur. */
   selectedRegionIds?: string[];
   llm?: Llm;
+  /** Her başarılı commit/branch sonucunda çağrılır — route WS yayını için kullanır. */
+  onOutcome?: (outcome: CommitOutcome) => void;
+  /** Ajan bölge oluşturduğunda güncel bölge listesiyle çağrılır — route WS yayını için kullanır. */
+  onRegions?: (regions: RegionInfo[]) => void;
 }): Promise<AgentResult> {
-  const { prisma, service, canvasId, canvasName, prompt, actor, detail = 'proto', selectedIds = [], selectedRegionIds = [] } = opts;
+  const {
+    prisma, service, canvasId, canvasName, prompt, actor,
+    detail = 'proto', stepwise = false, selectedIds = [], selectedRegionIds = [], onOutcome, onRegions,
+  } = opts;
   const llm: Llm = opts.llm ?? ((s, u) => geminiGenerate(s, u, modelsFor(detail)));
+  const canCreateRegions = actor.role === 'owner';
+  const system = buildSystemPrompt(detail, stepwise, canCreateRegions);
 
-  const [state, regions] = await Promise.all([service.getState(), listRegions(prisma, canvasId)]);
+  const [state, initialRegions] = await Promise.all([service.getState(), listRegions(prisma, canvasId)]);
+  let regions = initialRegions;
+
+  /**
+   * Modelin istediği bölgeleri oluşturur (yalnızca sahip; aiAllowed zorla true) ve bölge
+   * listesini tazeleyip yayınlatır. Dönen not reply'a eklenir; yetkisizse bölgeler düşer.
+   */
+  const applyNewRegions = async (wanted: NewRegionInput[]): Promise<string | null> => {
+    if (wanted.length === 0) return null;
+    if (!canCreateRegions)
+      return 'Not: bölge oluşturma yalnızca kanvas sahibine açık olduğu için istenen bölge(ler) oluşturulmadı.';
+    for (const r of wanted) await createRegion(prisma, canvasId, { ...r, aiAllowed: true });
+    regions = await listRegions(prisma, canvasId);
+    onRegions?.(regions);
+    const names = wanted.map((r) => `"${r.name}"`).join(', ');
+    return `Not: ${names} bölgesi/bölgeleri oluşturuldu (AI izni açık, yönetimi sizde).`;
+  };
   const raw = await llm(
-    buildSystemPrompt(detail),
+    system,
     buildUserText(canvasName, state, regions, actor, prompt, selectedIds, selectedRegionIds),
   );
   const parsed = parseModelOutput(raw);
@@ -345,6 +452,9 @@ export async function runAgent(opts: {
         committed: false,
       };
   } else {
+    // Önce modelin istediği yeni bölgeler: ops'taki düğümler bu dikdörtgenlerin içine yerleşecek.
+    const regionNote = await applyNewRegions(parsed.newRegions);
+    if (regionNote) reply = `${reply}\n\n${regionNote}`;
     // AI'ya kapalı bölgelere dokunan intent'leri sunucu tarafında ayıkla; gerisi normal işlenir.
     const { kept, blockedRegionNames } = filterAiClosedRegions(state, regions, parsed.ops);
     ops = kept;
@@ -362,31 +472,100 @@ export async function runAgent(opts: {
     };
   }
 
-  try {
-    const outcome = await service.commit(ops, {
-      message: `ajan: ${message}`,
-      baseSeq: state.headSeq,
-      authorId: actor.userId,
-      actor,
-    });
-    if (outcome.result === 'committed') {
-      return { reply, committed: true, commitSeq: outcome.commit.seq, opCount: ops.length, outcome };
+  // Tek turun commit'i: outcome yayın callback'ine gider, bilinen hatalar sonuç olarak döner.
+  type RoundCommit =
+    | { kind: 'committed'; seq: number }
+    | { kind: 'branched'; branch: string }
+    | { kind: 'failed'; error: string };
+  const commitRound = async (roundOps: OpInput[], roundMessage: string, baseSeq: number): Promise<RoundCommit> => {
+    try {
+      const outcome = await service.commit(roundOps, {
+        message: `ajan: ${roundMessage}`,
+        baseSeq,
+        authorId: actor.userId,
+        actor,
+      });
+      onOutcome?.(outcome);
+      if (outcome.result === 'committed') return { kind: 'committed', seq: outcome.commit.seq };
+      return { kind: 'branched', branch: outcome.branch.name };
+    } catch (err) {
+      if (err instanceof RegionError || err instanceof ValidationError || err instanceof ConflictError) {
+        return { kind: 'failed', error: err.message };
+      }
+      throw err;
     }
+  };
+
+  // Parça listesi yalnızca parça parça (stepwise) + diagram modunda dikkate alınır; ilk parça bu turun ops'ları.
+  const parts = stepwise && parsed.mode === 'diagram' ? parsed.parts : [];
+  const total = 1 + parts.length;
+
+  const first = await commitRound(ops, parts.length > 0 ? `${message} (parça 1/${total})` : message, state.headSeq);
+  if (first.kind === 'failed') {
     return {
-      reply: `${reply}\n\nNot: bu sırada kanvas değişip çakışma oluştuğu için değişiklikler "${outcome.branch.name}" dalına yazıldı. Dallar panelinden birleştirebilir veya iptal edebilirsiniz.`,
+      reply: `Değişiklik uygulanamadı: ${first.error}\n\nPlanlanan değişiklik: ${reply}`,
+      committed: false,
+      error: first.error,
+    };
+  }
+  if (first.kind === 'branched') {
+    return {
+      reply: `${reply}\n\nNot: bu sırada kanvas değişip çakışma oluştuğu için değişiklikler "${first.branch}" dalına yazıldı. Dallar panelinden birleştirebilir veya iptal edebilirsiniz.${
+        parts.length > 0 ? ' Kalan parçalar üretilmedi.' : ''
+      }`,
       committed: false,
       branched: true,
-      branch: outcome.branch.name,
-      outcome,
+      branch: first.branch,
     };
-  } catch (err) {
-    if (err instanceof RegionError || err instanceof ValidationError || err instanceof ConflictError) {
-      return {
-        reply: `Değişiklik uygulanamadı: ${err.message}\n\nPlanlanan değişiklik: ${reply}`,
-        committed: false,
-        error: err.message,
-      };
-    }
-    throw err;
   }
+
+  let commitSeq = first.seq;
+  let opCount = ops.length;
+  const replies = [reply];
+
+  // Kalan parçalar: her biri taze durum üzerinde ayrı bir LLM çağrısı + ayrı bir commit.
+  for (let i = 0; i < parts.length; i++) {
+    const partTitle = parts[i];
+    const partNo = i + 2;
+    const partState = await service.getState();
+    let partRaw: string;
+    try {
+      partRaw = await llm(
+        system,
+        buildUserText(canvasName, partState, regions, actor, prompt, selectedIds, selectedRegionIds, {
+          title: partTitle, index: partNo, total, remaining: parts.slice(i + 1),
+        }),
+      );
+    } catch (err) {
+      // Önceki parçalar commit'li kaldı; model hatası üretimi keser ama sonucu bozmaz.
+      replies.push(`Not: "${partTitle}" parçası üretilemedi (${err instanceof Error ? err.message : String(err)}); kalan parçalar atlandı.`);
+      return { reply: replies.join('\n\n'), committed: true, commitSeq, opCount };
+    }
+    const partParsed = parseModelOutput(partRaw);
+    const partRegionNote = await applyNewRegions(partParsed.newRegions);
+    if (partRegionNote) replies.push(partRegionNote);
+    const partFilter = filterAiClosedRegions(partState, regions, partParsed.ops);
+    if (partFilter.blockedRegionNames.length > 0) {
+      const names = partFilter.blockedRegionNames.map((n) => `"${n}"`).join(', ');
+      replies.push(`Not: ${names} bölgesi/bölgeleri AI'ya kapalı olduğu için oradaki işlemler atlandı.`);
+    }
+    if (partFilter.kept.length === 0) {
+      replies.push(`Not: "${partTitle}" parçası için işlem üretilmedi, atlandı.`);
+      continue;
+    }
+    const round = await commitRound(partFilter.kept, `${partTitle} (parça ${partNo}/${total})`, partState.headSeq);
+    if (round.kind === 'failed') {
+      replies.push(`Not: "${partTitle}" parçası uygulanamadı (${round.error}); kalan parçalar üretilmedi. Önceki parçalar kanvasta duruyor.`);
+      return { reply: replies.join('\n\n'), committed: true, commitSeq, opCount, error: round.error };
+    }
+    if (round.kind === 'branched') {
+      replies.push(`Not: "${partTitle}" parçası çakışma yüzünden "${round.branch}" dalına yazıldı; kalan parçalar üretilmedi. Dallar panelinden birleştirebilir veya iptal edebilirsiniz.`);
+      return { reply: replies.join('\n\n'), committed: true, commitSeq, opCount, branched: true, branch: round.branch };
+    }
+    commitSeq = round.seq;
+    opCount += partFilter.kept.length;
+    replies.push(partParsed.reply || `"${partTitle}" parçası eklendi.`);
+  }
+
+  return { reply: replies.join('\n\n'), committed: true, commitSeq, opCount };
 }
