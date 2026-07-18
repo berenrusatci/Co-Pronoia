@@ -65,17 +65,19 @@ export async function setUserAdmin(
 ): Promise<{ error: string } | null> {
   const target = await prisma.user.findUnique({ where: { id: targetUserId } });
   if (!target) return { error: 'kullanıcı bulunamadı' };
-  if (!isAdmin) {
+  // Yönetici hesapları dokunulmazdır: yetki panelden geri alınamaz (kendi kendine dahil).
+  // Tek çıkış kapısı doğrudan veritabanı / ADMIN_* bootstrap ortam değişkenleridir.
+  if (!isAdmin && target.isAdmin) {
     if (targetUserId === actorId) return { error: 'kendi yönetici yetkinizi kaldıramazsınız' };
-    if (target.isAdmin && (await prisma.user.count({ where: { isAdmin: true } })) <= 1)
-      return { error: 'son yöneticinin yetkisi kaldırılamaz' };
+    return { error: 'yönetici hesabının yetkisi kaldırılamaz' };
   }
   await prisma.user.update({ where: { id: targetUserId }, data: { isAdmin } });
   return null;
 }
 
 /** Yeni şifreyi atar ve hedefin TÜM oturumlarını kapatır (çağıran hedefin kendisi değildir).
- * Google-only hesaplara da şifreyle giriş imkânı ekler. */
+ * Google-only hesaplara da şifreyle giriş imkânı ekler. Yönetici hesaplarına dokunamaz:
+ * bir yönetici şifresini yalnızca kendisi değiştirir (POST /api/auth/password). */
 export async function adminSetPassword(
   prisma: PrismaClient,
   targetUserId: string,
@@ -84,6 +86,7 @@ export async function adminSetPassword(
   if (password.length < 4) return { error: 'şifre en az 4 karakter olmalı' };
   const target = await prisma.user.findUnique({ where: { id: targetUserId } });
   if (!target) return { error: 'kullanıcı bulunamadı' };
+  if (target.isAdmin) return { error: 'yönetici hesabının şifresi panelden değiştirilemez' };
   await prisma.user.update({ where: { id: targetUserId }, data: { passwordHash: await hashPassword(password) } });
   await prisma.session.deleteMany({ where: { userId: targetUserId } });
   return null;
@@ -112,6 +115,8 @@ export async function deleteUser(
   if (targetUserId === actorId) return { error: 'kendi hesabınızı silemezsiniz' };
   const target = await prisma.user.findUnique({ where: { id: targetUserId } });
   if (!target) return { error: 'kullanıcı bulunamadı' };
+  // Silme, yetki korumasının arka kapısı olurdu (sil + yeniden aç): yönetici hesabı silinemez.
+  if (target.isAdmin) return { error: 'yönetici hesabı silinemez' };
 
   // Başka üyesi olan bir grubun tek yöneticisiyse silme: grup yönetimsiz kalır.
   const adminMemberships = await prisma.groupMember.findMany({

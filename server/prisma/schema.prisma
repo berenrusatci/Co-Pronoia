@@ -201,6 +201,10 @@ model Node {
   status        String  @default("planned")
   x             Float?
   y             Float?
+  /// Düğümün bağlı olduğu alt kanvas (aynı gruptaki bir Canvas id'si). Bilerek FK YOK:
+  /// SetNull, Node'u commit dışında değiştirir ve rebuildCheck'i bozar; kanvas silinince
+  /// sarkan bağlantı UI'da "erişilemiyor" olarak gösterilir.
+  linkedCanvasId String?
   createdCommit Int
   updatedCommit Int
 

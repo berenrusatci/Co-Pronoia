@@ -52,6 +52,7 @@ export function expand(graph: Graph, input: OpInput, pending: Op[], genId: () =>
         status: input.status ?? 'planned',
         x: input.x ?? null,
         y: input.y ?? null,
+        linkedCanvasId: input.linkedCanvasId ?? null,
         createdCommit: 0,
         updatedCommit: 0,
       };

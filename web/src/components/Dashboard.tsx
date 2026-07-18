@@ -574,11 +574,15 @@ export function Dashboard() {
     loadGroups();
   }, [loadList, loadGroups]);
 
+  // Her kanvas bir gruba bağlı olmalı; oluşturma yetkisi admin ya da rolün canCreateCanvas'ı.
+  const creatableGroups = groups.filter((g) => g.canCreateCanvas);
+  const effectiveGroupId = groupId || creatableGroups[0]?.id || '';
+
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!name.trim() || busy) return;
+    if (!name.trim() || busy || !effectiveGroupId) return;
     setBusy(true);
-    const canvas = await createCanvas(name.trim(), groupId || undefined);
+    const canvas = await createCanvas(name.trim(), effectiveGroupId);
     setBusy(false);
     if (canvas) {
       setName('');
@@ -588,8 +592,6 @@ export function Dashboard() {
   };
 
   if (!listLoaded || !groupsLoaded) return <div className="loading">Yükleniyor…</div>;
-
-  const adminGroups = groups.filter((g) => g.myRole === 'admin');
   const folders = new Map<string, { name: string; canvases: CanvasInfo[] }>();
   const ungrouped: CanvasInfo[] = [];
   for (const c of canvases) {
@@ -625,25 +627,29 @@ export function Dashboard() {
       </div>
       <div className="dashboard-body">
         <h2>Kanvaslarım</h2>
-        <form className="canvas-create" onSubmit={submit}>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder={canvases.length === 0 ? 'İlk kanvasınızın adı…' : 'Yeni kanvas adı…'}
-            maxLength={80}
-          />
-          {adminGroups.length > 0 && (
-            <select value={groupId} onChange={(e) => setGroupId(e.target.value)}>
-              <option value="">Grup (opsiyonel)</option>
-              {adminGroups.map((g) => (
+        {creatableGroups.length > 0 ? (
+          <form className="canvas-create" onSubmit={submit}>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder={canvases.length === 0 ? 'İlk kanvasınızın adı…' : 'Yeni kanvas adı…'}
+              maxLength={80}
+            />
+            <select value={effectiveGroupId} onChange={(e) => setGroupId(e.target.value)}>
+              {creatableGroups.map((g) => (
                 <option key={g.id} value={g.id}>{g.name}</option>
               ))}
             </select>
-          )}
-          <button type="submit" className="login-btn" disabled={!name.trim() || busy}>
-            + Kanvas oluştur
-          </button>
-        </form>
+            <button type="submit" className="login-btn" disabled={!name.trim() || busy || !effectiveGroupId}>
+              + Kanvas oluştur
+            </button>
+          </form>
+        ) : (
+          <p className="empty-note">
+            Her kanvas bir gruba bağlıdır. Kanvas oluşturmak için önce aşağıdan bir grup kurun ya da kanvas
+            oluşturma yetkisi olan bir gruba katılın.
+          </p>
+        )}
         {canvases.length === 0 ? (
           <p className="empty-note">
             Henüz bir kanvasınız yok. Yukarıdan ilk kanvasınızı oluşturun; başkalarının kanvasına yalnızca size

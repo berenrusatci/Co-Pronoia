@@ -1,8 +1,8 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from './app.js';
 import { testDbFactory } from './testDb.js';
 import { createCanvas } from './canvasService.js';
-import { captureEmails, registerVerified } from './testAuth.js';
+import { captureEmails, createGroupCanvas, registerVerified } from './testAuth.js';
 import { runAgent, type Llm } from './agent.js';
 import type { Actor } from './commitService.js';
 
@@ -12,8 +12,12 @@ beforeAll(() => {
 });
 
 const opened: Array<{ prisma: { $disconnect(): Promise<void> } }> = [];
+// Her test kendi buildApp'ini açar; havuzlar dosya sonuna dek bekletilirse
+// Postgres max_connections dolar — bu yüzden test biter bitmez kapatılırlar.
+afterEach(async () => {
+  for (const { prisma } of opened.splice(0)) await prisma.$disconnect();
+});
 afterAll(async () => {
-  for (const { prisma } of opened) await prisma.$disconnect();
   await db.cleanup();
 }, 30000);
 
@@ -43,6 +47,28 @@ async function freshCanvas() {
 }
 
 const asLlm = (payload: unknown): Llm => async () => JSON.stringify(payload);
+
+/** Gruba bağlı kanvas + serviceFor geçirilen run: alt kanvas (newSubCanvases) testleri için. */
+async function freshGroupCanvas() {
+  const built = await buildApp(await db.fresh());
+  opened.push(built);
+  const owner = await built.prisma.user.create({ data: { username: 'owner', passwordHash: 'x' } });
+  const group = await built.prisma.group.create({
+    data: { name: 'Ekip', members: { create: { userId: owner.id, role: 'admin', status: 'approved' } } },
+  });
+  const canvas = await createCanvas(built.prisma, built.serviceFor, 'Test', owner.id, {
+    seedRoot: false, groupId: group.id,
+  });
+  const service = built.serviceFor(canvas.id);
+  await service.commit([{ op: 'add_node', id: 'root', title: 'Kök' }]);
+  const actor: Actor = { userId: owner.id, role: 'owner' };
+  const run = (llm: Llm, actorOverride?: Actor) =>
+    runAgent({
+      prisma: built.prisma, service, serviceFor: built.serviceFor, canvasId: canvas.id,
+      canvasName: canvas.name, prompt: 'test isteği', actor: actorOverride ?? actor, llm,
+    });
+  return { ...built, service, canvas, group, owner, actor, run };
+}
 
 describe('agent', () => {
   it('commits diagram ops as a single commit', async () => {
@@ -109,10 +135,9 @@ describe('agent', () => {
     opened.push(built);
     const { app } = built;
     const { cookies } = await registerVerified(app, sent, { username: 'beren', password: 'sifre1', email: 'b@test.com' });
-    let res = await app.inject({ method: 'POST', url: '/api/canvases', cookies, payload: { name: 'Plan' } });
-    const canvasId = res.json().canvas.id as string;
+    const canvasId = (await createGroupCanvas(app, cookies, 'Plan')).id as string;
 
-    res = await app.inject({ method: 'POST', url: `/api/canvases/${canvasId}/agent`, cookies, payload: {} });
+    let res = await app.inject({ method: 'POST', url: `/api/canvases/${canvasId}/agent`, cookies, payload: {} });
     expect(res.statusCode).toBe(400);
 
     const saved = process.env.GEMINI_API_KEY;
@@ -483,6 +508,167 @@ describe('agent', () => {
     expect(result.committed).toBe(false);
     expect(result.reply).toContain('"Boş Alan" bölgesi/bölgeleri oluşturuldu');
     expect(await prisma.region.count({ where: { canvasId: canvas.id, name: 'Boş Alan' } })).toBe(1);
+  });
+
+  it('creates sub-canvases in the same group, links nodes (incl. same-round adds) and fills each with one llm call', async () => {
+    const { prisma, service, serviceFor, group, owner, canvas, run } = await freshGroupCanvas();
+    const calls: Array<{ system: string; user: string }> = [];
+    const llm: Llm = async (system, user) => {
+      calls.push({ system, user });
+      if (calls.length === 1) {
+        return JSON.stringify({
+          mode: 'diagram', reply: 'Alt kanvasları açtım.', message: 'detay planları',
+          ops: [{ op: 'add_node', id: 'ai-1', title: 'Ödeme adımı' }],
+          newSubCanvases: [
+            { nodeId: 'root', name: 'Kök Planı', description: 'Kökün detayları' },
+            { nodeId: 'ai-1', name: 'Ödeme Planı' }, // aynı turda eklenen düğüme de bağlanabilir
+          ],
+        });
+      }
+      // Doldurma çağrıları: alt kanvasa küçük bir plan.
+      return JSON.stringify({
+        mode: 'diagram', reply: 'Plan çizildi.', message: 'iç plan',
+        ops: [{ op: 'add_node', id: `fill-${calls.length}`, title: 'İlk adım' }],
+      });
+    };
+    const result = await run(llm);
+
+    expect(calls).toHaveLength(3); // 1 tur + 2 doldurma
+    expect(calls[0].system).toContain('ALT KANVAS OLUŞTURMA');
+    expect(calls[0].user).toContain('"linkedCanvasId":null'); // düğüm projeksiyonunda alan var
+    // Doldurma çağrısı: recursion kapalı, bağlam alt kanvası anlatıyor.
+    expect(calls[1].system).toContain('"newSubCanvases" alanı KULLANMA');
+    expect(calls[1].user).toContain('alt kanvasıdır');
+    expect(calls[1].user).toContain('Kökün detayları');
+
+    expect(result.committed).toBe(true);
+    expect(result.reply).toContain('alt kanvası oluşturuldu');
+    expect(result.reply).toContain('plan çizildi');
+
+    // Alt kanvaslar aynı grupta, sahibi istek atan kullanıcı.
+    const subs = await prisma.canvas.findMany({ where: { id: { not: canvas.id } } });
+    expect(subs).toHaveLength(2);
+    for (const s of subs) expect(s).toMatchObject({ groupId: group.id, ownerId: owner.id });
+
+    // Bağlar tek tur commit'iyle kuruldu.
+    const state = await service.getState();
+    const subByName = new Map(subs.map((s) => [s.name, s.id]));
+    expect(state.nodes.find((n) => n.id === 'root')!.linkedCanvasId).toBe(subByName.get('Kök Planı'));
+    expect(state.nodes.find((n) => n.id === 'ai-1')!.linkedCanvasId).toBe(subByName.get('Ödeme Planı'));
+
+    // Doldurma commit'leri alt kanvaslara indi; her iki tarafta da replay tutarlı.
+    for (const s of subs) {
+      const subState = await serviceFor(s.id).getState();
+      expect(subState.nodes.some((n) => n.id.startsWith('fill-'))).toBe(true);
+      expect(await serviceFor(s.id).rebuildCheck()).toBe(true);
+    }
+    expect(await service.rebuildCheck()).toBe(true);
+  });
+
+  it('drops newSubCanvases without canvas-create permission; ops still commit', async () => {
+    const { prisma, service, group, canvas, run } = await freshGroupCanvas();
+    const member = await prisma.user.create({ data: { username: 'kisitli', passwordHash: 'x' } });
+    const role = await prisma.groupRoleDef.create({
+      data: { groupId: group.id, name: 'stajyer', canCreateCanvas: false },
+    });
+    await prisma.groupMember.create({
+      data: { groupId: group.id, userId: member.id, status: 'approved', roleDefId: role.id },
+    });
+    let system = '';
+    const llm: Llm = async (s) => {
+      system = s;
+      return JSON.stringify({
+        mode: 'diagram', reply: 'Denedim.', message: 'deneme',
+        ops: [{ op: 'add_node', id: 'm1', title: 'Serbest' }],
+        newSubCanvases: [{ nodeId: 'root', name: 'Kaçak Kanvas' }],
+      });
+    };
+    const result = await run(llm, { userId: member.id, role: 'editor' });
+
+    expect(system).toContain('"newSubCanvases" alanı KULLANMA');
+    expect(result.committed).toBe(true);
+    expect(result.reply).toContain('alt kanvas oluşturma bu kanvasta size kapalı');
+    expect(await prisma.canvas.count()).toBe(1); // yeni kanvas yok
+    const state = await service.getState();
+    expect(state.nodes.find((n) => n.id === 'root')!.linkedCanvasId).toBeNull();
+    expect(state.nodes.some((n) => n.id === 'm1')).toBe(true);
+    expect(canvas.id).toBeTruthy();
+  });
+
+  it('groupless canvas: sub-canvas creation is disabled even with serviceFor', async () => {
+    const { prisma, service, serviceFor, canvas, owner, actor } = await freshCanvas();
+    let system = '';
+    const llm: Llm = async (s) => {
+      system = s;
+      return JSON.stringify({
+        mode: 'diagram', reply: 'Denedim.', message: 'deneme',
+        ops: [{ op: 'add_node', id: 'g1', title: 'Düğüm' }],
+        newSubCanvases: [{ nodeId: 'root', name: 'Olmayacak' }],
+      });
+    };
+    const result = await runAgent({
+      prisma, service, serviceFor, canvasId: canvas.id, canvasName: canvas.name,
+      prompt: 'alt kanvas aç', actor, llm,
+    });
+    expect(system).toContain('"newSubCanvases" alanı KULLANMA');
+    expect(result.committed).toBe(true);
+    expect(result.reply).toContain('alt kanvas oluşturma bu kanvasta size kapalı');
+    expect(await prisma.canvas.count()).toBe(1);
+    expect(owner.id).toBeTruthy();
+  });
+
+  it('tolerates a failing fill: parent commit and link stand, reply notes the failure', async () => {
+    const { prisma, service, run } = await freshGroupCanvas();
+    let callCount = 0;
+    const llm: Llm = async () => {
+      callCount++;
+      if (callCount === 1) {
+        return JSON.stringify({
+          mode: 'diagram', reply: 'Açtım.', message: 'aç',
+          ops: [],
+          newSubCanvases: [{ nodeId: 'root', name: 'Sorunlu Plan' }],
+        });
+      }
+      throw new Error('model patladı');
+    };
+    const result = await run(llm);
+
+    expect(callCount).toBe(2);
+    expect(result.committed).toBe(true); // bağ commit'i (yalnızca link op'u) durdu
+    expect(result.reply).toContain('doldurulamadı');
+    const sub = await prisma.canvas.findFirst({ where: { name: 'Sorunlu Plan' } });
+    expect(sub).not.toBeNull();
+    expect((await service.getState()).nodes.find((n) => n.id === 'root')!.linkedCanvasId).toBe(sub!.id);
+  });
+
+  it('skips unknown and already-linked nodes with notes; strips model-written linkedCanvasId from ops', async () => {
+    const { prisma, service, serviceFor, group, owner, run } = await freshGroupCanvas();
+    // root'u önceden bağla.
+    const existing = await createCanvas(prisma, serviceFor, 'Mevcut', owner.id, { groupId: group.id });
+    await service.commit([{ op: 'update_node', id: 'root', fields: { linkedCanvasId: existing.id } }]);
+
+    const result = await run(asLlm({
+      mode: 'diagram', reply: 'Denedim.', message: 'deneme',
+      ops: [
+        // Modelin kendi yazdığı linkedCanvasId alanları soyulur; kalan alanlar uygulanır.
+        { op: 'update_node', id: 'root', fields: { linkedCanvasId: 'hileli-id', title: 'Yeni Kök' } },
+        { op: 'add_node', id: 's1', title: 'Sızma', linkedCanvasId: 'hileli-id' },
+      ],
+      newSubCanvases: [
+        { nodeId: 'olmayan', name: 'Hedefsiz' },
+        { nodeId: 'root', name: 'İkinci Bağ' }, // zaten bağlı → düşer
+      ],
+    }));
+
+    expect(result.committed).toBe(true);
+    expect(result.reply).toContain('düğüm bulunamadı');
+    expect(result.reply).toContain('zaten bağlı');
+    expect(await prisma.canvas.count({ where: { name: { in: ['Hedefsiz', 'İkinci Bağ'] } } })).toBe(0);
+    const state = await service.getState();
+    const root = state.nodes.find((n) => n.id === 'root')!;
+    expect(root.title).toBe('Yeni Kök'); // kalan alan uygulandı
+    expect(root.linkedCanvasId).toBe(existing.id); // hileli id yazılmadı
+    expect(state.nodes.find((n) => n.id === 's1')!.linkedCanvasId).toBeNull();
   });
 
   it('reports invalid ops as an error reply instead of throwing', async () => {

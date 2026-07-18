@@ -4,7 +4,7 @@ import type { Op, PlanNode } from './types.js';
 
 const node = (id: string, parentId: string | null = null, extra: Partial<PlanNode> = {}): PlanNode => ({
   id, parentId, title: `Node ${id}`, description: '', nodeType: 'task', status: 'planned',
-  x: null, y: null, createdCommit: 1, updatedCommit: 1, ...extra,
+  x: null, y: null, linkedCanvasId: null, createdCommit: 1, updatedCommit: 1, ...extra,
 });
 
 const snapshot = (g: Graph) => JSON.stringify({
@@ -36,6 +36,30 @@ describe('invertOp round-trips', () => {
     const n = node('x', null, { title: 'Keep me', status: 'done', x: 7, y: 8 });
     const inv = invertOp({ op: 'delete_node', node: n });
     expect(inv).toEqual({ op: 'add_node', node: n });
+  });
+
+  it('update_node with linkedCanvasId round-trips', () => {
+    const g = emptyGraph();
+    applyOp(g, { op: 'add_node', node: node('a') }, 1);
+    const ops: Op[] = [
+      { op: 'update_node', id: 'a', before: { linkedCanvasId: null }, after: { linkedCanvasId: 'canvas-2' } },
+    ];
+    const before = snapshot(g);
+    for (const op of ops) applyOp(g, op, 2);
+    expect(g.nodes.get('a')!.linkedCanvasId).toBe('canvas-2');
+    for (const op of invertOps(ops)) applyOp(g, op, 3);
+    expect(snapshot(g)).toBe(before);
+  });
+
+  it('legacy add_node ops without linkedCanvasId replay as null (rebuildCheck compat)', () => {
+    const g = emptyGraph();
+    // Alan eklenmeden önce yazılmış bir commit'in JSON'unu taklit et: anahtar hiç yok.
+    const legacy = JSON.parse(
+      '{"op":"add_node","node":{"id":"old","parentId":null,"title":"Eski","description":"","nodeType":"task","status":"planned","x":null,"y":null,"createdCommit":0,"updatedCommit":0}}',
+    ) as Op;
+    applyOp(g, legacy, 1);
+    expect(g.nodes.get('old')!.linkedCanvasId).toBeNull();
+    expect('linkedCanvasId' in g.nodes.get('old')!).toBe(true); // JSON.stringify karşılaştırmaları için anahtar var
   });
 });
 

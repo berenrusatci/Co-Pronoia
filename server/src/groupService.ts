@@ -36,6 +36,7 @@ export async function listGroups(prisma: PrismaClient, userId: string): Promise<
           _count: { select: { canvases: true, members: { where: { status: 'approved' } } } },
         },
       },
+      roleDef: { select: { canCreateCanvas: true } },
     },
     orderBy: { requestedAt: 'asc' },
   });
@@ -54,6 +55,7 @@ export async function listGroups(prisma: PrismaClient, userId: string): Promise<
     name: r.group.name,
     myRole: r.role as GroupRole,
     myStatus: r.status as GroupMemberStatus,
+    canCreateCanvas: r.role === 'admin' ? true : r.roleDef?.canCreateCanvas ?? true,
     memberCount: r.group._count.members,
     pendingCount: r.role === 'admin' ? pendingCounts.get(r.groupId) ?? 0 : 0,
     canvasCount: r.group._count.canvases,
@@ -89,6 +91,7 @@ export async function createGroup(
     name: group.name,
     myRole: 'admin',
     myStatus: 'approved',
+    canCreateCanvas: true,
     memberCount: 1,
     pendingCount: 0,
     canvasCount: 0,
@@ -297,7 +300,10 @@ export async function acceptGroupInvite(
   });
   const row = await prisma.groupMember.findUnique({
     where: { groupId_userId: { groupId: invite.groupId, userId } },
-    include: { group: { include: { _count: { select: { canvases: true, members: { where: { status: 'approved' } } } } } } },
+    include: {
+      group: { include: { _count: { select: { canvases: true, members: { where: { status: 'approved' } } } } } },
+      roleDef: { select: { canCreateCanvas: true } },
+    },
   });
   if (!row) return null;
   return {
@@ -305,6 +311,7 @@ export async function acceptGroupInvite(
     name: row.group.name,
     myRole: row.role as GroupRole,
     myStatus: row.status as GroupMemberStatus,
+    canCreateCanvas: row.role === 'admin' ? true : row.roleDef?.canCreateCanvas ?? true,
     memberCount: row.group._count.members,
     pendingCount: 0,
     canvasCount: row.group._count.canvases,

@@ -5,7 +5,7 @@ import type { PlanNode } from './types.js';
 
 const node = (id: string, parentId: string | null = null, extra: Partial<PlanNode> = {}): PlanNode => ({
   id, parentId, title: `Node ${id}`, description: '', nodeType: 'task', status: 'planned',
-  x: null, y: null, createdCommit: 1, updatedCommit: 1, ...extra,
+  x: null, y: null, linkedCanvasId: null, createdCommit: 1, updatedCommit: 1, ...extra,
 });
 
 /** root ← a ← b, root ← c, edges a→c and b→root. */
@@ -45,6 +45,20 @@ describe('expand', () => {
     // Sanity: the expanded ops apply cleanly.
     for (const op of ops) applyOp(g, op, 6);
     expect(g.nodes.has('a')).toBe(false);
+  });
+
+  it('linkedCanvasId: add_node honors it, update records before/after, unchanged is a no-op', () => {
+    const g = fixture();
+    const [added] = expand(g, { op: 'add_node', id: 'linked', title: 'L', linkedCanvasId: 'canvas-2' }, []);
+    expect(added).toMatchObject({ op: 'add_node', node: { id: 'linked', linkedCanvasId: 'canvas-2' } });
+
+    const [op] = expand(g, { op: 'update_node', id: 'a', fields: { linkedCanvasId: 'canvas-2' } }, []);
+    expect(op).toEqual({
+      op: 'update_node', id: 'a',
+      before: { linkedCanvasId: null },
+      after: { linkedCanvasId: 'canvas-2' },
+    });
+    expect(expand(g, { op: 'update_node', id: 'a', fields: { linkedCanvasId: null } }, [])).toEqual([]);
   });
 
   it('no-op update/move expand to []', () => {

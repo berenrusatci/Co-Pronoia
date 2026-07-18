@@ -3,7 +3,7 @@ import { buildApp } from './app.js';
 import { testDbFactory } from './testDb.js';
 import { bootstrapAdmin } from './adminBootstrap.js';
 import { setUserAdmin } from './adminService.js';
-import { registerVerified } from './testAuth.js';
+import { createGroupCanvas, registerVerified } from './testAuth.js';
 import type { EmailMessage } from './email.js';
 
 let db: ReturnType<typeof testDbFactory>;
@@ -37,10 +37,9 @@ async function adminUser(app: App, prisma: Prisma, sent: EmailMessage[], usernam
   return { cookies };
 }
 
-const createCanvas = async (app: App, cookies: Cookies, name: string, groupId?: string) => {
-  const res = await app.inject({ method: 'POST', url: '/api/canvases', payload: { name, groupId }, cookies });
-  return res.json().canvas as { id: string };
-};
+// Kanvas oluşturma gruba bağlı: groupId verilmezse testAuth yardımcıyı kullanıp grup açtırır.
+const createCanvas = async (app: App, cookies: Cookies, name: string, groupId?: string) =>
+  (await createGroupCanvas(app, cookies, name, groupId)) as { id: string };
 
 const mintInvite = async (app: App, cookies: Cookies, canvasId: string) => {
   const res = await app.inject({ method: 'POST', url: `/api/canvases/${canvasId}/invites`, cookies });
@@ -162,7 +161,7 @@ describe('kullanıcı yönetimi', () => {
     const b = users.find((u) => u.username === 'bora')!;
     expect(b).toMatchObject({
       isAdmin: false, hasPassword: true, hasGoogle: false,
-      ownedCanvasCount: 1, membershipCount: 1, groupCount: 0, sessionCount: 1,
+      ownedCanvasCount: 1, membershipCount: 1, groupCount: 1, sessionCount: 1, // grup: kanvasın bağlı olduğu otomatik grup
     });
     expect(b.lastCommitAt).not.toBeNull(); // kanvasın kök-düğüm seed commit'inin yazarı
 
@@ -172,14 +171,14 @@ describe('kullanıcı yönetimi', () => {
     expect(none.json().users).toHaveLength(0);
   });
 
-  it('yönetici yapma/çıkarma: self-demote ve son yönetici engellenir', async () => {
+  it('yönetici yapma çalışır; yönetici hesabının yetkisi/şifresi/hesabı dokunulmazdır', async () => {
     const { app, prisma, sent } = await freshApp();
     const { cookies } = await adminUser(app, prisma, sent);
     await registerVerified(app, sent, { username: 'bora', password: 'sifre123', email: 'bora@x.com' });
     const boraId = await userId(prisma, 'bora');
     const selfId = await userId(prisma, 'yonetici');
 
-    // Kendi yetkisini kaldıramaz (aynı zamanda son yönetici).
+    // Kendi yetkisini kaldıramaz.
     const self = await app.inject({
       method: 'PATCH', url: `/api/admin/users/${selfId}`, payload: { isAdmin: false }, cookies,
     });
@@ -192,18 +191,29 @@ describe('kullanıcı yönetimi', () => {
     });
     expect(promote.statusCode).toBe(200);
 
-    // İki yöneticiyken biri diğerini düşürebilir.
+    // Yönetici olan bir hesabın yetkisi bir başka yönetici tarafından da kaldırılamaz.
     const demote = await app.inject({
       method: 'PATCH', url: `/api/admin/users/${boraId}`, payload: { isAdmin: false }, cookies,
     });
-    expect(demote.statusCode).toBe(200);
-    expect((await prisma.user.findUnique({ where: { id: boraId } }))!.isAdmin).toBe(false);
+    expect(demote.statusCode).toBe(400);
+    expect(demote.json().error).toBe('yönetici hesabının yetkisi kaldırılamaz');
+    expect((await prisma.user.findUnique({ where: { id: boraId } }))!.isAdmin).toBe(true);
 
-    // Son yönetici guard'ı: route'a aktör olarak yalnızca yöneticiler ulaştığı için
-    // bu dal ancak yarış durumunda tetiklenir — servis seviyesinde doğrula.
+    // Servis seviyesinde de aynı guard (route'u kim çağırırsa çağırsın).
     expect(await setUserAdmin(prisma, boraId, selfId, false)).toEqual({
-      error: 'son yöneticinin yetkisi kaldırılamaz',
+      error: 'yönetici hesabının yetkisi kaldırılamaz',
     });
+
+    // Yönetici hesabına şifre atanamaz ve hesap silinemez.
+    const pw = await app.inject({
+      method: 'POST', url: `/api/admin/users/${boraId}/password`, payload: { password: 'yeni1234' }, cookies,
+    });
+    expect(pw.statusCode).toBe(400);
+    expect(pw.json().error).toBe('yönetici hesabının şifresi panelden değiştirilemez');
+    const del = await app.inject({ method: 'DELETE', url: `/api/admin/users/${boraId}`, cookies });
+    expect(del.statusCode).toBe(400);
+    expect(del.json().error).toBe('yönetici hesabı silinemez');
+    expect(await prisma.user.findUnique({ where: { id: boraId } })).not.toBeNull();
 
     // Geçersiz gövde ve olmayan kullanıcı.
     expect((await app.inject({
@@ -357,7 +367,8 @@ describe('kanvas yönetimi', () => {
     const list = await app.inject({ method: 'GET', url: '/api/admin/canvases', cookies });
     expect(list.statusCode).toBe(200);
     const info = list.json().canvases.find((c: { id: string }) => c.id === x.id);
-    expect(info).toMatchObject({ name: 'Proje X', owner: 'bora', memberCount: 2, commitCount: 1, groupId: null });
+    expect(info).toMatchObject({ name: 'Proje X', owner: 'bora', memberCount: 2, commitCount: 1 });
+    expect(info.groupId).not.toBeNull(); // kanvaslar artık hep bir gruba bağlı doğar
 
     // Üye rolü: Ceren → viewer; sahibin rolü değiştirilemez/çıkarılamaz.
     const cerenId = await userId(prisma, 'ceren');

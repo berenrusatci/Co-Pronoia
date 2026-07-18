@@ -10,6 +10,8 @@ export interface PlanNode {
   status: NodeStatus;
   x: number | null;
   y: number | null;
+  /** Aynı gruptaki bir alt kanvasın id'si; hedef silinirse sarkan bağlantı UI'da "erişilemiyor" olur. */
+  linkedCanvasId: string | null;
   createdCommit: number;
   updatedCommit: number;
 }
@@ -34,6 +36,7 @@ export interface NodeFields {
   description: string;
   nodeType: NodeType;
   status: NodeStatus;
+  linkedCanvasId: string | null;
 }
 
 export type Op =
@@ -46,7 +49,7 @@ export type Op =
 
 /** Client-side intent: the server expands these into full Ops (fills before-fields, cascades). */
 export type OpInput =
-  | { op: 'add_node'; id?: string; parentId?: string | null; title: string; description?: string; nodeType?: NodeType; status?: NodeStatus; x?: number | null; y?: number | null }
+  | { op: 'add_node'; id?: string; parentId?: string | null; title: string; description?: string; nodeType?: NodeType; status?: NodeStatus; x?: number | null; y?: number | null; linkedCanvasId?: string | null }
   | { op: 'update_node'; id: string; fields: Partial<NodeFields> }
   | { op: 'delete_node'; id: string }
   | { op: 'move_node'; id: string; x: number; y: number }
@@ -106,6 +109,8 @@ export interface GroupInfo {
   name: string;
   myRole: GroupRole;
   myStatus: GroupMemberStatus;
+  /** Bu üye bu grupta kanvas oluşturabilir mi (admin ya da rolünün canCreateCanvas yetkisi). */
+  canCreateCanvas: boolean;
   memberCount: number;
   pendingCount: number;
   canvasCount: number;
@@ -157,6 +162,18 @@ export interface GraphState {
   nodes: PlanNode[];
   edges: PlanEdge[];
   headSeq: number;
+}
+
+/** Bağlı-kanvas kartındaki mini harita için hafif önizleme (`GET /api/canvases/:id/preview`). */
+export interface CanvasPreview {
+  id: string;
+  name: string;
+  nodeCount: number;
+  doneCount: number;
+  /** Yalnızca konumu olan düğümler (mini harita noktaları). */
+  nodes: { x: number; y: number; status: NodeStatus }[];
+  /** `nodes` dizisindeki index çiftleri. */
+  edges: [number, number][];
 }
 
 // ---------- Site yönetim paneli (yalnızca isAdmin kullanıcılar) ----------

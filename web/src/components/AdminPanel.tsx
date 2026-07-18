@@ -107,24 +107,26 @@ function UserRow({
         {notice && <span className="settings-ok" onClick={() => setNotice(null)}>{notice}</span>}
       </span>
       <span className="member-actions">
-        {!self && (
+        {/* Yönetici hesapları dokunulmazdır: yetki kaldırma / şifre atama / silme sunucuda
+            reddedilir, butonları hiç gösterme (şifresini herkes kendi ayarlarından değiştirir). */}
+        {!self && !user.isAdmin && (
           <button
             onClick={() => {
-              const q = user.isAdmin
-                ? `"${user.username}" kullanıcısının site yöneticisi yetkisi kaldırılsın mı?`
-                : `"${user.username}" kullanıcısına site yöneticisi yetkisi verilsin mi?`;
-              if (window.confirm(q)) run(() => adminApi.setUserAdmin(user.id, !user.isAdmin));
+              const q = `"${user.username}" kullanıcısına site yöneticisi yetkisi verilsin mi? Bu yetki daha sonra kaldırılamaz.`;
+              if (window.confirm(q)) run(() => adminApi.setUserAdmin(user.id, true));
             }}
           >
-            {user.isAdmin ? 'Yetkiyi kaldır' : 'Yönetici yap'}
+            Yönetici yap
           </button>
         )}
-        <button
-          onClick={() => setPwOpen(!pwOpen)}
-          title={user.hasPassword ? 'Kullanıcıya yeni şifre ata' : 'Google hesabına şifreyle giriş imkânı ekler'}
-        >
-          {user.hasPassword ? 'Şifre ata' : 'Şifre oluştur'}
-        </button>
+        {!user.isAdmin && (
+          <button
+            onClick={() => setPwOpen(!pwOpen)}
+            title={user.hasPassword ? 'Kullanıcıya yeni şifre ata' : 'Google hesabına şifreyle giriş imkânı ekler'}
+          >
+            {user.hasPassword ? 'Şifre ata' : 'Şifre oluştur'}
+          </button>
+        )}
         {!self && (
           <button
             onClick={() => {
@@ -135,7 +137,7 @@ function UserRow({
             Oturumları kapat
           </button>
         )}
-        {!self && (
+        {!self && !user.isAdmin && (
           <button
             className="danger-sm"
             onClick={() => {

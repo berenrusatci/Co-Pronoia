@@ -1,9 +1,9 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { PrismaClient } from '@prisma/client';
-import type { OpInput, ServerMessage } from '@treemapper/shared';
+import type { CanvasPreview, OpInput, ServerMessage } from '@treemapper/shared';
 import { ConflictError, RegionError, ValidationError, type Actor } from './commitService.js';
 import {
-  createInvite, createRegion, deleteCanvas, deleteRegion, listMembers, listRegions,
+  createInvite, createRegion, deleteCanvas, deleteRegion, getCanvasInfo, listMembers, listRegions,
   removeMember, setCanvasRoleAccess, setMemberRole, setRegionMembers, updateRegion, type ServiceFor,
 } from './canvasService.js';
 import { memberPermissions } from './groupService.js';
@@ -52,6 +52,35 @@ export function registerRoutes(
   const actorOf = (req: FastifyRequest): Actor => ({ userId: req.user!.id, role: req.memberRole! });
 
   app.get('/state', async (req) => scoped(req).service.getState());
+
+  /** Bağlı-kanvas kartı için hafif önizleme; üyelik preHandler'ı üye olmayana zaten 404 verir. */
+  app.get('/preview', async (req) => {
+    const { canvasId, service } = scoped(req);
+    const [state, canvas] = await Promise.all([
+      service.getState(),
+      prisma.canvas.findUnique({ where: { id: canvasId }, select: { name: true } }),
+    ]);
+    const placed = state.nodes.filter((n) => n.x != null && n.y != null);
+    const idx = new Map(placed.map((n, i) => [n.id, i]));
+    const preview: CanvasPreview = {
+      id: canvasId,
+      name: canvas?.name ?? '',
+      nodeCount: state.nodes.length,
+      doneCount: state.nodes.filter((n) => n.status === 'done').length,
+      nodes: placed.map((n) => ({ x: n.x!, y: n.y!, status: n.status })),
+      edges: state.edges
+        .filter((e) => idx.has(e.sourceId) && idx.has(e.targetId))
+        .map((e) => [idx.get(e.sourceId)!, idx.get(e.targetId)!] as [number, number]),
+    };
+    return { preview };
+  });
+
+  /** Bağlı kanvası panoya uğramadan açabilmek için CanvasInfo. */
+  app.get('/info', async (req, reply) => {
+    const info = await getCanvasInfo(prisma, scoped(req).canvasId, req.user!.id);
+    if (!info) return reply.code(404).send({ error: 'kanvas bulunamadı' });
+    return { canvas: info };
+  });
 
   app.get<{ Params: CanvasParams; Querystring: { limit?: string; before?: string } }>('/commits', async (req) => {
     const limit = req.query.limit ? Number(req.query.limit) : 50;
@@ -112,7 +141,7 @@ export function registerRoutes(
     const canvas = await prisma.canvas.findUnique({ where: { id: canvasId }, select: { name: true } });
     try {
       return await runAgent({
-        prisma, service, canvasId, canvasName: canvas?.name ?? '', prompt, actor: actorOf(req),
+        prisma, service, serviceFor, canvasId, canvasName: canvas?.name ?? '', prompt, actor: actorOf(req),
         detail: req.body?.detail === 'detailed' ? 'detailed' : 'proto',
         stepwise: req.body?.stepwise === true,
         selectedIds: Array.isArray(req.body?.selectedIds)

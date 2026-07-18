@@ -19,7 +19,14 @@ export function applyOp(graph: Graph, op: Op, seq: number): void {
       if (graph.nodes.has(op.node.id)) throw new OpError(`add_node: node ${op.node.id} already exists`);
       if (op.node.parentId !== null && !graph.nodes.has(op.node.parentId))
         throw new OpError(`add_node: parent ${op.node.parentId} does not exist`);
-      graph.nodes.set(op.node.id, { ...op.node, createdCommit: seq, updatedCommit: seq });
+      // linkedCanvasId alanından önceki commit JSON'larında anahtar hiç yok; null'a normalize
+      // edilmezse rebuildCheck'in JSON karşılaştırması ve diffStates hayalet fark görür.
+      graph.nodes.set(op.node.id, {
+        ...op.node,
+        linkedCanvasId: op.node.linkedCanvasId ?? null,
+        createdCommit: seq,
+        updatedCommit: seq,
+      });
       break;
     }
     case 'update_node': {

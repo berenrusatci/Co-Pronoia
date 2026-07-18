@@ -215,6 +215,25 @@ body {
 }
 .node-card:hover .add-child-btn { display: block; }
 
+/* Bağlı alt kanvas önizlemesi (düğüm kartı içi) */
+.subcanvas-preview {
+  display: block; width: 100%; margin-top: 6px; padding: 4px;
+  border: 1px solid var(--border); border-radius: 7px; background: var(--bg-soft);
+  font-size: 10px; color: var(--text-muted); text-align: left;
+}
+button.subcanvas-preview { cursor: pointer; }
+button.subcanvas-preview:hover { border-color: var(--accent); color: var(--accent-soft-text); }
+.subcanvas-map { display: block; width: 100%; height: auto; margin-bottom: 2px; }
+.subcanvas-caption { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.subcanvas-muted { color: var(--text-dim); }
+
+/* Düğüm editörü: bağlı kanvas bölümü */
+.linked-canvas-section { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+.linked-canvas-label { font-size: 12px; font-weight: 600; color: var(--text-muted); }
+.linked-canvas-row { display: flex; gap: 6px; align-items: center; }
+.linked-canvas-row select { flex: 1; min-width: 0; }
+.linked-canvas-name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 .react-flow__edge.hierarchy-edge path { stroke: var(--edge-hierarchy); stroke-width: 1.5; }
 .react-flow__edge.flow-edge path { stroke: var(--accent); stroke-width: 1.8; }
 

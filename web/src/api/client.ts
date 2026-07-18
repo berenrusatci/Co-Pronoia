@@ -1,7 +1,7 @@
 import type {
   AdminCanvasInfo, AdminGroupInfo, AdminStats, AdminUserInfo,
-  BranchInfo, CanvasAccess, CanvasInfo, Commit, CommitSummary, EdgeDirection, EdgeKind, GraphState,
-  GroupInfo, GroupMemberInfo, GroupRole, GroupRoleDefInfo, MemberInfo, NodeFields, NodeType,
+  BranchInfo, CanvasAccess, CanvasInfo, CanvasPreview, Commit, CommitSummary, EdgeDirection, EdgeKind,
+  GraphState, GroupInfo, GroupMemberInfo, GroupRole, GroupRoleDefInfo, MemberInfo, NodeFields, NodeType,
   OpInput, RegionInfo, SiteAppearance,
 } from '@treemapper/shared';
 
@@ -144,7 +144,11 @@ export const api = {
 /** Dashboard-level endpoints (not canvas-scoped). */
 export const canvasApi = {
   list: () => request<{ canvases: CanvasInfo[] }>('/api/canvases'),
-  create: (name: string, groupId?: string) => post<{ canvas: CanvasInfo }>('/api/canvases', { name, groupId }),
+  create: (name: string, groupId: string) => post<{ canvas: CanvasInfo }>('/api/canvases', { name, groupId }),
+  /** Bağlı-kanvas kartının mini haritası; aktif olmayan kanvaslar için de çalışır (düz URL). */
+  preview: (canvasId: string) => request<{ preview: CanvasPreview }>(`/api/canvases/${canvasId}/preview`),
+  /** Bağlı kanvası panoya uğramadan açabilmek için CanvasInfo. */
+  info: (canvasId: string) => request<{ canvas: CanvasInfo }>(`/api/canvases/${canvasId}/info`),
   createInvite: (canvasId: string) => post<{ token: string }>(`/api/canvases/${canvasId}/invites`),
   inviteInfo: (token: string) =>
     request<{ canvasName: string; invitedBy: string }>(`/api/invites/${encodeURIComponent(token)}`),

@@ -43,6 +43,7 @@ type Tx = Prisma.TransactionClient;
 type NodeRow = {
   id: string; parentId: string | null; title: string; description: string;
   nodeType: string; status: string; x: number | null; y: number | null;
+  linkedCanvasId: string | null;
   createdCommit: number; updatedCommit: number;
 };
 type EdgeRow = {
@@ -53,7 +54,8 @@ type EdgeRow = {
 const rowToNode = (r: NodeRow): PlanNode => ({
   id: r.id, parentId: r.parentId, title: r.title, description: r.description,
   nodeType: r.nodeType as PlanNode['nodeType'], status: r.status as PlanNode['status'],
-  x: r.x, y: r.y, createdCommit: r.createdCommit, updatedCommit: r.updatedCommit,
+  x: r.x, y: r.y, linkedCanvasId: r.linkedCanvasId,
+  createdCommit: r.createdCommit, updatedCommit: r.updatedCommit,
 });
 const rowToEdge = (r: EdgeRow): PlanEdge => ({
   id: r.id, sourceId: r.sourceId, targetId: r.targetId,
@@ -207,6 +209,7 @@ export class CommitService {
       if (baseSeq === undefined || baseSeq === head) {
         const graph = await this.loadGraph();
         const ops = expandAll(graph, inputs);
+        await this.assertLinkedCanvases(ops);
         const titleOf = (id: string) => graph.nodes.get(id)?.title;
         const { commit, state } = await this.applyCommit(ops, message ?? autoMessage(ops, titleOf), authorId, actor);
         return { result: 'committed', commit, state };
@@ -236,6 +239,7 @@ export class CommitService {
             const state = await this.getState();
             return { result: 'committed', commit: (await this.getCommit(head))!, state, droppedMoves };
           }
+          await this.assertLinkedCanvases(kept);
           const titleOf = (id: string) => graph.nodes.get(id)?.title;
           const { commit, state } = await this.applyCommit(
             kept, message ?? autoMessage(kept, titleOf), authorId, actor,
@@ -277,9 +281,10 @@ export class CommitService {
       const branchOps = expandAll(expandBase, inputs);
       // First line of defense on historical positions; merging re-checks against current state.
       await this.assertRegions(expandBase, branchOps, actor);
+      await this.assertLinkedCanvases(branchOps);
       const titleOf = (id: string) => expandBase.nodes.get(id)?.title;
-      const seq = await this.nextSeq();
-      const created = await this.prisma.$transaction(async (tx) => {
+      const { created, seq } = await this.prisma.$transaction(async (tx) => {
+        const seq = await this.nextSeq(tx);
         let id = branchId;
         if (!id) {
           const branch = await tx.branch.create({
@@ -298,7 +303,7 @@ export class CommitService {
             ops: JSON.stringify(branchOps), authorId, branchId: id,
           },
         });
-        return id;
+        return { created: id, seq };
       });
       const commit = (await this.getCommit(seq))!;
       const list = await this.listBranches('all');
@@ -341,9 +346,16 @@ export class CommitService {
     return branch;
   }
 
-  /** Per-canvas numbering (incl. branch commits); safe because the mutex serializes writes. */
-  private async nextSeq(): Promise<number> {
-    const agg = await this.prisma.commit.aggregate({ _max: { seq: true }, where: { canvasId: this.canvasId } });
+  /**
+   * Per-canvas numbering (incl. branch commits). The in-process mutex serializes writes within
+   * one server, but max+1 computed outside the write transaction races across processes (two
+   * instances mint the same seq). The Canvas row lock serializes seq assignment at the DB level;
+   * it MUST be called inside the transaction that writes the commit so the lock is held until
+   * the new seq is visible.
+   */
+  private async nextSeq(tx: Tx): Promise<number> {
+    await tx.$queryRaw`SELECT id FROM "Canvas" WHERE id = ${this.canvasId} FOR UPDATE`;
+    const agg = await tx.commit.aggregate({ _max: { seq: true }, where: { canvasId: this.canvasId } });
     return (agg._max.seq ?? 0) + 1;
   }
 
@@ -363,26 +375,58 @@ export class CommitService {
   }
 
   /**
+   * linkedCanvasId hedefleri: hedef kanvas var olmalı ve bu kanvasla AYNI grupta olmalı;
+   * kendine bağlanmak yasak. Yalnızca commit() yolundan çağrılır — revert/restore/mergeBranch
+   * bilerek atlar ki silinmiş kanvasa işaret eden tarihî durumlar geri yüklenebilsin.
+   */
+  private async assertLinkedCanvases(ops: Op[]): Promise<void> {
+    const targets = new Set<string>();
+    for (const op of ops) {
+      if (op.op === 'add_node' && op.node.linkedCanvasId) targets.add(op.node.linkedCanvasId);
+      if (op.op === 'update_node' && op.after.linkedCanvasId) targets.add(op.after.linkedCanvasId);
+    }
+    if (targets.size === 0) return;
+    const self = await this.prisma.canvas.findUnique({
+      where: { id: this.canvasId }, select: { groupId: true },
+    });
+    for (const id of targets) {
+      if (id === this.canvasId) throw new ValidationError('bir düğüm kendi kanvasına bağlanamaz');
+      const target = await this.prisma.canvas.findUnique({ where: { id }, select: { groupId: true } });
+      if (!target) throw new ValidationError('bağlanacak kanvas bulunamadı');
+      if (!self?.groupId || target.groupId !== self.groupId)
+        throw new ValidationError('düğümler yalnızca aynı gruptaki kanvaslara bağlanabilir');
+    }
+  }
+
+  /**
    * Region rule (non-owners only): expanded ops may not touch nodes — or edges with an
    * endpoint — inside a region the actor is not a member of. Lives here, not in the routes,
    * so every write path (commit, auto-merge, revert, restore, merge) enforces it.
    */
-  private async assertRegions(graph: Graph, ops: Op[], actor?: Actor): Promise<void> {
+  private async assertRegions(
+    graph: Graph, ops: Op[], actor?: Actor, regions?: Awaited<ReturnType<typeof listRegions>>,
+  ): Promise<void> {
     if (!actor || actor.role === 'owner') return;
-    const regions = await listRegions(this.prisma, this.canvasId);
-    const violation = regionViolation(graph, regions, actor.userId, ops);
+    const list = regions ?? (await listRegions(this.prisma, this.canvasId));
+    const violation = regionViolation(graph, list, actor.userId, ops);
     if (violation) throw new RegionError(violation);
   }
 
   private async applyCommit(ops: Op[], message: string, authorId: string | null, actor?: Actor): Promise<{ commit: Commit; state: GraphState }> {
-    const seq = await this.nextSeq();
-    const trial = await this.loadGraph();
-    await this.assertRegions(trial, ops, actor);
-    for (const op of ops) applyOp(trial, op, seq); // throws OpError on any invalid op
-
-    await this.prisma.$transaction(async (tx) => {
+    // Seq assignment, trial replay and write share one transaction: after the row lock in
+    // nextSeq the state can no longer move under us, so the trial validates exactly what
+    // the tables will hold when the commit lands (a validation error rolls everything back).
+    // Regions are config, preloaded here so the transaction holds a single pool connection.
+    const regions =
+      actor && actor.role !== 'owner' ? await listRegions(this.prisma, this.canvasId) : undefined;
+    const seq = await this.prisma.$transaction(async (tx) => {
+      const seq = await this.nextSeq(tx);
+      const trial = await this.loadGraph(tx);
+      await this.assertRegions(trial, ops, actor, regions);
+      for (const op of ops) applyOp(trial, op, seq); // throws OpError on any invalid op
       for (const op of ops) await this.applyToTables(tx, op, seq);
       await tx.commit.create({ data: { canvasId: this.canvasId, seq, message, ops: JSON.stringify(ops), authorId } });
+      return seq;
     });
     const commit = (await this.getCommit(seq))!;
     return { commit, state: await this.getState() };
@@ -421,11 +465,11 @@ export class CommitService {
     }
   }
 
-  private async loadGraph(): Promise<Graph> {
+  private async loadGraph(db: Tx | PrismaClient = this.prisma): Promise<Graph> {
     const graph = emptyGraph();
     const where = { canvasId: this.canvasId };
-    for (const row of await this.prisma.node.findMany({ where })) graph.nodes.set(row.id, rowToNode(row));
-    for (const row of await this.prisma.edge.findMany({ where })) graph.edges.set(row.id, rowToEdge(row));
+    for (const row of await db.node.findMany({ where })) graph.nodes.set(row.id, rowToNode(row));
+    for (const row of await db.edge.findMany({ where })) graph.edges.set(row.id, rowToEdge(row));
     return graph;
   }
 
@@ -545,7 +589,7 @@ export function diffStates(from: GraphState, to: GraphState): Op[] {
     if (!cur) continue;
     const before: Record<string, unknown> = {};
     const after: Record<string, unknown> = {};
-    for (const key of ['parentId', 'title', 'description', 'nodeType', 'status'] as const) {
+    for (const key of ['parentId', 'title', 'description', 'nodeType', 'status', 'linkedCanvasId'] as const) {
       if (cur[key] !== node[key]) { before[key] = cur[key]; after[key] = node[key]; }
     }
     if (Object.keys(after).length > 0)

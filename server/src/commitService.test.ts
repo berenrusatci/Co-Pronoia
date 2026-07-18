@@ -3,8 +3,8 @@ import { buildApp } from './app.js';
 import { testDbFactory } from './testDb.js';
 import { hashPassword, verifyPassword } from './auth.js';
 import { createCanvas } from './canvasService.js';
-import { captureEmails, registerVerified } from './testAuth.js';
-import type { CommitOutcome } from './commitService.js';
+import { captureEmails, createGroupCanvas, registerVerified } from './testAuth.js';
+import { CommitService, type CommitOutcome } from './commitService.js';
 import type { GraphState, OpInput } from '@treemapper/shared';
 
 let db: ReturnType<typeof testDbFactory>;
@@ -50,6 +50,23 @@ describe('commit engine', () => {
     const r2 = committed(await service.commit([{ op: 'add_node', id: 'kid', parentId: 'root', title: 'Kid' }]));
     expect(r2.commit.seq).toBe(2);
     expect(r2.state.nodes).toHaveLength(2);
+    expect(await service.rebuildCheck()).toBe(true);
+  });
+
+  it('eşzamanlı servis örnekleri (çoklu süreç simülasyonu) aynı seq numarasını üretemez', async () => {
+    // Süreç içi mutex örnek başınadır; iki örnek ancak DB'deki Canvas satır kilidi
+    // (nextSeq içindeki FOR UPDATE) sayesinde çakışmadan numaralanır.
+    const { prisma, canvas, service } = await freshCanvas();
+    committed(await service.commit([{ op: 'add_node', id: 'root', title: 'Root' }]));
+    const a = new CommitService(prisma, canvas.id);
+    const b = new CommitService(prisma, canvas.id);
+    const results = await Promise.all([
+      ...[0, 1, 2].map((i) => a.commit([{ op: 'add_node', id: `a${i}`, parentId: 'root', title: `A${i}` }])),
+      ...[0, 1, 2].map((i) => b.commit([{ op: 'add_node', id: `b${i}`, parentId: 'root', title: `B${i}` }])),
+    ]);
+    const seqs = results.map((r) => committed(r).commit.seq).sort((x, y) => x - y);
+    expect(seqs).toEqual([2, 3, 4, 5, 6, 7]);
+    expect((await service.getState()).nodes).toHaveLength(7);
     expect(await service.rebuildCheck()).toBe(true);
   });
 
@@ -384,7 +401,11 @@ describe('auth', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json().canvases).toHaveLength(0);
 
+    // kanvas artık gruba bağlı olmak zorunda: grupsuz istek 400
     res = await app.inject({ method: 'POST', url: '/api/canvases', cookies, payload: { name: 'Plan' } });
+    expect(res.statusCode).toBe(400);
+    const gid = (await app.inject({ method: 'POST', url: '/api/groups', cookies, payload: { name: 'Ekip' } })).json().group.id;
+    res = await app.inject({ method: 'POST', url: '/api/canvases', cookies, payload: { name: 'Plan', groupId: gid } });
     expect(res.statusCode).toBe(200);
     const canvasId = res.json().canvas.id;
     expect(res.json().canvas.role).toBe('owner');
@@ -424,8 +445,7 @@ describe('canvases & invites', () => {
 
   it('membership gates every canvas route; invite link is the only way in', async () => {
     const { app, c1, c2 } = await twoUsers();
-    const created = await app.inject({ method: 'POST', url: '/api/canvases', cookies: c1, payload: { name: 'Gizli plan' } });
-    const canvasId = created.json().canvas.id;
+    const canvasId = (await createGroupCanvas(app, c1, 'Gizli plan')).id;
 
     // u2 is not a member: canvas is invisible
     let res = await app.inject({ method: 'GET', url: `/api/canvases/${canvasId}/state`, cookies: c2 });
@@ -463,12 +483,12 @@ describe('canvases & invites', () => {
 
   it('commit numbering is independent per canvas', async () => {
     const { app, c1 } = await twoUsers();
-    const a = (await app.inject({ method: 'POST', url: '/api/canvases', cookies: c1, payload: { name: 'A' } })).json().canvas;
+    const a = await createGroupCanvas(app, c1, 'A');
     const post = (canvasId: string, title: string) =>
       app.inject({ method: 'POST', url: `/api/canvases/${canvasId}/commit`, cookies: c1, payload: { ops: [{ op: 'add_node', title }] } });
     await post(a.id, 'x'); // A: seq 2 (after seed)
     await post(a.id, 'y'); // A: seq 3
-    const b = (await app.inject({ method: 'POST', url: '/api/canvases', cookies: c1, payload: { name: 'B' } })).json().canvas;
+    const b = await createGroupCanvas(app, c1, 'B');
     expect(b.headSeq).toBe(1); // B's seed is #1 regardless of A's history
     const r = await post(b.id, 'z');
     expect(r.json().commit.seq).toBe(2);
@@ -485,7 +505,7 @@ describe('roles, regions & owner tools', () => {
     const c1 = r1.cookies;
     const c2 = r2.cookies;
     const u2Id = r2.res.json().user.id as string;
-    const canvas = (await built.app.inject({ method: 'POST', url: '/api/canvases', cookies: c1, payload: { name: 'Ekip' } })).json().canvas;
+    const canvas = await createGroupCanvas(built.app, c1, 'Ekip');
     const token = (await built.app.inject({ method: 'POST', url: `/api/canvases/${canvas.id}/invites`, cookies: c1 })).json().token;
     await built.app.inject({ method: 'POST', url: `/api/invites/${token}/accept`, cookies: c2 });
     return { ...built, c1, c2, u2Id, base: `/api/canvases/${canvas.id}`, canvasId: canvas.id };
@@ -734,7 +754,7 @@ describe('API integration', () => {
       app.inject({ method: 'GET', url, cookies: c }).then((r) => ({ code: r.statusCode, body: r.json() }));
 
     // u1 creates a canvas (seed commit = #1) and invites u2
-    const canvasId = (await post('/api/canvases', { name: 'Ortak plan' })).body.canvas.id;
+    const canvasId = (await createGroupCanvas(app, cookies, 'Ortak plan')).id;
     const base = `/api/canvases/${canvasId}`;
     const token = (await post(`${base}/invites`)).body.token;
     await post(`/api/invites/${token}/accept`, {}, cookies2);
