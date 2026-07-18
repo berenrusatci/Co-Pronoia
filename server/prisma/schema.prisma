@@ -26,6 +26,7 @@ model User {
   regionMemberships RegionMember[]
   groupMemberships GroupMember[]
   groupInvitesCreated GroupInvite[]
+  agentTokens  AgentToken[]
 }
 
 model Session {
@@ -56,6 +57,8 @@ model Canvas {
   owner     User           @relation(fields: [ownerId], references: [id])
   groupId   String?
   group     Group?         @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  /// 'plan' (normal) | 'co-pronoia' (MCP ajan önerileriyle planlama). Kodda doğrulanır, enum değil.
+  type      String         @default("plan")
   createdAt DateTime       @default(now())
   members   CanvasMember[]
   invites   Invite[]
@@ -65,16 +68,21 @@ model Canvas {
   branches  Branch[]
   regions   Region[]
   roleAccess CanvasRoleAccess[]
+  agentTokens AgentToken[]
+  proposals PlanProposal[]
 }
 
 model Group {
   id        String         @id @default(cuid())
   name      String
+  /// 'plan' | 'co-pronoia' — co-pronoia kanvası yalnızca co-pronoia grubunda açılabilir.
+  type      String         @default("plan")
   createdAt DateTime       @default(now())
   members   GroupMember[]
   canvases  Canvas[]
   invites   GroupInvite[]
   roleDefs  GroupRoleDef[]
+  agentRoles AgentRoleDef[]
 }
 
 /// Grup kurucusunun tanımladığı özel rol: isim + yetki bayrakları.
@@ -252,6 +260,69 @@ model Branch {
   creator   User     @relation(fields: [createdBy], references: [id])
   createdAt DateTime @default(now())
   commits   Commit[]
+
+  @@index([canvasId, status])
+}
+
+/// Co-Pronoia ajan rol tanımı: groupId null → site geneli şablon (admin yönetir);
+/// dolu → gruba özel rol (canManageRoles yetkisiyle yönetilir). persona metni bağlanan
+/// ajana get_brief aracıyla brifing olarak servis edilir.
+model AgentRoleDef {
+  id           String   @id @default(cuid())
+  groupId      String?
+  group        Group?   @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  name         String
+  persona      String   @default("")
+  isSupervisor Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  tokens       AgentToken[]
+
+  @@index([groupId])
+}
+
+/// Kanvas + role bağlı MCP ajan erişim anahtarı. Ham değer yalnızca oluşturma yanıtında
+/// döner; DB'de sha256 özeti durur (Session ham saklanır — burada bilinçli sapma: bu uzun
+/// ömürlü, bir kez gösterilen bir API anahtarı; sha256 deterministik olduğundan lookup çalışır).
+model AgentToken {
+  id          String       @id @default(cuid())
+  tokenHash   String       @unique
+  canvasId    String
+  canvas      Canvas       @relation(fields: [canvasId], references: [id], onDelete: Cascade)
+  roleId      String
+  role        AgentRoleDef @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  label       String
+  createdById String
+  createdBy   User         @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  createdAt   DateTime     @default(now())
+  lastUsedAt  DateTime?
+  revokedAt   DateTime?
+  proposals   PlanProposal[]
+
+  @@index([canvasId])
+}
+
+/// Ajan plan önerisi. intents: OpInput[] JSON'u (Commit.ops ile aynı desen: String alanda JSON).
+/// agentLabel/roleName denormalize: token/rol silinse de öneri geçmişi okunur kalır.
+/// status: submitted | changes_requested | withdrawn | rejected | applied (kodda doğrulanır).
+model PlanProposal {
+  id               String      @id @default(cuid())
+  canvasId         String
+  canvas           Canvas      @relation(fields: [canvasId], references: [id], onDelete: Cascade)
+  tokenId          String?
+  token            AgentToken? @relation(fields: [tokenId], references: [id], onDelete: SetNull)
+  agentLabel       String
+  roleName         String
+  title            String
+  summary          String      @default("")
+  intents          String
+  baseSeq          Int
+  status           String      @default("submitted")
+  supervisorNote   String      @default("")
+  decidedByLabel   String?
+  appliedCommitSeq Int?
+  branchName       String?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
 
   @@index([canvasId, status])
 }

@@ -1,6 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import { nanoid } from 'nanoid';
-import type { CanvasInfo, CanvasRole, MemberInfo, RegionInfo } from '@treemapper/shared';
+import type { CanvasInfo, CanvasRole, CanvasType, MemberInfo, RegionInfo } from '@treemapper/shared';
 import type { CommitService } from './commitService.js';
 
 export type ServiceFor = (canvasId: string) => CommitService;
@@ -67,6 +67,7 @@ export async function listCanvases(prisma: PrismaClient, userId: string): Promis
     createdAt: r.createdAt.toISOString(),
     groupId: r.group?.id ?? null,
     groupName: r.group?.name ?? null,
+    type: r.type as CanvasInfo['type'],
   }));
 }
 
@@ -81,10 +82,16 @@ export async function createCanvas(
   serviceFor: ServiceFor,
   name: string,
   ownerId: string,
-  opts: { seedRoot?: boolean; groupId?: string } = {},
+  opts: { seedRoot?: boolean; groupId?: string; type?: CanvasType } = {},
 ): Promise<CanvasInfo> {
   const canvas = await prisma.canvas.create({
-    data: { name, ownerId, groupId: opts.groupId, members: { create: { userId: ownerId, role: 'owner' } } },
+    data: {
+      name,
+      ownerId,
+      groupId: opts.groupId,
+      type: opts.type ?? 'plan',
+      members: { create: { userId: ownerId, role: 'owner' } },
+    },
   });
   if (opts.seedRoot !== false) {
     await serviceFor(canvas.id).commit(
@@ -175,6 +182,8 @@ export async function removeMember(
 /** Owner-only. Removes the canvas and everything scoped to it. */
 export async function deleteCanvas(prisma: PrismaClient, canvasId: string): Promise<void> {
   await prisma.$transaction([
+    prisma.planProposal.deleteMany({ where: { canvasId } }),
+    prisma.agentToken.deleteMany({ where: { canvasId } }),
     prisma.commit.deleteMany({ where: { canvasId } }),
     prisma.branch.deleteMany({ where: { canvasId } }),
     prisma.edge.deleteMany({ where: { canvasId } }),

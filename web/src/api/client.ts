@@ -1,9 +1,23 @@
 import type {
-  AdminCanvasInfo, AdminGroupInfo, AdminStats, AdminUserInfo,
-  BranchInfo, CanvasAccess, CanvasInfo, CanvasPreview, Commit, CommitSummary, EdgeDirection, EdgeKind,
-  GraphState, GroupInfo, GroupMemberInfo, GroupRole, GroupRoleDefInfo, MemberInfo, NodeFields, NodeType,
-  OpInput, RegionInfo, SiteAppearance,
+  AdminCanvasInfo, AdminGroupInfo, AdminStats, AdminUserInfo, AgentRoleInfo, AgentTokenInfo,
+  BranchInfo, CanvasAccess, CanvasInfo, CanvasPreview, CanvasType, Commit, CommitSummary, EdgeDirection, EdgeKind,
+  GraphState, GroupInfo, GroupMemberInfo, GroupRole, GroupRoleDefInfo, GroupType, MemberInfo, NodeFields, NodeType,
+  OpInput, PlanProposalInfo, RegionInfo, SiteAppearance,
 } from '@treemapper/shared';
+
+export interface AgentRoleInput {
+  name: string;
+  persona?: string;
+  isSupervisor?: boolean;
+}
+
+/** AgentRoleEditor'ün hem grup hem admin uçlarıyla çalışabilmesi için ortak CRUD yüzeyi. */
+export interface AgentRoleApi {
+  list: () => Promise<{ roles: AgentRoleInfo[] }>;
+  create: (role: AgentRoleInput) => Promise<{ role: AgentRoleInfo }>;
+  update: (roleId: string, role: Partial<AgentRoleInput>) => Promise<{ role: AgentRoleInfo }>;
+  remove: (roleId: string) => Promise<{ ok: boolean }>;
+}
 
 export interface RoleDefInput {
   name: string;
@@ -139,12 +153,23 @@ export const api = {
     selectedRegionIds: string[] = [],
     stepwise = false,
   ) => post<AgentResponse>(`${base()}/agent`, { prompt, detail, stepwise, selectedIds, selectedRegionIds }),
+
+  // ---------- Co-Pronoia (yalnızca co-pronoia kanvasları) ----------
+  getProposals: () => request<{ proposals: PlanProposalInfo[] }>(`${base()}/proposals`),
+  rejectProposal: (id: string, note?: string) =>
+    post<{ proposal: PlanProposalInfo }>(`${base()}/proposals/${id}/reject`, { note }),
+  getAgentRoles: () => request<{ roles: AgentRoleInfo[] }>(`${base()}/agent-roles`),
+  getAgentTokens: () => request<{ tokens: AgentTokenInfo[] }>(`${base()}/agent-tokens`),
+  createAgentToken: (roleId: string, label: string) =>
+    post<{ token: AgentTokenInfo; secret: string }>(`${base()}/agent-tokens`, { roleId, label }),
+  revokeAgentToken: (id: string) => del<{ tokens: AgentTokenInfo[] }>(`${base()}/agent-tokens/${id}`),
 };
 
 /** Dashboard-level endpoints (not canvas-scoped). */
 export const canvasApi = {
   list: () => request<{ canvases: CanvasInfo[] }>('/api/canvases'),
-  create: (name: string, groupId: string) => post<{ canvas: CanvasInfo }>('/api/canvases', { name, groupId }),
+  create: (name: string, groupId: string, type?: CanvasType) =>
+    post<{ canvas: CanvasInfo }>('/api/canvases', { name, groupId, ...(type ? { type } : {}) }),
   /** Bağlı-kanvas kartının mini haritası; aktif olmayan kanvaslar için de çalışır (düz URL). */
   preview: (canvasId: string) => request<{ preview: CanvasPreview }>(`/api/canvases/${canvasId}/preview`),
   /** Bağlı kanvası panoya uğramadan açabilmek için CanvasInfo. */
@@ -164,7 +189,8 @@ export const canvasApi = {
 /** Dashboard-level group endpoints. */
 export const groupApi = {
   list: () => request<{ groups: GroupInfo[] }>('/api/groups'),
-  create: (name: string, roles?: RoleDefInput[]) => post<{ group: GroupInfo }>('/api/groups', { name, roles }),
+  create: (name: string, roles?: RoleDefInput[], type?: GroupType) =>
+    post<{ group: GroupInfo }>('/api/groups', { name, roles, ...(type ? { type } : {}) }),
   roles: (groupId: string) => request<{ roles: GroupRoleDefInfo[] }>(`/api/groups/${groupId}/roles`),
   createRole: (groupId: string, role: RoleDefInput) =>
     post<{ role: GroupRoleDefInfo }>(`/api/groups/${groupId}/roles`, role),
@@ -185,6 +211,13 @@ export const groupApi = {
     request<{ groupName: string; invitedBy: string }>(`/api/group-invites/${encodeURIComponent(token)}`),
   acceptInvite: (token: string, jobTitle: string) =>
     post<{ group: GroupInfo }>(`/api/group-invites/${encodeURIComponent(token)}/accept`, { jobTitle }),
+  /** Gruba özel Co-Pronoia ajan rolleri (AgentRoleApi biçiminde). */
+  agentRoles: (groupId: string): AgentRoleApi => ({
+    list: () => request<{ roles: AgentRoleInfo[] }>(`/api/groups/${groupId}/agent-roles`),
+    create: (role) => post<{ role: AgentRoleInfo }>(`/api/groups/${groupId}/agent-roles`, role),
+    update: (roleId, role) => patch<{ role: AgentRoleInfo }>(`/api/groups/${groupId}/agent-roles/${roleId}`, role),
+    remove: (roleId) => del<{ ok: boolean }>(`/api/groups/${groupId}/agent-roles/${roleId}`),
+  }),
 };
 
 /** Site yönetim paneli uçları (yalnızca isAdmin kullanıcılar; sunucu 403 ile korur). */
@@ -228,4 +261,11 @@ export const adminApi = {
     patch<{ members: GroupMemberInfo[] }>(`/api/admin/groups/${groupId}/members/${userId}`, { role }),
   removeGroupMember: (groupId: string, userId: string) =>
     del<{ members: GroupMemberInfo[] }>(`/api/admin/groups/${groupId}/members/${userId}`),
+  /** Site geneli Co-Pronoia ajan rol şablonları (AgentRoleApi biçiminde). */
+  agentRoles: (): AgentRoleApi => ({
+    list: () => request<{ roles: AgentRoleInfo[] }>('/api/admin/agent-roles'),
+    create: (role) => post<{ role: AgentRoleInfo }>('/api/admin/agent-roles', role),
+    update: (roleId, role) => patch<{ role: AgentRoleInfo }>(`/api/admin/agent-roles/${roleId}`, role),
+    remove: (roleId) => del<{ ok: boolean }>(`/api/admin/agent-roles/${roleId}`),
+  }),
 };

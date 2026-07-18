@@ -1,7 +1,7 @@
 import type { PrismaClient } from '@prisma/client';
 import { nanoid } from 'nanoid';
 import type {
-  CanvasAccess, GroupInfo, GroupMemberInfo, GroupRole, GroupRoleDefInfo, GroupMemberStatus,
+  CanvasAccess, GroupInfo, GroupMemberInfo, GroupRole, GroupRoleDefInfo, GroupMemberStatus, GroupType,
 } from '@treemapper/shared';
 
 export interface RoleDefInput {
@@ -53,6 +53,7 @@ export async function listGroups(prisma: PrismaClient, userId: string): Promise<
   return rows.map((r) => ({
     id: r.group.id,
     name: r.group.name,
+    type: r.group.type as GroupType,
     myRole: r.role as GroupRole,
     myStatus: r.status as GroupMemberStatus,
     canCreateCanvas: r.role === 'admin' ? true : r.roleDef?.canCreateCanvas ?? true,
@@ -68,10 +69,12 @@ export async function createGroup(
   name: string,
   userId: string,
   roles: RoleDefInput[] = [],
+  type: GroupType = 'plan',
 ): Promise<GroupInfo> {
   const group = await prisma.group.create({
     data: {
       name,
+      type,
       members: { create: { userId, role: 'admin', status: 'approved' } },
       roleDefs: {
         create: roles
@@ -89,6 +92,7 @@ export async function createGroup(
   return {
     id: group.id,
     name: group.name,
+    type: group.type as GroupType,
     myRole: 'admin',
     myStatus: 'approved',
     canCreateCanvas: true,
@@ -309,6 +313,7 @@ export async function acceptGroupInvite(
   return {
     id: row.group.id,
     name: row.group.name,
+    type: row.group.type as GroupType,
     myRole: row.role as GroupRole,
     myStatus: row.status as GroupMemberStatus,
     canCreateCanvas: row.role === 'admin' ? true : row.roleDef?.canCreateCanvas ?? true,

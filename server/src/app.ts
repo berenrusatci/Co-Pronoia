@@ -16,6 +16,7 @@ import { registerGoogleAuth } from './googleAuth.js';
 import { registerCanvasRoutes } from './canvasRoutes.js';
 import { registerGroupRoutes, registerGroupMemberRoutes } from './groupRoutes.js';
 import { registerAdminRoutes } from './adminRoutes.js';
+import { registerMcpRoutes } from './mcp/mcpRoutes.js';
 import { getSiteAsset, LOGIN_PREVIEW } from './siteAssetService.js';
 
 declare module 'fastify' {
@@ -71,7 +72,11 @@ export async function buildApp(dbUrl: string, opts?: { emailSender?: EmailSender
   app.addHook('preHandler', async (req, reply) => {
     if (!req.url.startsWith('/api')) return;
     // /api/site/*: giriş ekranı oturum açılmadan çizildiği için görünüm ayarı herkese açık.
-    if (req.url.startsWith('/api/auth/') || req.url.startsWith('/api/site/') || req.url === '/api/health') return;
+    // /api/mcp: oturum çerezi yerine Bearer ajan anahtarıyla korunur (mcpRoutes.ts kendisi 401 verir).
+    if (
+      req.url.startsWith('/api/auth/') || req.url.startsWith('/api/site/') ||
+      req.url.startsWith('/api/mcp') || req.url === '/api/health'
+    ) return;
     req.user = await resolveSession(prisma, sessionToken(req));
     if (!req.user) return reply.code(401).send({ error: 'oturum gerekli' });
   });
@@ -196,6 +201,7 @@ export async function buildApp(dbUrl: string, opts?: { emailSender?: EmailSender
   }
   registerCanvasRoutes(app, prisma, serviceFor, broadcast);
   registerGroupRoutes(app, prisma);
+  registerMcpRoutes(app, prisma, serviceFor, broadcast);
 
   // All graph routes live under a canvas and require membership.
   await app.register(

@@ -76,6 +76,11 @@ export interface CommitSummary {
 /** owner: tek kişi, her şeyi yapar · editor: grafiği düzenler · viewer: salt okunur */
 export type CanvasRole = 'owner' | 'editor' | 'viewer';
 
+/** 'plan': normal kanvas · 'co-pronoia': MCP ajanlarının öneri/süpervizör akışıyla planladığı kanvas. */
+export type CanvasType = 'plan' | 'co-pronoia';
+/** Co-pronoia kanvası yalnızca co-pronoia türündeki bir grupta oluşturulabilir. */
+export type GroupType = 'plan' | 'co-pronoia';
+
 export interface CanvasInfo {
   id: string;
   name: string;
@@ -86,6 +91,7 @@ export interface CanvasInfo {
   createdAt: string;
   groupId: string | null;
   groupName: string | null;
+  type: CanvasType;
 }
 
 /** admin: onaylar + davet gönderir · member: yetkileri atanmış özel rolünden (GroupRoleDefInfo) gelir */
@@ -107,6 +113,7 @@ export interface GroupRoleDefInfo {
 export interface GroupInfo {
   id: string;
   name: string;
+  type: GroupType;
   myRole: GroupRole;
   myStatus: GroupMemberStatus;
   /** Bu üye bu grupta kanvas oluşturabilir mi (admin ya da rolünün canCreateCanvas yetkisi). */
@@ -174,6 +181,53 @@ export interface CanvasPreview {
   nodes: { x: number; y: number; status: NodeStatus }[];
   /** `nodes` dizisindeki index çiftleri. */
   edges: [number, number][];
+}
+
+// ---------- Co-Pronoia: MCP ajan rolleri, anahtarları ve plan önerileri ----------
+
+/** Ajan rol tanımı: site şablonu (scope 'site', admin yönetir) ya da gruba özel (scope 'group'). */
+export interface AgentRoleInfo {
+  id: string;
+  name: string;
+  /** Bağlanan ajana get_brief aracıyla brifing olarak servis edilen persona/görev metni. */
+  persona: string;
+  /** Süpervizör rolü: önerileri onaylar/reddeder; onaysız hiçbir öneri main'e inmez. */
+  isSupervisor: boolean;
+  scope: 'site' | 'group';
+  createdAt: string;
+}
+
+/** Kanvas + role bağlı MCP erişim anahtarı (ham değer yalnızca oluşturma yanıtında döner). */
+export interface AgentTokenInfo {
+  id: string;
+  label: string;
+  roleId: string;
+  roleName: string;
+  isSupervisor: boolean;
+  createdBy: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+  revoked: boolean;
+}
+
+export type ProposalStatus = 'submitted' | 'changes_requested' | 'withdrawn' | 'rejected' | 'applied';
+
+/** Bir ajanın plan önerisi; intents içeriği yalnızca detay uçlarında/araçlarında döner. */
+export interface PlanProposalInfo {
+  id: string;
+  agentLabel: string;
+  roleName: string;
+  title: string;
+  summary: string;
+  intentCount: number;
+  baseSeq: number;
+  status: ProposalStatus;
+  supervisorNote: string;
+  decidedByLabel: string | null;
+  appliedCommitSeq: number | null;
+  branchName: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 // ---------- Site yönetim paneli (yalnızca isAdmin kullanıcılar) ----------

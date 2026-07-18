@@ -16,6 +16,7 @@
     "@fastify/oauth2": "^8.2.0",
     "@fastify/static": "^8.0.0",
     "@fastify/websocket": "^11.2.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
     "@treemapper/shared": "*",
@@ -24,7 +25,8 @@
     "nanoid": "^5.0.0",
     "nodemailer": "^9.0.3",
     "pg": "^8.13.0",
-    "prisma": "^7.8.0"
+    "prisma": "^7.8.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

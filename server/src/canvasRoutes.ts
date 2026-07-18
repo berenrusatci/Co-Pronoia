@@ -13,18 +13,26 @@ export function registerCanvasRoutes(
 ): void {
   app.get('/api/canvases', async (req) => ({ canvases: await listCanvases(prisma, req.user!.id) }));
 
-  app.post<{ Body: { name?: string; groupId?: string } | null }>('/api/canvases', async (req, reply) => {
+  app.post<{ Body: { name?: string; groupId?: string; type?: string } | null }>('/api/canvases', async (req, reply) => {
     const name = (req.body?.name ?? '').trim();
     if (name.length === 0) return reply.code(400).send({ error: 'kanvas adı gerekli' });
     if (name.length > 80) return reply.code(400).send({ error: 'kanvas adı en fazla 80 karakter olabilir' });
     // Her yeni kanvas bir gruba bağlı olmalı; yetki = admin ya da rolünde canCreateCanvas.
     const groupId = req.body?.groupId || undefined;
     if (!groupId) return reply.code(400).send({ error: 'kanvas bir gruba bağlı olmalı (groupId gerekli)' });
+    const type = req.body?.type ?? 'plan';
+    if (type !== 'plan' && type !== 'co-pronoia')
+      return reply.code(400).send({ error: 'geçersiz kanvas türü' });
     const perms = await memberPermissions(prisma, groupId, req.user!.id);
     if (!perms) return reply.code(403).send({ error: 'bu grubun onaylı üyesi değilsiniz' });
     if (!perms.canCreateCanvas)
       return reply.code(403).send({ error: 'bu grupta kanvas oluşturma yetkiniz yok' });
-    return { canvas: await createCanvas(prisma, serviceFor, name, req.user!.id, { groupId }) };
+    if (type === 'co-pronoia') {
+      const group = await prisma.group.findUnique({ where: { id: groupId }, select: { type: true } });
+      if (group?.type !== 'co-pronoia')
+        return reply.code(400).send({ error: 'co-pronoia kanvası yalnızca co-pronoia türündeki bir grupta oluşturulabilir' });
+    }
+    return { canvas: await createCanvas(prisma, serviceFor, name, req.user!.id, { groupId, type }) };
   });
 
   app.get<{ Params: { token: string } }>('/api/invites/:token', async (req, reply) => {

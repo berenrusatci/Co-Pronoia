@@ -6,8 +6,9 @@ import { adminApi, ApiError, siteApi } from '../api/client';
 import { useAdminStore } from '../store/adminStore';
 import { useAuthStore } from '../store/authStore';
 import { useThemeStore } from '../store/themeStore';
+import { AgentRoleEditor } from './AgentRoleEditor';
 
-type AdminTab = 'overview' | 'users' | 'canvases' | 'groups' | 'appearance';
+type AdminTab = 'overview' | 'users' | 'canvases' | 'groups' | 'agentRoles' | 'appearance';
 
 const errText = (err: unknown) => (err instanceof ApiError ? err.message : String(err));
 const trDate = (iso: string) => new Date(iso).toLocaleDateString('tr-TR');
@@ -651,8 +652,22 @@ const tabs: Array<[AdminTab, string]> = [
   ['users', 'Kullanıcılar'],
   ['canvases', 'Kanvaslar'],
   ['groups', 'Gruplar'],
+  ['agentRoles', 'Ajan Rolleri'],
   ['appearance', 'Görünüm'],
 ];
+
+/** Site geneli Co-Pronoia ajan rol şablonları: her co-pronoia kanvasında anahtar basarken seçilebilir. */
+function AgentRolesSection() {
+  return (
+    <div className="admin-section">
+      <p className="empty-note">
+        Buradaki şablon roller tüm Co-Pronoia kanvaslarında ajan anahtarı basarken seçilebilir.
+        Gruba özel roller ise ilgili grubun kartındaki "Ajan rolleri" panelinden tanımlanır.
+      </p>
+      <AgentRoleEditor api={adminApi.agentRoles()} title="Site şablonları" />
+    </div>
+  );
+}
 
 export function AdminPanel() {
   const user = useAuthStore((s) => s.user);
@@ -690,6 +705,7 @@ export function AdminPanel() {
         {tab === 'users' && <UsersSection selfId={user?.id ?? ''} onError={setError} />}
         {tab === 'canvases' && <CanvasesSection onError={setError} />}
         {tab === 'groups' && <GroupsSection onError={setError} />}
+        {tab === 'agentRoles' && <AgentRolesSection />}
         {tab === 'appearance' && <AppearanceSection onError={setError} />}
       </div>
       {error && (

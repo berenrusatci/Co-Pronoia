@@ -1,11 +1,12 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import type { CanvasAccess, CanvasInfo, GroupInfo, GroupMemberInfo, GroupRoleDefInfo } from '@treemapper/shared';
+import type { CanvasAccess, CanvasInfo, CanvasType, GroupInfo, GroupMemberInfo, GroupRoleDefInfo, GroupType } from '@treemapper/shared';
 import { useCanvasStore } from '../store/canvasStore';
 import { useGroupStore } from '../store/groupStore';
 import { useAuthStore } from '../store/authStore';
 import { useThemeStore } from '../store/themeStore';
 import { useAdminStore } from '../store/adminStore';
 import { canvasApi, groupApi, ApiError, type RoleDefInput } from '../api/client';
+import { AgentRoleEditor } from './AgentRoleEditor';
 import { Brand } from './Logo';
 
 const accessLabels: Record<CanvasAccess, string> = { none: 'erişim yok', view: 'görüntüleme', edit: 'düzenleme' };
@@ -79,7 +80,14 @@ function CanvasCard({ canvas }: { canvas: CanvasInfo }) {
   return (
     <div className="canvas-card">
       <div className="canvas-card-body" onClick={() => open(canvas)}>
-        <div className="canvas-card-name">{canvas.name}</div>
+        <div className="canvas-card-name">
+          {canvas.name}
+          {canvas.type === 'co-pronoia' && (
+            <span className="role-badge role-owner" title="MCP ajanlarının öneri/süpervizör akışıyla planladığı kanvas">
+              🤝 Co-Pronoia
+            </span>
+          )}
+        </div>
         <div className="canvas-card-meta">
           <span className="canvas-owner">
             {canvas.role === 'owner' ? 'sahibi sizsiniz' : `sahibi: ${canvas.owner}`}
@@ -353,6 +361,7 @@ function GroupCard({ group }: { group: GroupInfo }) {
   const inviteLink = useGroupStore((s) => s.inviteLink);
   const [expanded, setExpanded] = useState(false);
   const [showRoles, setShowRoles] = useState(false);
+  const [showAgentRoles, setShowAgentRoles] = useState(false);
   const [copied, setCopied] = useState(false);
   const isAdmin = group.myRole === 'admin';
 
@@ -372,6 +381,11 @@ function GroupCard({ group }: { group: GroupInfo }) {
     <div className="group-card">
       <div className="group-card-head">
         <span className="group-card-name">{group.name}</span>
+        {group.type === 'co-pronoia' && (
+          <span className="role-badge role-owner" title="Bu grupta Co-Pronoia (MCP çoklu-ajan) kanvasları açılabilir">
+            🤝 Co-Pronoia
+          </span>
+        )}
         <span className={`role-badge role-${group.myRole === 'admin' ? 'owner' : 'viewer'}`}>
           {groupRoleLabels[group.myRole]}
         </span>
@@ -390,9 +404,20 @@ function GroupCard({ group }: { group: GroupInfo }) {
         {isAdmin && (
           <button onClick={() => setShowRoles(!showRoles)}>{showRoles ? 'Rolleri gizle' : 'Rolleri yönet'}</button>
         )}
+        {isAdmin && group.type === 'co-pronoia' && (
+          <button
+            onClick={() => setShowAgentRoles(!showAgentRoles)}
+            title="Bu grubun Co-Pronoia kanvaslarında kullanılacak ajan rollerini tanımla"
+          >
+            {showAgentRoles ? 'Ajan rollerini gizle' : '🤝 Ajan rolleri'}
+          </button>
+        )}
       </div>
       {isAdmin && expanded && <GroupMembersPanel groupId={group.id} />}
       {isAdmin && showRoles && <GroupRolesPanel groupId={group.id} />}
+      {isAdmin && showAgentRoles && group.type === 'co-pronoia' && (
+        <AgentRoleEditor api={groupApi.agentRoles(group.id)} title="Grup ajan rolleri" />
+      )}
     </div>
   );
 }
@@ -401,6 +426,7 @@ function GroupsSection() {
   const groups = useGroupStore((s) => s.groups);
   const createGroup = useGroupStore((s) => s.createGroup);
   const [name, setName] = useState('');
+  const [type, setType] = useState<GroupType>('plan');
   const [busy, setBusy] = useState(false);
   const [draftRoles, setDraftRoles] = useState<RoleDefInput[]>([]);
 
@@ -408,10 +434,11 @@ function GroupsSection() {
     e.preventDefault();
     if (!name.trim() || busy) return;
     setBusy(true);
-    const group = await createGroup(name.trim(), draftRoles.filter((r) => r.name.trim()));
+    const group = await createGroup(name.trim(), draftRoles.filter((r) => r.name.trim()), type);
     setBusy(false);
     if (group) {
       setName('');
+      setType('plan');
       setDraftRoles([]);
     }
   };
@@ -427,6 +454,14 @@ function GroupsSection() {
             placeholder="Yeni grup adı…"
             maxLength={80}
           />
+          <select
+            value={type}
+            title="Co-Pronoia gruplarında MCP ajanlarının öneri/süpervizör akışıyla planladığı kanvaslar açılabilir"
+            onChange={(e) => setType(e.target.value as GroupType)}
+          >
+            <option value="plan">Normal grup</option>
+            <option value="co-pronoia">Co-Pronoia grubu</option>
+          </select>
           <button
             type="button"
             className="pano-btn"
@@ -567,6 +602,7 @@ export function Dashboard() {
 
   const [name, setName] = useState('');
   const [groupId, setGroupId] = useState('');
+  const [canvasType, setCanvasType] = useState<CanvasType>('plan');
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -577,16 +613,20 @@ export function Dashboard() {
   // Her kanvas bir gruba bağlı olmalı; oluşturma yetkisi admin ya da rolün canCreateCanvas'ı.
   const creatableGroups = groups.filter((g) => g.canCreateCanvas);
   const effectiveGroupId = groupId || creatableGroups[0]?.id || '';
+  // Co-pronoia kanvası yalnızca co-pronoia grubunda açılabilir; başka grup seçilince tür sıfırlanır.
+  const selectedGroup = creatableGroups.find((g) => g.id === effectiveGroupId);
+  const effectiveCanvasType = selectedGroup?.type === 'co-pronoia' ? canvasType : 'plan';
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!name.trim() || busy || !effectiveGroupId) return;
     setBusy(true);
-    const canvas = await createCanvas(name.trim(), effectiveGroupId);
+    const canvas = await createCanvas(name.trim(), effectiveGroupId, effectiveCanvasType);
     setBusy(false);
     if (canvas) {
       setName('');
       setGroupId('');
+      setCanvasType('plan');
       open(canvas); // jump straight into the freshly created canvas
     }
   };
@@ -640,6 +680,16 @@ export function Dashboard() {
                 <option key={g.id} value={g.id}>{g.name}</option>
               ))}
             </select>
+            {selectedGroup?.type === 'co-pronoia' && (
+              <select
+                value={effectiveCanvasType}
+                title="Co-Pronoia kanvasında MCP ajanları öneri verir, süpervizör ajan onaylar"
+                onChange={(e) => setCanvasType(e.target.value as CanvasType)}
+              >
+                <option value="plan">Normal kanvas</option>
+                <option value="co-pronoia">Co-Pronoia kanvası</option>
+              </select>
+            )}
             <button type="submit" className="login-btn" disabled={!name.trim() || busy || !effectiveGroupId}>
               + Kanvas oluştur
             </button>

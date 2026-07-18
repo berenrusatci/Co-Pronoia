@@ -726,6 +726,41 @@ button.primary:disabled { opacity: .5; cursor: default; }
 .role-def-add > button { border-radius: 6px; border: 1px solid var(--border-strong); padding: 5px 12px; cursor: pointer; font-size: 12.5px; }
 .group-roles { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
 .group-roles h5 { margin: 8px 0 4px; font-size: 11.5px; color: var(--text-faint); }
+
+/* Co-Pronoia panel */
+.copronoia-panel .token-mint { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.copronoia-panel .token-mint select, .copronoia-panel .token-mint input {
+  font: inherit; font-size: 12.5px; padding: 5px 8px; border: 1px solid var(--border-strong);
+  border-radius: 6px; background: var(--bg-panel); color: var(--text);
+}
+.copronoia-panel .token-mint button { border-radius: 6px; border: 1px solid var(--border-strong); padding: 5px 10px; cursor: pointer; font-size: 12.5px; }
+.token-revoked .member-name { text-decoration: line-through; opacity: 0.6; }
+.secret-reveal { border: 1px solid var(--border-strong); border-radius: 8px; padding: 8px 10px; margin: 8px 0; background: var(--bg-elevated); }
+.secret-code { display: block; font-size: 11.5px; word-break: break-all; margin: 6px 0; user-select: all; }
+.secret-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.secret-actions button { border-radius: 6px; border: 1px solid var(--border-strong); padding: 4px 8px; cursor: pointer; font-size: 11.5px; }
+.secret-snippet { font-size: 10.5px; overflow-x: auto; background: var(--bg-panel); border-radius: 6px; padding: 6px 8px; margin: 8px 0 0; }
+.proposal-card { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; background: var(--bg-panel); font-size: 12.5px; }
+.proposal-card.proposal-applied { border-left: 3px solid #3fa34d; }
+.proposal-card.proposal-rejected, .proposal-card.proposal-withdrawn { opacity: 0.65; }
+.proposal-card.proposal-changes_requested { border-left: 3px solid #d9a441; }
+.proposal-card.proposal-submitted { border-left: 3px solid var(--accent, #d97757); }
+.proposal-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.proposal-meta { color: var(--text-faint); font-size: 11.5px; margin-top: 2px; }
+.proposal-summary { margin: 6px 0 0; color: var(--text-muted); }
+.proposal-note { margin: 6px 0 0; font-size: 11.5px; color: var(--text-muted); }
+.proposal-actions { display: flex; align-items: center; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+.proposal-actions button { border-radius: 6px; border: 1px solid var(--border-strong); padding: 3px 8px; cursor: pointer; font-size: 11.5px; }
+.proposal-branch { font-size: 11.5px; color: var(--text-faint); }
+
+/* Co-Pronoia agent roles */
+.agent-role-row { margin-top: 8px; }
+.agent-role-row .role-def-row { margin-top: 0; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.agent-role-persona {
+  display: block; width: 100%; box-sizing: border-box; font: inherit; font-size: 12.5px;
+  padding: 6px 10px; border: 1px solid var(--border); border-top: none;
+  border-radius: 0 0 8px 8px; background: var(--bg-panel); color: var(--text); resize: vertical;
+}
 .canvas-create-block { margin-bottom: 22px; }
 .canvas-create-block .canvas-create { margin-bottom: 0; }
 .region-picker-label { margin-top: 8px; font-size: 11px; color: var(--text-faint); font-weight: 600; }

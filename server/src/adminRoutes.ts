@@ -10,6 +10,9 @@ import { approveMember, listGroupMembers, removeGroupMember, setGroupMemberRole 
 import {
   clearSiteAsset, LOGIN_PREVIEW, MAX_BYTES, setSiteAssetUpload, setSiteAssetUrl,
 } from './siteAssetService.js';
+import {
+  createAgentRole, deleteAgentRole, listAgentRoles, updateAgentRole, type AgentRoleInput,
+} from './agentRoleService.js';
 
 type Broadcast = (canvasId: string, msg: ServerMessage) => void;
 type Kick = (canvasId: string, reason: 'deleted' | 'removed', userId?: string) => void;
@@ -48,6 +51,35 @@ export function registerAdminRoutes(
 
   app.delete('/appearance/login-preview', async () => {
     await clearSiteAsset(prisma, LOGIN_PREVIEW);
+    return { ok: true };
+  });
+
+  // ---------- Co-Pronoia ajan rol şablonları (site geneli; groupId = null) ----------
+
+  app.get('/agent-roles', async () => ({ roles: await listAgentRoles(prisma, null) }));
+
+  app.post<{ Body: AgentRoleInput | null }>('/agent-roles', async (req, reply) => {
+    const result = await createAgentRole(prisma, null, {
+      name: req.body?.name ?? '',
+      persona: req.body?.persona,
+      isSupervisor: req.body?.isSupervisor,
+    });
+    if ('error' in result) return reply.code(400).send(result);
+    return { role: result };
+  });
+
+  app.patch<{ Params: { roleId: string }; Body: Partial<AgentRoleInput> | null }>(
+    '/agent-roles/:roleId',
+    async (req, reply) => {
+      const result = await updateAgentRole(prisma, null, req.params.roleId, req.body ?? {});
+      if ('error' in result) return reply.code(404).send(result);
+      return { role: result };
+    },
+  );
+
+  app.delete<{ Params: { roleId: string } }>('/agent-roles/:roleId', async (req, reply) => {
+    if (!(await deleteAgentRole(prisma, null, req.params.roleId)))
+      return reply.code(404).send({ error: 'rol bulunamadı' });
     return { ok: true };
   });
 

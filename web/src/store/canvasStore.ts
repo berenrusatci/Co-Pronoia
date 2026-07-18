@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { CanvasInfo } from '@treemapper/shared';
+import type { CanvasInfo, CanvasType } from '@treemapper/shared';
 import { ApiError, canvasApi, setActiveCanvasId } from '../api/client';
 
 interface CanvasStore {
@@ -10,7 +10,7 @@ interface CanvasStore {
   error: string | null;
 
   loadList: () => Promise<void>;
-  createCanvas: (name: string, groupId: string) => Promise<CanvasInfo | null>;
+  createCanvas: (name: string, groupId: string, type?: CanvasType) => Promise<CanvasInfo | null>;
   open: (canvas: CanvasInfo) => void;
   /** Bağlı kanvası id ile açar (düğüm kartından geçiş); erişim yoksa error set edilir. */
   openById: (canvasId: string) => Promise<void>;
@@ -39,9 +39,9 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     }
   },
 
-  createCanvas: async (name, groupId) => {
+  createCanvas: async (name, groupId, type) => {
     try {
-      const { canvas } = await canvasApi.create(name, groupId);
+      const { canvas } = await canvasApi.create(name, groupId, type);
       set((s) => ({ canvases: [canvas, ...s.canvases] }));
       return canvas;
     } catch (err) {

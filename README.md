@@ -83,6 +83,27 @@ Kanvasta düğüm(leri) ve/veya bölge(leri) seçin (**Ctrl/Shift+tık** ile ço
 
 Üçüncü bir mod olarak **"zihin haritasını akışa dök"** isteği (`"hiyerarşiyi akış diyagramına aktar"`, `"her bölgeyi ayrı diyagram olarak diz"` gibi) ajanı `layout` moduna geçirir: bu modda LLM sadece isteği sınıflandırır, koordinat/kenar üretmez — yerleşim `shared/src/flowLayout.ts`'teki saf, deterministik bir motorla sunucu tarafında hesaplanır. Yazılabilir ve `aiAllowed` açık her bölgenin düğümleri kendi dikdörtgeni içinde düzenli bir ağaç olarak dizilir, bölge-içi `parentId` bağları akış kenarına dönüşür; bölgeler arası bağ kurulmaz, bölgesiz düğümler ayrı bir kümede toplanır, kapalı/izinsiz bölgelere dokunulmaz.
 
+## Co-Pronoia: MCP ile çoklu-ajan paralel planlama
+
+**Co-Pronoia**, dış yapay zekâ ajanlarının (ör. birden fazla Claude Code oturumu) aynı kanvas üzerinde **paralel plan önerileri** üretip bir **süpervizör ajanın** bu önerileri denetleyerek "en uyumlu planı" oluşturduğu ayrı bir kanvas/grup türüdür. Normal kanvaslar hiçbir şekilde etkilenmez; tüm davranış `co-pronoia` türüyle kapılanır.
+
+**Kurulum akışı:**
+
+1. **Co-Pronoia grubu** kurun (grup oluştururken tür seçimi) — co-pronoia kanvası yalnızca bu türdeki gruplarda açılabilir; aynı grupta normal kanvaslar da olabilir.
+2. **Ajan rolleri** tanımlayın — iki düzeyden: site admini **Yönetim → Ajan Rolleri** sekmesinden herkese açık şablonlar, grup adminleri grup kartındaki **🤝 Ajan rolleri** panelinden gruba özel roller. Bir rol = ad + **persona** metni (bağlanan ajana brifing olarak aynen iletilir) + **süpervizör** bayrağı.
+3. Kanvas içindeki **🤝 Co-Pronoia** panelinden (yalnızca sahip) rol seçip **ajan anahtarı** basın. Ham anahtar (`tma_…`) yalnızca bir kez gösterilir — sunucu sha256 özetini saklar; panel yapıştırmaya hazır bir `.mcp.json` parçası da verir. Anahtar istendiği an iptal edilebilir (bağlı ajan 401 alır).
+4. Ajanı bağlayın — herhangi bir MCP istemcisi çalışır:
+
+```json
+{ "mcpServers": { "copronoia": {
+    "type": "http", "url": "http://localhost:3001/api/mcp",
+    "headers": { "Authorization": "Bearer tma_..." } } } }
+```
+
+**Çalışma modeli:** Ajanların doğrudan commit atma yolu **yoktur**. Her ajan `get_brief` (rol brifingi + kadro), `get_state`, `submit_proposal` / `update_proposal` / `withdraw_proposal` ve `list_proposals` araçlarını görür; öneriler gönderilirken güncel duruma karşı denenerek doğrulanır ama uygulanmaz. Süpervizör rolündeki token ek olarak `approve_proposal` / `reject_proposal` / `request_changes` araçlarını görür — bir öneri **yalnızca süpervizör onayıyla** kanvasa iner. Onay anında öneri normal commit hattından geçer ("süpervizör + kod birlikte denetler"): doğrulama, bölge koruması ve çakışma kuralları aynen çalışır; onay ile gönderim arasında kanvas değiştiyse öneri normal mekanizmayla bir **dala** kaydedilir ve Dallar panelinden birleştirilebilir. Uygulanan commit'in yazarı, o ajanın anahtarını basan kullanıcıdır (`ajan önerisi: … (ajan/rol, onay: süpervizör)` mesajıyla geçmişte görünür).
+
+Web tarafında öneriler **🤝 Co-Pronoia** panelinde canlı akar (durumlar: `bekliyor / değişiklik istendi / geri çekildi / reddedildi / uygulandı`); insan üyeler normal push/dal/Gemini-ajan akışını aynen kullanmaya devam eder. Kanvas sahibi takılı bir öneriyi panelden **reddedebilir** ama onaylayamaz — onay bilinçli olarak yalnızca süpervizör ajandadır. Uç stateless çalıştığı için ajanlara sunucudan itme yoktur; brifing, kararları `list_proposals` ile yoklamayı söyler.
+
 ## Site yönetimi (admin paneli)
 
 `isAdmin` işaretli hesaplar Dashboard araç çubuğundaki **🛡** butonuyla site geneli bir yönetim paneli açar (kanvas/grup üyeliğinden bağımsız):

@@ -8,6 +8,8 @@ import {
 } from './canvasService.js';
 import { memberPermissions } from './groupService.js';
 import { geminiConfigured, runAgent } from './agent.js';
+import { availableAgentRoles, listAgentTokens, mintAgentToken, revokeAgentToken } from './agentRoleService.js';
+import { decideProposal, listProposals } from './proposalService.js';
 
 type Broadcast = (canvasId: string, msg: ServerMessage) => void;
 type Kick = (canvasId: string, reason: 'deleted' | 'removed', userId?: string) => void;
@@ -391,6 +393,66 @@ export function registerRoutes(
       const err = await setCanvasRoleAccess(prisma, canvasId, roleId, access);
       if (err) return reply.code(400).send(err);
       return { ok: true };
+    },
+  );
+
+  // ---------- Co-Pronoia ajan anahtarları (yalnızca co-pronoia kanvasları) ----------
+
+  /** Anahtar basarken seçilebilir roller: site şablonları ∪ kanvasın grubunun rolleri. */
+  app.get<{ Params: CanvasParams }>('/agent-roles', async (req) => {
+    const { canvasId } = scoped(req);
+    const canvas = await prisma.canvas.findUnique({ where: { id: canvasId }, select: { groupId: true } });
+    return { roles: await availableAgentRoles(prisma, canvas?.groupId ?? null) };
+  });
+
+  app.get<{ Params: CanvasParams }>('/agent-tokens', async (req, reply) => {
+    if (!requireOwner(req, reply)) return;
+    return { tokens: await listAgentTokens(prisma, scoped(req).canvasId) };
+  });
+
+  /** Ham anahtar yalnızca bu yanıtta döner; DB'de sha256 özeti durur. */
+  app.post<{ Params: CanvasParams; Body: { roleId?: string; label?: string } | null }>(
+    '/agent-tokens',
+    async (req, reply) => {
+      if (!requireOwner(req, reply)) return;
+      const result = await mintAgentToken(
+        prisma, scoped(req).canvasId, req.body?.roleId ?? '', req.body?.label ?? '', req.user!.id,
+      );
+      if ('error' in result) return reply.code(400).send(result);
+      return { token: result.info, secret: result.secret };
+    },
+  );
+
+  app.delete<{ Params: CanvasParams & { id: string } }>('/agent-tokens/:id', async (req, reply) => {
+    if (!requireOwner(req, reply)) return;
+    const { canvasId } = scoped(req);
+    if (!(await revokeAgentToken(prisma, canvasId, req.params.id)))
+      return reply.code(404).send({ error: 'anahtar bulunamadı' });
+    return { tokens: await listAgentTokens(prisma, canvasId) };
+  });
+
+  // ---------- Co-Pronoia önerileri (insan yüzü: izleme + sahip temizliği) ----------
+
+  app.get<{ Params: CanvasParams }>('/proposals', async (req) => ({
+    proposals: await listProposals(prisma, scoped(req).canvasId),
+  }));
+
+  /**
+   * Sahip kaçış yolu: takılı/bayat önerileri temizlemek için reddedebilir. Onay (approve)
+   * bilinçli olarak burada YOK — bir öneriyi yalnızca süpervizör token'ı uygulayabilir.
+   */
+  app.post<{ Params: CanvasParams & { id: string }; Body: { note?: string } | null }>(
+    '/proposals/:id/reject',
+    async (req, reply) => {
+      if (!requireOwner(req, reply)) return;
+      const { canvasId } = scoped(req);
+      const result = await decideProposal(
+        prisma, canvasId, req.params.id, 'rejected',
+        req.body?.note ?? 'kanvas sahibi tarafından reddedildi', `sahip:${req.user!.username}`,
+      );
+      if ('error' in result) return reply.code(400).send(result);
+      broadcast(canvasId, { type: 'proposals', proposals: await listProposals(prisma, canvasId) });
+      return { proposal: result };
     },
   );
 }

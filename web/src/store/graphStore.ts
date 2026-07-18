@@ -3,7 +3,7 @@ import {
   expandAll, regionViolation, summarizeOps,
   type BranchInfo, type Commit, type CommitSummary, type EdgeDirection, type EdgeKind,
   type GraphState, type MemberInfo, type NodeFields, type NodeType, type OpInput,
-  type PlanEdge, type PlanNode, type RegionInfo, type ServerMessage,
+  type PlanEdge, type PlanNode, type PlanProposalInfo, type RegionInfo, type ServerMessage,
 } from '@treemapper/shared';
 import { api, ApiError, type CommitOutcome } from '../api/client';
 import { applyIntents, genId, pushIntent, toGraph } from './applyIntents';
@@ -35,6 +35,8 @@ interface GraphStore {
   branches: BranchInfo[];
   members: MemberInfo[];
   regions: RegionInfo[];
+  /** Co-Pronoia ajan önerileri (yalnızca co-pronoia kanvaslarında yüklenir; WS ile canlı). */
+  proposals: PlanProposalInfo[];
   /** Usernames connected to this canvas right now (WS presence). */
   activeUsers: string[];
   loaded: boolean;
@@ -47,7 +49,7 @@ interface GraphStore {
   selectedNodeIds: string[];
   /** Ctrl/Shift+tık ile seçilen bölgeler: ajana açıklamaları ve içlerindeki düğümler bağlam olarak gider. */
   selectedRegionIds: string[];
-  sidePanel: 'none' | 'history' | 'connections' | 'branches' | 'members' | 'regions' | 'agent';
+  sidePanel: 'none' | 'history' | 'connections' | 'branches' | 'members' | 'regions' | 'agent' | 'copronoia';
 
   /** Ajan paneli sohbeti; panel kapansa da kanvastan çıkana dek korunur. */
   agentLog: AgentChatEntry[];
@@ -86,7 +88,9 @@ interface GraphStore {
   toggleSelect: (id: string) => void;
   /** Ctrl/Shift+tık: bölgeyi ajan bağlam seçimine ekler/çıkarır. */
   toggleSelectRegion: (id: string) => void;
-  togglePanel: (panel: 'history' | 'connections' | 'branches' | 'members' | 'regions' | 'agent') => void;
+  togglePanel: (panel: 'history' | 'connections' | 'branches' | 'members' | 'regions' | 'agent' | 'copronoia') => void;
+  /** Sahip temizliği: bekleyen bir öneriyi reddeder (onay yalnızca süpervizör ajanla olur). */
+  rejectProposal: (id: string) => Promise<void>;
   clearError: () => void;
   clearNotice: () => void;
 
@@ -239,6 +243,7 @@ export const useGraphStore = create<GraphStore>((set, get) => {
     branches: [],
     members: [],
     regions: [],
+    proposals: [],
     activeUsers: [],
     loaded: false,
     error: null,
@@ -262,12 +267,15 @@ export const useGraphStore = create<GraphStore>((set, get) => {
 
     load: async () => {
       try {
-        const [state, { commits }, { branches }, { members }, { regions }] = await Promise.all([
+        // Öneri listesi yalnızca co-pronoia kanvaslarında var (diğerlerinde uç boş liste döndürür ama hiç sormayalım).
+        const isCoPronoia = useCanvasStore.getState().active?.type === 'co-pronoia';
+        const [state, { commits }, { branches }, { members }, { regions }, proposalsRes] = await Promise.all([
           api.getState(),
           api.getCommits(),
           api.getBranches(),
           api.getMembers(),
           api.getRegions(),
+          isCoPronoia ? api.getProposals() : Promise.resolve({ proposals: [] }),
         ]);
         set({
           serverNodes: state.nodes,
@@ -277,6 +285,7 @@ export const useGraphStore = create<GraphStore>((set, get) => {
           pending: [],
           headSeq: state.headSeq,
           commits, branches, members, regions,
+          proposals: proposalsRes.proposals,
           loaded: true,
         });
       } catch (err) {
@@ -343,6 +352,9 @@ export const useGraphStore = create<GraphStore>((set, get) => {
             case 'regions':
               set({ regions: msg.regions });
               break;
+            case 'proposals':
+              set({ proposals: msg.proposals });
+              break;
             case 'canvas_gone':
               useCanvasStore.setState({
                 error: msg.reason === 'deleted' ? 'Kanvas, sahibi tarafından silindi.' : 'Bu kanvastan çıkarıldınız.',
@@ -368,7 +380,7 @@ export const useGraphStore = create<GraphStore>((set, get) => {
     reset: () =>
       set({
         serverNodes: [], serverEdges: [], nodes: [], edges: [], pending: [],
-        headSeq: 0, commits: [], branches: [], members: [], regions: [], activeUsers: [],
+        headSeq: 0, commits: [], branches: [], members: [], regions: [], proposals: [], activeUsers: [],
         loaded: false, error: null, notice: null, selectedNodeId: null, selectedNodeIds: [], selectedRegionIds: [], sidePanel: 'none',
         viewingSeq: null, viewingBranchId: null, viewingState: null,
         agentLog: [], agentBusy: false, exporting: false, selectionInfoOpen: false,
@@ -559,6 +571,14 @@ export const useGraphStore = create<GraphStore>((set, get) => {
       try {
         const { region } = await api.setRegionMembers(id, userIds, roleIds);
         set((s) => ({ regions: s.regions.map((r) => (r.id === id ? region : r)) }));
+      } catch (err) {
+        set({ error: err instanceof ApiError ? err.message : String(err) });
+      }
+    },
+    rejectProposal: async (id) => {
+      try {
+        const { proposal } = await api.rejectProposal(id);
+        set((s) => ({ proposals: s.proposals.map((p) => (p.id === id ? proposal : p)) }));
       } catch (err) {
         set({ error: err instanceof ApiError ? err.message : String(err) });
       }

@@ -6,6 +6,9 @@ import {
   memberPermissions, removeGroupMember, setGroupMemberRole, setGroupMemberRoleDef,
   updateGroupRole, type RoleDefInput,
 } from './groupService.js';
+import {
+  createAgentRole, deleteAgentRole, listAgentRoles, updateAgentRole, type AgentRoleInput,
+} from './agentRoleService.js';
 
 interface GroupParams {
   groupId: string;
@@ -15,12 +18,14 @@ interface GroupParams {
 export function registerGroupRoutes(app: FastifyInstance, prisma: PrismaClient): void {
   app.get('/api/groups', async (req) => ({ groups: await listGroups(prisma, req.user!.id) }));
 
-  app.post<{ Body: { name?: string; roles?: RoleDefInput[] } | null }>('/api/groups', async (req, reply) => {
+  app.post<{ Body: { name?: string; roles?: RoleDefInput[]; type?: string } | null }>('/api/groups', async (req, reply) => {
     const name = (req.body?.name ?? '').trim();
     if (name.length === 0) return reply.code(400).send({ error: 'grup adı gerekli' });
     if (name.length > 80) return reply.code(400).send({ error: 'grup adı en fazla 80 karakter olabilir' });
+    const type = req.body?.type ?? 'plan';
+    if (type !== 'plan' && type !== 'co-pronoia') return reply.code(400).send({ error: 'geçersiz grup türü' });
     const roles = Array.isArray(req.body?.roles) ? req.body.roles.slice(0, 20) : [];
-    return { group: await createGroup(prisma, name, req.user!.id, roles) };
+    return { group: await createGroup(prisma, name, req.user!.id, roles, type) };
   });
 
   app.get<{ Params: { token: string } }>('/api/group-invites/:token', async (req, reply) => {
@@ -142,6 +147,40 @@ export function registerGroupMemberRoutes(app: FastifyInstance, prisma: PrismaCl
   app.delete<{ Params: GroupParams & { roleId: string } }>('/roles/:roleId', async (req, reply) => {
     if (!(await requireManageRoles(req, reply))) return;
     if (!(await deleteGroupRole(prisma, req.params.groupId, req.params.roleId)))
+      return reply.code(404).send({ error: 'rol bulunamadı' });
+    return { ok: true };
+  });
+
+  // ---------- Co-Pronoia ajan rolleri (gruba özel; site şablonları /api/admin altında) ----------
+
+  app.get<{ Params: GroupParams }>('/agent-roles', async (req) => ({
+    roles: await listAgentRoles(prisma, req.params.groupId),
+  }));
+
+  app.post<{ Params: GroupParams; Body: AgentRoleInput | null }>('/agent-roles', async (req, reply) => {
+    if (!(await requireManageRoles(req, reply))) return;
+    const result = await createAgentRole(prisma, req.params.groupId, {
+      name: req.body?.name ?? '',
+      persona: req.body?.persona,
+      isSupervisor: req.body?.isSupervisor,
+    });
+    if ('error' in result) return reply.code(400).send(result);
+    return { role: result };
+  });
+
+  app.patch<{ Params: GroupParams & { roleId: string }; Body: Partial<AgentRoleInput> | null }>(
+    '/agent-roles/:roleId',
+    async (req, reply) => {
+      if (!(await requireManageRoles(req, reply))) return;
+      const result = await updateAgentRole(prisma, req.params.groupId, req.params.roleId, req.body ?? {});
+      if ('error' in result) return reply.code(404).send(result);
+      return { role: result };
+    },
+  );
+
+  app.delete<{ Params: GroupParams & { roleId: string } }>('/agent-roles/:roleId', async (req, reply) => {
+    if (!(await requireManageRoles(req, reply))) return;
+    if (!(await deleteAgentRole(prisma, req.params.groupId, req.params.roleId)))
       return reply.code(404).send({ error: 'rol bulunamadı' });
     return { ok: true };
   });

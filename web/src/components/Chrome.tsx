@@ -32,6 +32,9 @@ export function Toolbar() {
   const headSeq = useGraphStore((s) => s.headSeq);
   const edgeCount = useGraphStore((s) => s.edges.length);
   const branchCount = useGraphStore((s) => s.branches.length);
+  const openProposalCount = useGraphStore(
+    (s) => s.proposals.filter((p) => p.status === 'submitted' || p.status === 'changes_requested').length,
+  );
   const pendingCount = useGraphStore((s) => s.pending.length);
   const push = useGraphStore((s) => s.push);
   const discardPending = useGraphStore((s) => s.discardPending);
@@ -103,6 +106,15 @@ export function Toolbar() {
         <button className={sidePanel === 'agent' ? 'active' : ''} onClick={() => togglePanel('agent')} title="Gemini ajanı: kanvasla doğal dilde konuş">
           ✨ Ajan
         </button>
+        {activeCanvas?.type === 'co-pronoia' && (
+          <button
+            className={`${sidePanel === 'copronoia' ? 'active' : ''}${openProposalCount > 0 ? ' attention' : ''}`}
+            onClick={() => togglePanel('copronoia')}
+            title="Co-Pronoia: MCP ajan anahtarları ve plan önerileri"
+          >
+            🤝 Co-Pronoia{openProposalCount > 0 ? ` (${openProposalCount})` : ''}
+          </button>
+        )}
         <button className={sidePanel === 'connections' ? 'active' : ''} onClick={() => togglePanel('connections')}>
           Bağlantılar ({edgeCount})
         </button>

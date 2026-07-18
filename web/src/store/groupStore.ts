@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { GroupInfo, GroupMemberInfo, GroupRole } from '@treemapper/shared';
+import type { GroupInfo, GroupMemberInfo, GroupRole, GroupType } from '@treemapper/shared';
 import { ApiError, groupApi, type RoleDefInput } from '../api/client';
 
 interface GroupStore {
@@ -8,7 +8,7 @@ interface GroupStore {
   error: string | null;
 
   loadGroups: () => Promise<void>;
-  createGroup: (name: string, roles?: RoleDefInput[]) => Promise<GroupInfo | null>;
+  createGroup: (name: string, roles?: RoleDefInput[], type?: GroupType) => Promise<GroupInfo | null>;
   /** Mints an invite token and returns the shareable URL. */
   inviteLink: (groupId: string) => Promise<string | null>;
   joinByToken: (token: string, jobTitle: string) => Promise<GroupInfo | null>;
@@ -34,9 +34,9 @@ export const useGroupStore = create<GroupStore>((set) => ({
     }
   },
 
-  createGroup: async (name, roles) => {
+  createGroup: async (name, roles, type) => {
     try {
-      const { group } = await groupApi.create(name, roles);
+      const { group } = await groupApi.create(name, roles, type);
       set((s) => ({ groups: [group, ...s.groups] }));
       return group;
     } catch (err) {
