@@ -15,10 +15,28 @@ const statusLabels: Record<ProposalStatus, string> = {
 /** lastUsedAt son 2 dakikadaysa ajan "az önce buradaydı" sayılır (presence yeşili). */
 const isFresh = (iso: string | null) => iso !== null && Date.now() - new Date(iso).getTime() < 2 * 60_000;
 
-/** Mint sonrası BİR KEZ gösterilen sır + yapıştırmalık .mcp.json parçası. */
-function SecretReveal({ secret, onClose }: { secret: string; onClose: () => void }) {
-  const [copied, setCopied] = useState<'secret' | 'json' | null>(null);
-  const snippet = JSON.stringify(
+function CopyButton({ text, label }: { text: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 2000);
+        } catch {
+          window.prompt('Kopyalayın:', text);
+        }
+      }}
+    >
+      {copied ? 'Kopyalandı ✓' : label}
+    </button>
+  );
+}
+
+/** .mcp.json içeriği; secret verilmezse yer tutucuyla (bağlantı rehberi), verilirse gerçek anahtarla (mint anı). */
+const mcpJsonSnippet = (secret = 'tma_ANAHTARINIZ') =>
+  JSON.stringify(
     {
       mcpServers: {
         copronoia: {
@@ -31,15 +49,49 @@ function SecretReveal({ secret, onClose }: { secret: string; onClose: () => void
     null,
     2,
   );
-  const copy = async (text: string, which: 'secret' | 'json') => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(which);
-      setTimeout(() => setCopied(null), 2000);
-    } catch {
-      window.prompt('Kopyalayın:', text);
-    }
-  };
+
+/**
+ * MCP bağlantı rehberi — her üyeye görünür (anahtar yönetimi sahipte kalır). Gerçek anahtar
+ * yalnızca basıldığı anda göründüğünden buradaki örnekler yer tutucu taşır.
+ */
+function ConnectSection() {
+  const url = `${window.location.origin}/api/mcp`;
+  const cli = `claude mcp add --transport http copronoia ${url} --header "Authorization: Bearer tma_ANAHTARINIZ"`;
+  const json = mcpJsonSnippet();
+  return (
+    <details className="mcp-connect">
+      <summary>🔌 MCP bağlantısı nasıl kurulur?</summary>
+      <p className="empty-note">
+        Herhangi bir MCP istemcisi (Claude Code, başka bir ajan) bu kanvasa aşağıdaki uçtan bağlanır.
+        <code> tma_ANAHTARINIZ</code> yerine kanvas sahibinin bastığı gerçek anahtarı yazın — anahtar
+        yalnızca basıldığı anda bir kez gösterilir; kaybolursa iptal edip yenisini basın.
+      </p>
+      <div className="mcp-connect-row">
+        <span className="mcp-connect-label">Uç</span>
+        <code className="mcp-connect-url">{url}</code>
+        <CopyButton text={url} label="Kopyala" />
+      </div>
+      <div className="mcp-connect-row">
+        <span className="mcp-connect-label">Claude Code (CLI)</span>
+        <CopyButton text={cli} label="Komutu kopyala" />
+      </div>
+      <pre className="secret-snippet">{cli}</pre>
+      <div className="mcp-connect-row">
+        <span className="mcp-connect-label">.mcp.json (proje kökü)</span>
+        <CopyButton text={json} label="Kopyala" />
+      </div>
+      <pre className="secret-snippet">{json}</pre>
+      <p className="empty-note">
+        Bağlandıktan sonra ajanın ilk çağrısı <code>get_brief</code> olmalı: rolünün personasını,
+        kadroyu ve çalışma kurallarını oradan alır.
+      </p>
+    </details>
+  );
+}
+
+/** Mint sonrası BİR KEZ gösterilen sır + yapıştırmalık .mcp.json parçası. */
+function SecretReveal({ secret, onClose }: { secret: string; onClose: () => void }) {
+  const snippet = mcpJsonSnippet(secret);
   return (
     <div className="secret-reveal">
       <p className="empty-note">
@@ -47,8 +99,8 @@ function SecretReveal({ secret, onClose }: { secret: string; onClose: () => void
       </p>
       <code className="secret-code">{secret}</code>
       <div className="secret-actions">
-        <button onClick={() => copy(secret, 'secret')}>{copied === 'secret' ? 'Kopyalandı ✓' : 'Anahtarı kopyala'}</button>
-        <button onClick={() => copy(snippet, 'json')}>{copied === 'json' ? 'Kopyalandı ✓' : '.mcp.json kopyala'}</button>
+        <CopyButton text={secret} label="Anahtarı kopyala" />
+        <CopyButton text={snippet} label=".mcp.json kopyala" />
         <button onClick={onClose}>Kapat</button>
       </div>
       <pre className="secret-snippet">{snippet}</pre>
@@ -217,6 +269,7 @@ export function CoPronoiaPanel() {
         MCP ajanları bu kanvasa plan önerir; süpervizör rolündeki ajan en uyumlu planı onaylayarak uygular.
         Onaysız hiçbir öneri kanvasa işlenmez.
       </p>
+      <ConnectSection />
       {isOwner && <TokenSection />}
       <h4>Öneriler ({openCount} açık / {proposals.length})</h4>
       {proposals.length === 0 ? (
