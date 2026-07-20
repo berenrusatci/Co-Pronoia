@@ -46,6 +46,8 @@ export function Toolbar() {
   const logout = useAuthStore((s) => s.logout);
   const activeCanvas = useCanvasStore((s) => s.active);
   const closeCanvas = useCanvasStore((s) => s.close);
+  const parent = useCanvasStore((s) => s.parents[s.parents.length - 1] ?? null);
+  const openParent = useCanvasStore((s) => s.openParent);
   const inviteLink = useCanvasStore((s) => s.inviteLink);
   const [copied, setCopied] = useState(false);
   const theme = useThemeStore((s) => s.theme);
@@ -55,6 +57,12 @@ export function Toolbar() {
     if (pendingCount > 0 && !window.confirm(`${pendingCount} push edilmemiş değişiklik var — panoya dönersen kaybolur. Devam?`))
       return;
     closeCanvas();
+  };
+
+  const goParent = () => {
+    if (pendingCount > 0 && !window.confirm(`${pendingCount} push edilmemiş değişiklik var — üst kanvasa dönersen kaybolur. Devam?`))
+      return;
+    openParent();
   };
 
   const copyInvite = async () => {
@@ -76,6 +84,11 @@ export function Toolbar() {
       <button className="pano-btn" onClick={leaveCanvas} title="Kanvas listesine dön">
         ← Pano
       </button>
+      {parent && (
+        <button className="pano-btn" onClick={goParent} title={`Üst kanvasa dön: ${parent.name}`}>
+          ↑ Üst kanvas
+        </button>
+      )}
       <span className="canvas-title" title={activeCanvas?.name}>{activeCanvas?.name}</span>
       <ViewSwitcher />
       {!readOnly && (

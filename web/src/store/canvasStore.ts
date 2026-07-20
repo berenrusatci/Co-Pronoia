@@ -7,13 +7,18 @@ interface CanvasStore {
   listLoaded: boolean;
   /** Selected canvas — null shows the dashboard. */
   active: CanvasInfo | null;
+  /** Bağlı kanvasa inerken geçilen üst kanvaslar (breadcrumb); "↑ Üst kanvas" bundan geri döner. */
+  parents: CanvasInfo[];
   error: string | null;
 
   loadList: () => Promise<void>;
   createCanvas: (name: string, groupId: string, type?: CanvasType) => Promise<CanvasInfo | null>;
   open: (canvas: CanvasInfo) => void;
-  /** Bağlı kanvası id ile açar (düğüm kartından geçiş); erişim yoksa error set edilir. */
+  /** Bağlı kanvası id ile açar (düğüm kartından geçiş); erişim yoksa error set edilir.
+   * Mevcut kanvas breadcrumb'a eklenir, böylece geri dönülebilir. */
   openById: (canvasId: string) => Promise<void>;
+  /** Breadcrumb'daki bir üst kanvasa geri döner. */
+  openParent: () => void;
   close: () => void;
   /** Mints an invite token and returns the shareable URL. */
   inviteLink: (canvasId: string) => Promise<string | null>;
@@ -28,6 +33,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
   canvases: [],
   listLoaded: false,
   active: null,
+  parents: [],
   error: null,
 
   loadList: async () => {
@@ -51,22 +57,37 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
   },
 
   open: (canvas) => {
+    // Panodan doğrudan açış: breadcrumb sıfırlanır.
     setActiveCanvasId(canvas.id);
-    set({ active: canvas });
+    set({ active: canvas, parents: [] });
   },
 
   openById: async (canvasId) => {
     try {
       const { canvas } = await canvasApi.info(canvasId);
-      get().open(canvas);
+      const cur = get().active;
+      setActiveCanvasId(canvas.id);
+      // Geldiğimiz kanvası breadcrumb'a ekle (aynı kanvasa geçişte ekleme).
+      set((s) => ({
+        active: canvas,
+        parents: cur && cur.id !== canvas.id ? [...s.parents, cur] : s.parents,
+      }));
     } catch (err) {
       set({ error: err instanceof ApiError ? err.message : String(err) });
     }
   },
 
+  openParent: () => {
+    const { parents } = get();
+    const parent = parents[parents.length - 1];
+    if (!parent) return;
+    setActiveCanvasId(parent.id);
+    set({ active: parent, parents: parents.slice(0, -1) });
+  },
+
   close: () => {
     setActiveCanvasId(null);
-    set({ active: null });
+    set({ active: null, parents: [] });
     get().loadList(); // refresh counts on return to the dashboard
   },
 
@@ -108,6 +129,6 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
   clearError: () => set({ error: null }),
   reset: () => {
     setActiveCanvasId(null);
-    set({ canvases: [], listLoaded: false, active: null, error: null });
+    set({ canvases: [], listLoaded: false, active: null, parents: [], error: null });
   },
 }));
