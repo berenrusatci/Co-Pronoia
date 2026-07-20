@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { Handle, Position, type NodeProps, type Node } from '@xyflow/react';
 import type { CanvasPreview, NodeStatus, NodeType, PlanNode } from '@treemapper/shared';
 import { canvasApi } from '../api/client';
+import { useAuthStore } from '../store/authStore';
+import { isSafeUrl } from './NodeEditorPanel';
 import { useCanvasStore } from '../store/canvasStore';
 import { useGraphStore, useReadOnly } from '../store/graphStore';
 
@@ -98,6 +100,43 @@ function SubCanvasPreview({ canvasId }: { canvasId: string }) {
   );
 }
 
+/**
+ * Düğüme iliştirilen harici bağlantının kart içi önizlemesi. Güvenlik: iframe sandbox'lıdır ve
+ * yalnız bağlantıyı EKLEYEN kişi için (urlBy === benim id'im) otomatik yüklenir; başkaları önce
+ * "Gör"e basmalı — böylece başkasının eklediği harici site sizin tarayıcınızda kendiliğinden açılmaz.
+ */
+function LinkPreview({ url, urlBy }: { url: string; urlBy: string | null }) {
+  const myId = useAuthStore((s) => s.user?.id ?? null);
+  const [shown, setShown] = useState(urlBy !== null && urlBy === myId);
+  useEffect(() => { setShown(urlBy !== null && urlBy === myId); }, [url, urlBy, myId]);
+
+  if (!isSafeUrl(url)) return null;
+  let host = url;
+  try { host = new URL(url).host; } catch { /* zaten isSafeUrl geçti */ }
+
+  return (
+    <div className="link-preview nodrag nowheel" onClick={(e) => e.stopPropagation()}>
+      <div className="link-preview-bar">
+        <span className="link-preview-host" title={url}>🔗 {host}</span>
+        <a href={url} target="_blank" rel="noopener noreferrer nofollow" title="Yeni sekmede aç">↗</a>
+        {shown && <button title="Önizlemeyi gizle" onClick={() => setShown(false)}>×</button>}
+      </div>
+      {shown ? (
+        <iframe
+          className="link-preview-frame"
+          src={url}
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+          title={`Önizleme: ${host}`}
+        />
+      ) : (
+        <button className="link-preview-show" onClick={() => setShown(true)}>Gör</button>
+      )}
+    </div>
+  );
+}
+
 export function NodeCard({ data, selected }: NodeProps<FlowNode>) {
   const { plan, showChildButton } = data;
   const addNode = useGraphStore((s) => s.addNode);
@@ -128,6 +167,7 @@ export function NodeCard({ data, selected }: NodeProps<FlowNode>) {
       )}
       {exporting && plan.description && <div className="node-card-desc">{plan.description}</div>}
       {plan.linkedCanvasId && <SubCanvasPreview canvasId={plan.linkedCanvasId} />}
+      {plan.url && <LinkPreview url={plan.url} urlBy={plan.urlBy} />}
       {showChildButton && !readOnly && (
         <button
           className="add-child-btn"

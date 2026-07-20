@@ -5,7 +5,7 @@ import type { PlanNode } from './types.js';
 
 const node = (id: string, parentId: string | null = null, extra: Partial<PlanNode> = {}): PlanNode => ({
   id, parentId, title: `Node ${id}`, description: '', nodeType: 'task', status: 'planned',
-  x: null, y: null, linkedCanvasId: null, notes: '', data: {}, createdCommit: 1, updatedCommit: 1, ...extra,
+  x: null, y: null, linkedCanvasId: null, notes: '', url: '', urlBy: null, data: {}, createdCommit: 1, updatedCommit: 1, ...extra,
 });
 
 /** root ← a ← b, root ← c, edges a→c and b→root. */

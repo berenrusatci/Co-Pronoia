@@ -14,6 +14,12 @@ export interface PlanNode {
   linkedCanvasId: string | null;
   /** Serbest uzun not (markdown); başlığa/description'a sığmayan ayrıntı buraya. */
   notes: string;
+  /** Düğüme iliştirilen harici bağlantı (yalnız http/https). Boş = yok. */
+  url: string;
+  /** url'i en son ayarlayan kullanıcının id'si; önizleme yalnız bu kişiye otomatik açılır
+   * (başkaları için "Gör"e basmak gerekir). Güvenlik sınırı değil, bir kolaylık sinyalidir —
+   * asıl koruma önizlemenin sandbox'lı iframe'de açılmasıdır. */
+  urlBy: string | null;
   /** Serbest anahtar-değer özel alanlar (ör. tahmin, sahip). Op JSON'unda kanonik (sıralı anahtar) tutulur. */
   data: Record<string, string>;
   createdCommit: number;
@@ -42,6 +48,8 @@ export interface NodeFields {
   status: NodeStatus;
   linkedCanvasId: string | null;
   notes: string;
+  url: string;
+  urlBy: string | null;
   /** Çakışma tespitinde tek alan sayılır (anahtar başına değil). */
   data: Record<string, string>;
 }
@@ -56,7 +64,7 @@ export type Op =
 
 /** Client-side intent: the server expands these into full Ops (fills before-fields, cascades). */
 export type OpInput =
-  | { op: 'add_node'; id?: string; parentId?: string | null; title: string; description?: string; nodeType?: NodeType; status?: NodeStatus; x?: number | null; y?: number | null; linkedCanvasId?: string | null; notes?: string; data?: Record<string, string> }
+  | { op: 'add_node'; id?: string; parentId?: string | null; title: string; description?: string; nodeType?: NodeType; status?: NodeStatus; x?: number | null; y?: number | null; linkedCanvasId?: string | null; notes?: string; url?: string; urlBy?: string | null; data?: Record<string, string> }
   | { op: 'update_node'; id: string; fields: Partial<NodeFields> }
   | { op: 'delete_node'; id: string }
   | { op: 'move_node'; id: string; x: number; y: number }

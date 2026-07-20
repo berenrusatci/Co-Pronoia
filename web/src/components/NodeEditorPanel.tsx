@@ -1,8 +1,12 @@
 import { useEffect, useState } from 'react';
 import type { CanvasInfo, NodeStatus, NodeType } from '@treemapper/shared';
 import { canvasApi } from '../api/client';
+import { useAuthStore } from '../store/authStore';
 import { useCanvasStore } from '../store/canvasStore';
 import { useGraphStore, useDisplayedGraph } from '../store/graphStore';
+
+/** Yalnız http/https bağlantılara izin ver — javascript:/data: gibi şemalar önizlemede tehlikeli. */
+export const isSafeUrl = (u: string): boolean => /^https?:\/\/\S+$/i.test(u.trim());
 
 /**
  * "Bağlı kanvas" bölümü: düğümü aynı gruptaki bir alt kanvasa bağla / bağını kaldır /
@@ -182,15 +186,19 @@ export function NodeEditorPanel() {
   const deleteNode = useGraphStore((s) => s.deleteNode);
   const select = useGraphStore((s) => s.select);
 
+  const myId = useAuthStore((s) => s.user?.id ?? null);
+
   const node = nodes.find((n) => n.id === selectedNodeId) ?? null;
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [notes, setNotes] = useState('');
+  const [url, setUrl] = useState('');
   useEffect(() => {
     setTitle(node?.title ?? '');
     setDescription(node?.description ?? '');
     setNotes(node?.notes ?? '');
-  }, [node?.id, node?.title, node?.description, node?.notes]);
+    setUrl(node?.url ?? '');
+  }, [node?.id, node?.title, node?.description, node?.notes, node?.url]);
 
   if (!node) return null;
 
@@ -213,6 +221,15 @@ export function NodeEditorPanel() {
     if (description !== node.description) fields.description = description;
     if (notes !== node.notes) fields.notes = notes;
     if (Object.keys(fields).length > 0) updateNode(node.id, fields);
+  };
+
+  const commitUrl = () => {
+    const next = url.trim();
+    if (next === node.url) return;
+    // Geçersiz (http/https dışı) bir değer stage edilmez; input'u geri sarıp uyarı bırakırız.
+    if (next !== '' && !isSafeUrl(next)) { setUrl(node.url); return; }
+    // urlBy: bağlantıyı ekleyen kişi (önizlemeyi otomatik görecek); temizlenince null.
+    updateNode(node.id, { url: next, urlBy: next ? myId : null });
   };
 
   return (
@@ -240,6 +257,26 @@ export function NodeEditorPanel() {
           onChange={(e) => setNotes(e.target.value)}
           onBlur={commitText}
         />
+      </label>
+      <label>
+        Bağlantı (URL)
+        <input
+          type="url"
+          value={url}
+          disabled={readOnly}
+          placeholder="https://…"
+          onChange={(e) => setUrl(e.target.value)}
+          onBlur={commitUrl}
+          onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+        />
+        {url.trim() !== '' && !isSafeUrl(url) && (
+          <span className="hint" style={{ color: 'var(--danger, #c0392b)' }}>
+            Yalnız http/https bağlantı önizlenebilir.
+          </span>
+        )}
+        {isSafeUrl(url) && (
+          <span className="hint">Kartta küçük bir ekranda önizlenir; ekleyen otomatik görür, diğerleri "Gör"e basar.</span>
+        )}
       </label>
       <DataFieldsEditor nodeId={node.id} data={node.data} readOnly={readOnly} updateNode={updateNode} />
       <label>

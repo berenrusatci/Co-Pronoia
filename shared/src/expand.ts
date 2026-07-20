@@ -54,6 +54,8 @@ export function expand(graph: Graph, input: OpInput, pending: Op[], genId: () =>
         y: input.y ?? null,
         linkedCanvasId: input.linkedCanvasId ?? null,
         notes: input.notes ?? '',
+        url: input.url ?? '',
+        urlBy: input.urlBy ?? null,
         data: normalizeData(input.data),
         createdCommit: 0,
         updatedCommit: 0,

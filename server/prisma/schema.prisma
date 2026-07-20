@@ -231,6 +231,10 @@ model Node {
   linkedCanvasId String?
   /// Serbest uzun not (markdown).
   notes         String  @default("")
+  /// Düğüme iliştirilen harici bağlantı (yalnız http/https). Boş = yok.
+  url           String  @default("")
+  /// url'i son ayarlayan kullanıcı id'si; önizleme yalnız bu kişiye otomatik açılır (FK yok).
+  urlBy         String?
   /// Serbest anahtar-değer özel alanlar. rowToNode/applyOp normalizeData ile kanonikleştirir,
   /// jsonb'nin anahtar sırası rebuildCheck'i etkilemez.
   data          Json    @default("{}")

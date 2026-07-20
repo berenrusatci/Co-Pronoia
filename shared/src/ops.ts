@@ -45,6 +45,8 @@ export function applyOp(graph: Graph, op: Op, seq: number): void {
         ...op.node,
         linkedCanvasId: op.node.linkedCanvasId ?? null,
         notes: op.node.notes ?? '',
+        url: op.node.url ?? '',
+        urlBy: op.node.urlBy ?? null,
         data: normalizeData(op.node.data),
         createdCommit: seq,
         updatedCommit: seq,
