@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Background, Controls, MarkerType, MiniMap, ReactFlow,
+  Background, Controls, MarkerType, ReactFlow,
   type Connection, type NodeChange, applyNodeChanges,
 } from '@xyflow/react';
 import { useGraphStore, useDisplayedGraph } from '../store/graphStore';
@@ -9,6 +9,7 @@ import { NodeCard, type FlowNode } from '../components/NodeCard';
 import { RegionNode, type RegionFlowNode } from '../components/RegionNode';
 import { CurvedEdge, type CurvedFlowEdge } from '../components/CurvedEdge';
 import { kindStyles } from '../components/CurvedEdge';
+import { CanvasMiniMap } from '../components/CanvasMiniMap';
 import { ExportButton } from '../components/ExportButton';
 
 const nodeTypes = { card: NodeCard, region: RegionNode };
@@ -146,7 +147,7 @@ export function FlowView() {
     >
       <Background gap={20} />
       <Controls showInteractive={false} />
-      <MiniMap pannable zoomable />
+      <CanvasMiniMap />
       <ExportButton suffix="zihin-haritasi" />
     </ReactFlow>
   );
