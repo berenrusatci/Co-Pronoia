@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from './app.js';
 import { testDbFactory } from './testDb.js';
-import { createCanvas } from './canvasService.js';
+import { createCanvas, createRegion } from './canvasService.js';
 import { captureEmails, createGroupCanvas, registerVerified } from './testAuth.js';
 import { runAgent, type Llm } from './agent.js';
 import type { Actor } from './commitService.js';
@@ -491,11 +491,65 @@ describe('agent', () => {
     };
     const result = await run(llm, { userId: editor.id, role: 'editor' });
 
-    expect(system).toContain('"newRegions" alanı KULLANMA');
+    expect(system).toContain('"newRegions" ve "updateRegions" alanlarını KULLANMA');
     expect(result.committed).toBe(true);
     expect(result.reply).toContain('bölge oluşturma yalnızca kanvas sahibine açık');
     expect(await prisma.region.count({ where: { canvasId: canvas.id } })).toBe(0);
     expect((await service.getState()).nodes.some((n) => n.id === 'e1')).toBe(true);
+  });
+
+  it('owner agent recolors/edits existing regions via updateRegions; invalid color dropped; unknown id skipped', async () => {
+    const { prisma, service, canvas, actor } = await freshCanvas();
+    const a = await createRegion(prisma, canvas.id, { name: 'Alan A', x: 0, y: 0, width: 300, height: 200 });
+    const b = await createRegion(prisma, canvas.id, { name: 'Alan B', x: 400, y: 0, width: 300, height: 200 });
+    let system = '';
+    const llm: Llm = async (s, u) => {
+      system = s;
+      // Modele mevcut renk bağlam olarak gitmeli.
+      expect(u).toContain('"color"');
+      return JSON.stringify({
+        mode: 'diagram', reply: 'Bölgeleri renklendirdim.', message: 'renklendirme',
+        updateRegions: [
+          { id: a.id, color: '#ff0000', description: 'kırmızı alan' },
+          { id: b.id, color: 'mavi', name: 'Alan B2' }, // geçersiz renk düşer, ad yine değişir
+          { id: 'yok', color: '#00ff00' }, // bilinmeyen id atlanır
+        ],
+      });
+    };
+    const regionUpdates: number[] = [];
+    const result = await runAgent({
+      prisma, service, canvasId: canvas.id, canvasName: canvas.name,
+      prompt: 'bölgeleri renklendir', actor, llm,
+      onRegions: (regions) => regionUpdates.push(regions.length),
+    });
+
+    expect(system).toContain('BÖLGE DÜZENLEME');
+    // Saf config düzenlemesi commit üretmez ama bölgeler güncellenir + yayınlanır.
+    expect(result.reply).toContain('"Alan A", "Alan B2" bölgesi/bölgeleri güncellendi');
+    expect(regionUpdates).toEqual([2]);
+    const rows = await prisma.region.findMany({ where: { canvasId: canvas.id }, orderBy: { createdAt: 'asc' } });
+    expect(rows[0]).toMatchObject({ name: 'Alan A', color: '#ff0000', description: 'kırmızı alan' });
+    expect(rows[1]).toMatchObject({ name: 'Alan B2' });
+    expect(rows[1].color).not.toBe('mavi'); // geçersiz renk yazılmadı
+  });
+
+  it('non-owner agents cannot edit regions: updateRegions dropped with a note', async () => {
+    const { prisma, service, canvas, run } = await freshCanvas();
+    const a = await createRegion(prisma, canvas.id, { name: 'Alan A', x: 0, y: 0, width: 300, height: 200, color: '#111111' });
+    const editor = await prisma.user.create({ data: { username: 'ekin', passwordHash: 'x' } });
+    let system = '';
+    const llm: Llm = async (s) => {
+      system = s;
+      return JSON.stringify({
+        mode: 'diagram', reply: 'Renklendirdim.', message: 'deneme',
+        updateRegions: [{ id: a.id, color: '#ff0000' }],
+      });
+    };
+    const result = await run(llm, { userId: editor.id, role: 'editor' });
+
+    expect(system).toContain('"updateRegions" alanlarını KULLANMA');
+    expect(result.reply).toContain('bölge düzenleme yalnızca kanvas sahibine açık');
+    expect((await prisma.region.findUnique({ where: { id: a.id } }))!.color).toBe('#111111');
   });
 
   it('region-only diagram responses create the region without a commit', async () => {

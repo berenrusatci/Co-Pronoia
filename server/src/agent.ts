@@ -5,7 +5,7 @@ import {
   ConflictError, RegionError, ValidationError,
   type Actor, type CommitOutcome, type CommitService,
 } from './commitService.js';
-import { createCanvas, createRegion, listRegions, memberRole, type ServiceFor } from './canvasService.js';
+import { createCanvas, createRegion, updateRegion, listRegions, memberRole, type ServiceFor } from './canvasService.js';
 import { memberPermissions } from './groupService.js';
 import { getBrief } from './briefService.js';
 
@@ -36,6 +36,9 @@ const MAX_PARTS = 6;
 
 /** Bir turda modelin oluşturabileceği en fazla yeni bölge. */
 const MAX_NEW_REGIONS = 4;
+
+/** Bir turda modelin düzenleyebileceği en fazla mevcut bölge (renk/açıklama/ad/konum/AI izni). */
+const MAX_UPDATE_REGIONS = 20;
 
 /** Bir turda modelin oluşturabileceği en fazla yeni alt kanvas. */
 const MAX_NEW_SUBCANVASES = 3;
@@ -133,8 +136,9 @@ function buildSystemPrompt(
     ...(canCreateRegions
       ? [
           `- BÖLGE OLUŞTURMA: Kullanıcı yeni bir bölge/alan oluşturmayı isterse (ya da istek belirgin biçimde ayrı bir çalışma alanı gerektiriyorsa) diagram yanıtına "newRegions" dizisi ekle: [{"name":"...","x":<sayı>,"y":<sayı>,"width":<sayı>,"height":<sayı>,"description":"<bölgenin amacını anlatan 1-2 cümle>"}] (en fazla ${MAX_NEW_REGIONS}). Mevcut bölgelerle ve düğümlerle ÇAKIŞMAYAN boş bir alan seç; dikdörtgeni içine koyacağın düğümlere yetecek kadar büyük tut (düğüm başına ~240x130, ör. 6 düğüm için en az 800x500). Bölgeler sunucuda AI izni açık olarak oluşturulur ve kanvas sahibi tarafından yönetilir. Ardından ops'taki yeni düğümleri BÖLGE KURALI'na uyarak bu dikdörtgenin içine yerleştir ve içeriği bölgenin adına/açıklamasına uygun doldur.`,
+          `- BÖLGE DÜZENLEME: Kullanıcı mevcut bir bölgeyi renklendirmeyi/ayırt etmeyi ya da düzenlemeyi isterse ("bölgeleri renklendir", "her alanı farklı renk yap", "şu bölgenin adını/açıklamasını değiştir" gibi) diagram yanıtına "updateRegions" dizisi ekle: [{"id":"<mevcut bölgenin id'si>","color":"#RRGGBB","name":"...","description":"...","aiAllowed":<bool>,"x":<sayı>,"y":<sayı>,"width":<sayı>,"height":<sayı>}] (yalnız id zorunlu; yalnızca değiştireceğin alanları koy, en fazla ${MAX_UPDATE_REGIONS}). id'yi durumdaki "regions" listesinden al. RENK yalnızca #RGB ya da #RRGGBB hex olmalı; bölgeleri ayırt etmek için okunur, birbirinden belirgin FARKLI renkler seç. Bölge düzenleme tek başına geçerlidir (ops boş olabilir).`,
         ]
-      : ['- BÖLGE OLUŞTURMA yalnızca kanvas sahibinin ajanına açıktır; bu kullanıcı sahip değil — "newRegions" alanı KULLANMA. Bölge oluşturma isteğini mode "summary" ile kibarca reddet (diğer işleri normal yap).']),
+      : ['- BÖLGE OLUŞTURMA/DÜZENLEME yalnızca kanvas sahibinin ajanına açıktır; bu kullanıcı sahip değil — "newRegions" ve "updateRegions" alanlarını KULLANMA. Bölge isteğini mode "summary" ile kibarca reddet (diğer işleri normal yap).']),
     ...(canCreateSubCanvases
       ? [
           `- ALT KANVAS OLUŞTURMA: Kullanıcı bir düğümün/adımın kendi kanvasında ayrıntılı planlanmasını isterse ("bu adımı kendi kanvasında planla", "X için alt kanvas aç" gibi — seçili bağsız düğümler için yalın "detaylandır" da buna dahildir, DETAYLANDIRMA kuralına bak) diagram yanıtına "newSubCanvases" dizisi ekle: [{"nodeId":"<mevcut ya da bu yanıtta eklediğin bir düğümün id'si>","name":"<alt kanvasın adı>","description":"<alt kanvasın amacını anlatan 1-2 cümle>"}] (en fazla ${MAX_NEW_SUBCANVASES}). Sunucu alt kanvası aynı grupta oluşturur, düğüme bağlar ve içine bu amaca uygun bir plan çizilir. "linkedCanvasId" değeri null olmayan (zaten alt kanvası olan) düğümlere yenisini bağlama. ops içinde linkedCanvasId alanını ASLA kendin yazma — bağlama işini yalnızca "newSubCanvases" yapar.`,
@@ -207,7 +211,7 @@ function buildUserText(
   }));
   const regionInfo = regions.map((r) => ({
     id: r.id, name: r.name, x: r.x, y: r.y, width: r.width, height: r.height,
-    aiAllowed: r.aiAllowed, description: r.description.slice(0, 500),
+    color: r.color, aiAllowed: r.aiAllowed, description: r.description.slice(0, 500),
   }));
 
   const writable = writableRegions(regions, actor);
@@ -305,6 +309,51 @@ function parseNewRegions(value: unknown): NewRegionInput[] {
   return out;
 }
 
+/**
+ * Modelin düzenlemek istediği mevcut bölge. id zorunlu; verilen alanlar üzerine yazılır.
+ * Bölgeler owner config'idir (olay-kaynaklı graf değil) — düzenleme yalnızca sahibin ajanına açıktır.
+ */
+export interface UpdateRegionInput {
+  id: string;
+  name?: string;
+  color?: string;
+  description?: string;
+  aiAllowed?: boolean;
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+}
+
+/** #RGB / #RRGGBB hex rengi doğrula (geçersizse renk alanı düşer, diğer alanlar korunur). */
+const isHexColor = (v: unknown): v is string =>
+  typeof v === 'string' && /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(v.trim());
+
+function parseUpdateRegions(value: unknown): UpdateRegionInput[] {
+  if (!Array.isArray(value)) return [];
+  const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+  const out: UpdateRegionInput[] = [];
+  for (const r of value) {
+    if (!r || typeof r !== 'object') continue;
+    const { id, name, color, description, aiAllowed, x, y, width, height } = r as Record<string, unknown>;
+    if (typeof id !== 'string' || !id.trim()) continue;
+    const upd: UpdateRegionInput = { id: id.trim() };
+    if (typeof name === 'string' && name.trim()) upd.name = name.trim().slice(0, 100);
+    if (isHexColor(color)) upd.color = color.trim();
+    if (typeof description === 'string') upd.description = description.trim().slice(0, 500);
+    if (typeof aiAllowed === 'boolean') upd.aiAllowed = aiAllowed;
+    if (finite(x)) upd.x = x;
+    if (finite(y)) upd.y = y;
+    if (finite(width) && width > 0) upd.width = width;
+    if (finite(height) && height > 0) upd.height = height;
+    // id dışında düzenlenecek en az bir alan yoksa atla.
+    if (Object.keys(upd).length === 1) continue;
+    out.push(upd);
+    if (out.length >= MAX_UPDATE_REGIONS) break;
+  }
+  return out;
+}
+
 /** Modelin oluşturmak istediği alt kanvas: nodeId'deki düğüme bağlanacak yeni bir grup kanvası. */
 export interface NewSubCanvasInput {
   nodeId: string;
@@ -374,9 +423,9 @@ function stripLinkedCanvasId(ops: OpInput[]): OpInput[] {
 }
 
 /** Model çıktısını çöz: JSON değilse metni özet yanıtı say; ops/parts/newRegions/newSubCanvases/fillSubCanvases yalnızca "diagram" modunda geçerli. */
-function parseModelOutput(raw: string): { mode: string; reply: string; message: string; ops: OpInput[]; parts: string[]; newRegions: NewRegionInput[]; newSubCanvases: NewSubCanvasInput[]; fillSubCanvases: FillSubCanvasInput[] } {
+function parseModelOutput(raw: string): { mode: string; reply: string; message: string; ops: OpInput[]; parts: string[]; newRegions: NewRegionInput[]; updateRegions: UpdateRegionInput[]; newSubCanvases: NewSubCanvasInput[]; fillSubCanvases: FillSubCanvasInput[] } {
   const text = raw.trim().replace(/^```(json)?\s*/i, '').replace(/```\s*$/, '').trim();
-  type ModelOut = { mode?: string; reply?: unknown; message?: unknown; ops?: unknown; parts?: unknown; newRegions?: unknown; newSubCanvases?: unknown; fillSubCanvases?: unknown };
+  type ModelOut = { mode?: string; reply?: unknown; message?: unknown; ops?: unknown; parts?: unknown; newRegions?: unknown; updateRegions?: unknown; newSubCanvases?: unknown; fillSubCanvases?: unknown };
   let out: ModelOut | null = null;
   // Model ara sıra kapanış parantezlerini yutuyor; eksik }/] tamamlayarak da dene.
   for (const candidate of [text, text + '}', text + ']}', text + '"}']) {
@@ -403,12 +452,14 @@ function parseModelOutput(raw: string): { mode: string; reply: string; message: 
     ? out.parts.filter((p): p is string => typeof p === 'string').map((p) => p.trim()).filter(Boolean).slice(0, MAX_PARTS - 1)
     : [];
   let newRegions = parseNewRegions(out.newRegions);
+  let updateRegions = parseUpdateRegions(out.updateRegions);
   let newSubCanvases = parseNewSubCanvases(out.newSubCanvases);
   let fillSubCanvases = parseFillSubCanvases(out.fillSubCanvases);
   if (out.mode !== 'diagram') {
     ops = [];
     parts = [];
     newRegions = [];
+    updateRegions = [];
     newSubCanvases = [];
     fillSubCanvases = [];
   }
@@ -419,6 +470,7 @@ function parseModelOutput(raw: string): { mode: string; reply: string; message: 
     ops,
     parts,
     newRegions,
+    updateRegions,
     newSubCanvases,
     fillSubCanvases,
   };
@@ -556,6 +608,27 @@ export async function runAgent(opts: {
     onRegions?.(regions);
     const names = wanted.map((r) => `"${r.name}"`).join(', ');
     return `Not: ${names} bölgesi/bölgeleri oluşturuldu (AI izni açık, yönetimi sizde).`;
+  };
+
+  /**
+   * Modelin istediği mevcut bölge düzenlemelerini (renk/ad/açıklama/AI izni/konum-boyut) uygular.
+   * Yalnızca sahip; olay-kaynaklı graf değil, doğrudan config yazımı. Bilinmeyen id sessizce atlanır.
+   * Dönen not reply'a eklenir; yetkisizse tüm düzenlemeler düşer.
+   */
+  const applyUpdateRegions = async (wanted: UpdateRegionInput[]): Promise<string | null> => {
+    if (wanted.length === 0) return null;
+    if (!canCreateRegions)
+      return 'Not: bölge düzenleme yalnızca kanvas sahibine açık olduğu için istenen değişiklik(ler) uygulanmadı.';
+    const done: string[] = [];
+    for (const { id, ...data } of wanted) {
+      if (!regions.some((r) => r.id === id)) continue; // yalnız bu kanvasın mevcut bölgeleri
+      const updated = await updateRegion(prisma, canvasId, id, data);
+      if (updated) done.push(`"${updated.name}"`);
+    }
+    if (done.length === 0) return null;
+    regions = await listRegions(prisma, canvasId);
+    onRegions?.(regions);
+    return `Not: ${done.join(', ')} bölgesi/bölgeleri güncellendi.`;
   };
 
   /** applyNewSubCanvases'in oluşturduğu, bağ commit'i sonrası doldurulacak alt kanvaslar. */
@@ -738,6 +811,9 @@ export async function runAgent(opts: {
     // Önce modelin istediği yeni bölgeler: ops'taki düğümler bu dikdörtgenlerin içine yerleşecek.
     const regionNote = await applyNewRegions(parsed.newRegions);
     if (regionNote) reply = `${reply}\n\n${regionNote}`;
+    // Mevcut bölge düzenlemeleri (renk/ad/açıklama/AI izni/konum): config yazımı, commit üretmez.
+    const updateNote = await applyUpdateRegions(parsed.updateRegions);
+    if (updateNote) reply = `${reply}\n\n${updateNote}`;
     // AI'ya kapalı bölgelere dokunan intent'leri sunucu tarafında ayıkla; gerisi normal işlenir.
     const { kept, blockedRegionNames } = filterAiClosedRegions(state, regions, parsed.ops);
     if (blockedRegionNames.length > 0) {
