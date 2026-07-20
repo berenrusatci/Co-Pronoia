@@ -2,7 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { PrismaClient } from '@prisma/client';
 import type { ServerMessage } from '@treemapper/shared';
-import { listRegions, type ServiceFor } from '../canvasService.js';
+import { listRegions, createRegion, type ServiceFor } from '../canvasService.js';
 import type { CanvasEvents } from '../canvasEvents.js';
 import { listAgentTokens, type ResolvedAgentToken } from '../agentRoleService.js';
 import {
@@ -153,6 +153,22 @@ export function buildCoPronoiaServer(ctx: McpContext): McpServer {
         })),
       });
     },
+  );
+
+  server.registerTool(
+    'list_regions',
+    {
+      description:
+        'Kanvasın bölgelerini (owner-çizili dikdörtgenler) listele: id, ad, konum/boyut, açıklama, ' +
+        'aiAllowed ve üye adları. Bölgeler olay-kaynaklı grafın parçası değil; düğüm/kenar erişimi bunlara göre sınırlanır.',
+    },
+    async () =>
+      json(
+        (await listRegions(prisma, canvasId)).map((r) => ({
+          id: r.id, name: r.name, x: r.x, y: r.y, width: r.width, height: r.height,
+          description: r.description, aiAllowed: r.aiAllowed, memberNames: r.memberNames,
+        })),
+      ),
   );
 
   server.registerTool(
@@ -381,6 +397,42 @@ export function buildCoPronoiaServer(ctx: McpContext): McpServer {
         if ('error' in result) return errText(result.error);
         await refreshProposals();
         return json({ id: result.id, status: result.status });
+      },
+    );
+  }
+
+  // Bölge oluşturma süpervizöre açıktır (approve_proposal ile aynı koordinasyon-düzeyi yetki).
+  // Tüm ajan token'ları owner tarafından mint edilir; anlamlı ayrım owner-mint değil isSupervisor'dır.
+  // Bölgeler owner config'idir, olay-kaynaklı graf DEĞİL: commit üretmez, doğrudan yazılır (actor=owner).
+  // Süpervizör değilse araç HİÇ kaydedilmez, böylece tools/list yeteneği dürüstçe yansıtır.
+  if (token.role.isSupervisor) {
+    server.registerTool(
+      'create_region',
+      {
+        description:
+          'SÜPERVİZÖR: kanvasta yeni bir bölge (dikdörtgen) çiz. Bölge içi düğümlere yalnız bölge üyeleri ' +
+          'dokunabilir (owner bypass); aiAllowed:false ise yerleşik ajan bölgeye dokunamaz. ' +
+          'Olay-kaynaklı graf değil config: commit üretmez. Koordinatlar flow-görünümü düzlemindedir (get_state.regions ile aynı).',
+        inputSchema: {
+          name: z.string().min(1).max(120),
+          x: z.number().finite(),
+          y: z.number().finite(),
+          width: z.number().finite().positive(),
+          height: z.number().finite().positive(),
+          color: z.string().max(32).optional(),
+          description: z.string().max(500).optional(),
+          aiAllowed: z.boolean().optional(),
+        },
+      },
+      async ({ name, x, y, width, height, color, description, aiAllowed }) => {
+        const region = await createRegion(prisma, canvasId, {
+          name: name.trim(), x, y, width, height,
+          ...(color ? { color } : {}),
+          ...(description !== undefined ? { description } : {}),
+          ...(aiAllowed !== undefined ? { aiAllowed } : {}),
+        });
+        broadcast(canvasId, { type: 'regions', regions: await listRegions(prisma, canvasId) });
+        return json({ id: region.id, name: region.name, aiAllowed: region.aiAllowed });
       },
     );
   }

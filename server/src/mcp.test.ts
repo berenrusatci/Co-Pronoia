@@ -129,9 +129,13 @@ describe('MCP ucu: kimlik ve araç görünürlüğü', () => {
     expect(agentTools).toContain('submit_proposal');
     expect(agentTools).toContain('get_brief');
     expect(agentTools).toContain('wait_for_changes');
+    expect(agentTools).toContain('list_regions');
     expect(agentTools).not.toContain('approve_proposal');
+    expect(agentTools).not.toContain('create_region');
     const supTools = await names(supervisor.secret);
-    expect(supTools).toEqual(expect.arrayContaining(['approve_proposal', 'reject_proposal', 'request_changes']));
+    expect(supTools).toEqual(
+      expect.arrayContaining(['approve_proposal', 'reject_proposal', 'request_changes', 'create_region', 'list_regions']),
+    );
   });
 
   it('get_brief personayı, rolü ve kadroyu taşır', async () => {
@@ -497,5 +501,56 @@ describe('Kanvas notu (brief): HTTP + MCP', () => {
     const idleBody = JSON.parse(idle.text) as WaitBrief;
     expect(idleBody.timedOut).toBe(true);
     expect(idleBody.briefChanged).toBe(false);
+  });
+});
+
+describe('MCP ucu: bölge araçları', () => {
+  type Region = { id: string; name: string; aiAllowed: boolean; x: number; width: number };
+
+  it('süpervizör create_region ile çizer; list_regions herkese açık; worker create_region kullanamaz', async () => {
+    const { app, cookies, canvasId, agent, supervisor } = await cpSetup();
+
+    // Başlangıçta bölge yok — hem worker hem süpervizör list_regions çağırabilir.
+    const empty = await callTool(app, agent.secret, 'list_regions');
+    expect(empty.isError).toBe(false);
+    expect(JSON.parse(empty.text)).toEqual([]);
+
+    // Worker'ın create_region aracı yok (tools/list'te de kayıtlı değil) → method-not-found.
+    const denied = await callTool(app, agent.secret, 'create_region', {
+      name: 'Yasak', x: 0, y: 0, width: 100, height: 100,
+    });
+    expect(denied.rpcError ?? denied.isError).toBeTruthy();
+
+    // Süpervizör bölge çizer.
+    const made = await callTool(app, supervisor.secret, 'create_region', {
+      name: 'Mimari Bölge', x: -1900, y: 200, width: 220, height: 620,
+      description: 'mimari alt-ağacı', aiAllowed: false,
+    });
+    expect(made.isError).toBe(false);
+    const madeBody = JSON.parse(made.text) as Region;
+    expect(madeBody.name).toBe('Mimari Bölge');
+    expect(madeBody.aiAllowed).toBe(false);
+
+    // list_regions (worker) yeni bölgeyi görür.
+    const listed = await callTool(app, agent.secret, 'list_regions');
+    const regions = JSON.parse(listed.text) as Region[];
+    expect(regions).toHaveLength(1);
+    expect(regions[0].name).toBe('Mimari Bölge');
+    expect(regions[0].x).toBe(-1900);
+    expect(regions[0].width).toBe(220);
+
+    // Aynı bölge HTTP state ucundan da görünür (MCP config'i normal kanvas config'ine yazdı).
+    const httpRegions = (await app.inject({
+      method: 'GET', url: `/api/canvases/${canvasId}/regions`, cookies,
+    })).json().regions as { name: string }[];
+    expect(httpRegions.map((r) => r.name)).toContain('Mimari Bölge');
+  });
+
+  it('create_region geçersiz dikdörtgeni (width<=0) reddeder', async () => {
+    const { app, supervisor } = await cpSetup();
+    const bad = await callTool(app, supervisor.secret, 'create_region', {
+      name: 'Bozuk', x: 0, y: 0, width: 0, height: 100,
+    });
+    expect(bad.rpcError ?? bad.isError).toBeTruthy();
   });
 });
