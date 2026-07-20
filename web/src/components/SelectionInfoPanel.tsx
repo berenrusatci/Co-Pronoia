@@ -16,6 +16,7 @@ export function SelectionInfoPanel() {
   const selectedRegionIds = useGraphStore((s) => s.selectedRegionIds);
   const toggleSelect = useGraphStore((s) => s.toggleSelect);
   const toggleSelectRegion = useGraphStore((s) => s.toggleSelectRegion);
+  const select = useGraphStore((s) => s.select);
 
   const selectedNodes = selectedNodeIds
     .map((id) => nodes.find((n) => n.id === id))
@@ -50,11 +51,24 @@ export function SelectionInfoPanel() {
             <span>{typeIcons[n.nodeType] ?? '☐'}</span>
             <strong>{n.title}</strong>
             <span className="status-pill">{statusLabels[n.status] ?? n.status}</span>
+            <button
+              className="selection-info-edit"
+              onClick={() => select(n.id)}
+              title="Düğümü düzenle (tüm alanlar)"
+            >
+              Düzenle
+            </button>
             <button onClick={() => toggleSelect(n.id)} title="Seçimden çıkar">×</button>
           </div>
           <p className={n.description ? 'selection-info-desc' : 'selection-info-desc empty'}>
             {n.description || 'Açıklama yok.'}
           </p>
+          {n.notes && (
+            <div className="selection-info-notes">
+              <span className="selection-info-notes-label">📝 Not</span>
+              <p className="selection-info-desc">{n.notes}</p>
+            </div>
+          )}
         </div>
       ))}
     </aside>

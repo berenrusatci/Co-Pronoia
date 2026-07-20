@@ -366,6 +366,14 @@ body.exporting .export-btn { visibility: hidden; }
 .selection-info-dot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
 .selection-info-desc { margin: 6px 0 0; font-size: 12px; line-height: 1.5; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
 .selection-info-desc.empty { color: var(--text-faint); font-style: italic; }
+.selection-info-title button.selection-info-edit {
+  flex-shrink: 0; font-size: 11px; padding: 1px 8px; border: 1px solid var(--border);
+  border-radius: 4px; color: var(--accent);
+}
+.selection-info-title button.selection-info-edit:hover { background: var(--surface-2); }
+.selection-info-notes { margin-top: 8px; padding-top: 6px; border-top: 1px dashed var(--border); }
+.selection-info-notes-label { font-size: 11px; color: var(--text-muted); }
+.selection-info-notes .selection-info-desc { margin-top: 2px; }
 
 /* Login */
 .login-screen { display: grid; place-items: center; height: 100%; background: var(--bg-soft); overflow-y: auto; }
