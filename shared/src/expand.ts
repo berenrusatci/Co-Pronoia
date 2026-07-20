@@ -1,4 +1,4 @@
-import { applyOp, wouldCreateCycle, type Graph } from './ops.js';
+import { applyOp, dataEqual, normalizeData, wouldCreateCycle, type Graph } from './ops.js';
 import type { Op, OpInput, PlanEdge, PlanNode } from './types.js';
 
 /** Intent rejected before it became a commit (bad reference, cycle, …). */
@@ -53,6 +53,8 @@ export function expand(graph: Graph, input: OpInput, pending: Op[], genId: () =>
         x: input.x ?? null,
         y: input.y ?? null,
         linkedCanvasId: input.linkedCanvasId ?? null,
+        notes: input.notes ?? '',
+        data: normalizeData(input.data),
         createdCommit: 0,
         updatedCommit: 0,
       };
@@ -65,7 +67,11 @@ export function expand(graph: Graph, input: OpInput, pending: Op[], genId: () =>
       const after: Record<string, unknown> = {};
       for (const [key, value] of Object.entries(input.fields)) {
         const cur = (node as unknown as Record<string, unknown>)[key];
-        if (cur !== value) { before[key] = cur; after[key] = value; }
+        if (key === 'data') {
+          // data tek alan olarak karşılaştırılır; op JSON'una kanonik biçimi yazılır.
+          const next = normalizeData(value);
+          if (!dataEqual(node.data, next)) { before[key] = cur; after[key] = next; }
+        } else if (cur !== value) { before[key] = cur; after[key] = value; }
       }
       if (Object.keys(after).length === 0) return [];
       if ('parentId' in after && after.parentId != null && wouldCreateCycle(scratch, input.id, after.parentId as string))

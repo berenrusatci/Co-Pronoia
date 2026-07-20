@@ -9,6 +9,7 @@ import {
   approveProposal, decideProposal, getProposal, listProposals, submitProposal,
   updateProposal, withdrawProposal,
 } from '../proposalService.js';
+import { getBrief, updateBrief, MAX_BRIEF_LENGTH } from '../briefService.js';
 import { opInputSchema } from './schemas.js';
 
 export interface McpContext {
@@ -87,6 +88,7 @@ export function buildCoPronoiaServer(ctx: McpContext): McpServer {
     },
     async () => {
       const state = await serviceFor(canvasId).getState();
+      const canvasBrief = await getBrief(prisma, canvasId);
       const tokens = (await listAgentTokens(prisma, canvasId)).filter((t) => !t.revoked);
       const roster = tokens
         .map((t) => `- ${t.label} (${t.roleName}${t.isSupervisor ? ', süpervizör' : ''})`)
@@ -116,9 +118,14 @@ export function buildCoPronoiaServer(ctx: McpContext): McpServer {
         '## Bağlı ajanlar',
         roster || '(başka ajan yok)',
         '',
+        '## Kanvas notu (ortak çalışma brifingi)',
+        canvasBrief.content || '(kanvas notu boş)',
+        '',
         '## Kurallar',
         ...supervisorRules.map((r) => `- ${r}`),
+        '- KANVAS NOTU yukarıda: kanvasın ortak çalışma anlaşmasıdır (hedefler, kararlar, kısıtlar). Plan üretmeden önce oku ve uy; önemli bir karar/kısıt değiştiğinde update_brief ile güncelle (mevcut içeriği koru, üstüne yaz değil düzenle).',
         '- intents, TreeMapper intent sözlüğünü kullanır: add_node, update_node, delete_node, move_node, add_edge, delete_edge.',
+        '- Düğümlerde "notes" (uzun serbest markdown ayrıntı) ve "data" (anahtar-değer özel alanlar, ör. {"tahmin":"3g"}) alanları vardır: kısa title/description yetmediğinde ayrıntıyı bunlara yaz.',
         "- Yeni düğümlere kendi kısa id'lerini ver (ör. n1, n2) ki aynı öneri içindeki add_edge/parentId onlara bağlanabilsin.",
         '- baseSeq: öneriyi hazırlarken gördüğün head commit numarası (get_state.headSeq). Uygulama anında head ilerlediyse normal çakışma kuralları işler; çakışan öneri bir dala iner.',
         '- Tüm başlık/özet/not metinlerini Türkçe yaz.',
@@ -176,14 +183,31 @@ export function buildCoPronoiaServer(ctx: McpContext): McpServer {
   );
 
   server.registerTool(
+    'update_brief',
+    {
+      description:
+        'Kanvas notunu (ortak çalışma brifingini) yeni içerikle değiştir. Tüm ajanlara açıktır; her yazma ' +
+        'kim-yazdı iziyle yeni bir revizyon olarak saklanır. Mevcut içeriği get_brief ile oku, düzenlenmiş ' +
+        'TAM metni gönder (yalnızca ek değil — içerik olduğu gibi yazılır).',
+      inputSchema: { content: z.string().max(MAX_BRIEF_LENGTH) },
+    },
+    async ({ content }) => {
+      const brief = await updateBrief(prisma, canvasId, content, label);
+      broadcast(canvasId, { type: 'brief', brief });
+      return json({ ok: true, revisionCount: brief.revisionCount, updatedAt: brief.updatedAt });
+    },
+  );
+
+  server.registerTool(
     'wait_for_changes',
     {
       description:
         'Long-poll: kanvasta değişiklik bekle — list_proposals ile dönüp durmak yerine bunu kullan. ' +
         "Head commit sinceSeq'i geçince (verilmezse çağrı anındaki head esas alınır) YA DA izlenen bir önerinin " +
         'durumu değişince hemen döner (proposalIds verilmezse kanvasın tüm önerileri izlenir; yeni öneri de değişiklik sayılır). ' +
+        'Kanvas notu (brief) güncellenince de döner (briefChanged: true). ' +
         "Değişiklik yoksa timeoutMs'e kadar (en çok 25 sn) bekleyip timedOut: true döner — o zaman tekrar çağır. " +
-        'Dönüş: { headSeq, headAdvanced, changedProposals: [{id, status, branchName, appliedCommitSeq}], timedOut }.',
+        'Dönüş: { headSeq, headAdvanced, changedProposals: [{id, status, branchName, appliedCommitSeq}], briefChanged, timedOut }.',
       inputSchema: {
         sinceSeq: z.number().int().min(0).optional(),
         proposalIds: z.array(z.string()).max(100).optional(),
@@ -205,10 +229,16 @@ export function buildCoPronoiaServer(ctx: McpContext): McpServer {
         return new Map(rows.map((r) => [r.id, r]));
       };
 
+      const latestBriefRevision = async () =>
+        (await prisma.canvasBriefRevision.findFirst({
+          where: { canvasId }, orderBy: { id: 'desc' }, select: { id: true },
+        }))?.id ?? 0;
+
       // Referans noktası çağrı anıdır; sinyal aboneliği ilk kontrolden ÖNCE kurulur ki
       // kontrol ile bekleme arasına düşen bir değişiklik kaçmasın (sinyal → yeniden kontrol).
       const baselineHead = sinceSeq ?? (await service.headSeq());
       const baseline = await snapshot();
+      const baselineBrief = await latestBriefRevision();
       const deadline = Date.now() + (timeoutMs ?? WAIT_DEFAULT_MS);
 
       let signaled = false;
@@ -222,11 +252,12 @@ export function buildCoPronoiaServer(ctx: McpContext): McpServer {
           const headSeq = await service.headSeq();
           const changedProposals = diffProposals(baseline, await snapshot());
           const headAdvanced = headSeq > baselineHead;
-          if (headAdvanced || changedProposals.length > 0)
-            return json({ headSeq, headAdvanced, changedProposals, timedOut: false });
+          const briefChanged = (await latestBriefRevision()) > baselineBrief;
+          if (headAdvanced || changedProposals.length > 0 || briefChanged)
+            return json({ headSeq, headAdvanced, changedProposals, briefChanged, timedOut: false });
           const remaining = deadline - Date.now();
           if (remaining <= 0 || extra.signal.aborted)
-            return json({ headSeq, headAdvanced: false, changedProposals: [], timedOut: true });
+            return json({ headSeq, headAdvanced: false, changedProposals: [], briefChanged: false, timedOut: true });
           if (!signaled) {
             // Sinyale, kalan süreye ya da istemcinin isteği iptaline kadar uyu (DB polling yok).
             await new Promise<void>((resolve) => {

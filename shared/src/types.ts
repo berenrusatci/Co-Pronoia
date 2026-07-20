@@ -12,6 +12,10 @@ export interface PlanNode {
   y: number | null;
   /** Aynı gruptaki bir alt kanvasın id'si; hedef silinirse sarkan bağlantı UI'da "erişilemiyor" olur. */
   linkedCanvasId: string | null;
+  /** Serbest uzun not (markdown); başlığa/description'a sığmayan ayrıntı buraya. */
+  notes: string;
+  /** Serbest anahtar-değer özel alanlar (ör. tahmin, sahip). Op JSON'unda kanonik (sıralı anahtar) tutulur. */
+  data: Record<string, string>;
   createdCommit: number;
   updatedCommit: number;
 }
@@ -37,6 +41,9 @@ export interface NodeFields {
   nodeType: NodeType;
   status: NodeStatus;
   linkedCanvasId: string | null;
+  notes: string;
+  /** Çakışma tespitinde tek alan sayılır (anahtar başına değil). */
+  data: Record<string, string>;
 }
 
 export type Op =
@@ -49,7 +56,7 @@ export type Op =
 
 /** Client-side intent: the server expands these into full Ops (fills before-fields, cascades). */
 export type OpInput =
-  | { op: 'add_node'; id?: string; parentId?: string | null; title: string; description?: string; nodeType?: NodeType; status?: NodeStatus; x?: number | null; y?: number | null; linkedCanvasId?: string | null }
+  | { op: 'add_node'; id?: string; parentId?: string | null; title: string; description?: string; nodeType?: NodeType; status?: NodeStatus; x?: number | null; y?: number | null; linkedCanvasId?: string | null; notes?: string; data?: Record<string, string> }
   | { op: 'update_node'; id: string; fields: Partial<NodeFields> }
   | { op: 'delete_node'; id: string }
   | { op: 'move_node'; id: string; x: number; y: number }
@@ -163,6 +170,26 @@ export interface RegionInfo {
   directMemberIds: string[];
   /** Bölgeye erişimi olan grup rolü id'leri (yönetim UI'ı için; enforcement memberIds üzerinden). */
   roleIds: string[];
+}
+
+/**
+ * Kanvasın brifing dokümanı ("kanvasın CLAUDE.md'si"): üyelerin ve ajanların uyduğu serbest
+ * çalışma notu. Bölgeler gibi kanvas ayarıdır — commit geçmişine girmez, kendi revizyon
+ * geçmişini tutar. Editor+ üyeler ve MCP ajanları (update_brief) günceller.
+ */
+export interface CanvasBriefInfo {
+  content: string;
+  /** Son revizyonu yazan (kullanıcı adı ya da "ajanEtiketi/rolAdı"); hiç revizyon yoksa null. */
+  authorLabel: string | null;
+  updatedAt: string | null;
+  revisionCount: number;
+}
+
+export interface CanvasBriefRevisionInfo {
+  id: number;
+  content: string;
+  authorLabel: string;
+  createdAt: string;
 }
 
 export interface GraphState {

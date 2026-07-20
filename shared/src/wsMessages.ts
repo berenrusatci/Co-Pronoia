@@ -1,4 +1,4 @@
-import type { Commit, GraphState, MemberInfo, PlanProposalInfo, RegionInfo } from './types.js';
+import type { CanvasBriefInfo, Commit, GraphState, MemberInfo, PlanProposalInfo, RegionInfo } from './types.js';
 
 export interface BranchInfo {
   id: string;
@@ -21,5 +21,7 @@ export type ServerMessage =
   | { type: 'regions'; regions: RegionInfo[] }
   /** Co-Pronoia öneri listesi değişti (tam liste — regions ile aynı tazeleme deseni). */
   | { type: 'proposals'; proposals: PlanProposalInfo[] }
+  /** Kanvas brifing dokümanı güncellendi (güncel içerik — regions ile aynı tazeleme deseni). */
+  | { type: 'brief'; brief: CanvasBriefInfo }
   /** Canvas deleted by its owner (or you were removed) — drop to the dashboard. */
   | { type: 'canvas_gone'; reason: 'deleted' | 'removed' };

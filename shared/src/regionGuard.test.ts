@@ -6,7 +6,7 @@ import type { PlanEdge, PlanNode, RegionInfo } from './types.js';
 
 const node = (id: string, x: number | null, y: number | null, parentId: string | null = null): PlanNode => ({
   id, parentId, title: `Node ${id}`, description: '', nodeType: 'task', status: 'planned',
-  x, y, linkedCanvasId: null, createdCommit: 1, updatedCommit: 1,
+  x, y, linkedCanvasId: null, notes: '', data: {}, createdCommit: 1, updatedCommit: 1,
 });
 const edge = (id: string, sourceId: string, targetId: string): PlanEdge => ({
   id, sourceId, targetId, kind: 'flow', direction: 'directed', label: '', createdCommit: 1,

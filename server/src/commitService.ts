@@ -1,7 +1,7 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import {
-  applyOp, autoMessage, depthOf, emptyGraph, expandAll, invertOps, OpError, regionViolation,
-  summarizeOps, ValidationError,
+  applyOp, autoMessage, dataEqual, depthOf, emptyGraph, expandAll, invertOps, normalizeData,
+  OpError, regionViolation, summarizeOps, ValidationError,
   type CanvasRole, type Commit, type CommitSummary, type Graph, type GraphState, type Op,
   type OpInput, type PlanEdge, type PlanNode,
 } from '@treemapper/shared';
@@ -44,6 +44,7 @@ type NodeRow = {
   id: string; parentId: string | null; title: string; description: string;
   nodeType: string; status: string; x: number | null; y: number | null;
   linkedCanvasId: string | null;
+  notes: string; data: unknown;
   createdCommit: number; updatedCommit: number;
 };
 type EdgeRow = {
@@ -55,6 +56,7 @@ const rowToNode = (r: NodeRow): PlanNode => ({
   id: r.id, parentId: r.parentId, title: r.title, description: r.description,
   nodeType: r.nodeType as PlanNode['nodeType'], status: r.status as PlanNode['status'],
   x: r.x, y: r.y, linkedCanvasId: r.linkedCanvasId,
+  notes: r.notes, data: normalizeData(r.data),
   createdCommit: r.createdCommit, updatedCommit: r.updatedCommit,
 });
 const rowToEdge = (r: EdgeRow): PlanEdge => ({
@@ -589,9 +591,10 @@ export function diffStates(from: GraphState, to: GraphState): Op[] {
     if (!cur) continue;
     const before: Record<string, unknown> = {};
     const after: Record<string, unknown> = {};
-    for (const key of ['parentId', 'title', 'description', 'nodeType', 'status', 'linkedCanvasId'] as const) {
+    for (const key of ['parentId', 'title', 'description', 'nodeType', 'status', 'linkedCanvasId', 'notes'] as const) {
       if (cur[key] !== node[key]) { before[key] = cur[key]; after[key] = node[key]; }
     }
+    if (!dataEqual(cur.data, node.data)) { before.data = cur.data; after.data = node.data; }
     if (Object.keys(after).length > 0)
       ops.push({ op: 'update_node', id: node.id, before, after });
     if ((cur.x !== node.x || cur.y !== node.y) && node.x !== null && node.y !== null)

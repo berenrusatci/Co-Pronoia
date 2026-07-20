@@ -7,6 +7,7 @@ import {
   removeMember, setCanvasRoleAccess, setMemberRole, setRegionMembers, updateRegion, type ServiceFor,
 } from './canvasService.js';
 import { memberPermissions } from './groupService.js';
+import { getBrief, listBriefRevisions, updateBrief } from './briefService.js';
 import { geminiConfigured, runAgent } from './agent.js';
 import { availableAgentRoles, listAgentTokens, mintAgentToken, revokeAgentToken } from './agentRoleService.js';
 import { decideProposal, listProposals } from './proposalService.js';
@@ -162,6 +163,14 @@ export function registerRoutes(
         },
         // Ajan bölge oluşturduysa (yalnızca sahip) panellerin anında görmesi için yayınla.
         onRegions: (regions) => broadcast(canvasId, { type: 'regions', regions }),
+        // Alt kanvasa inen commit'ler (yeni doldurma ya da detaylandırma) o kanvasın izleyicilerine gider.
+        onSubCommit: (subCanvasId, outcome) => {
+          if (outcome.result === 'committed') {
+            broadcast(subCanvasId, { type: 'commit', commit: outcome.commit, state: outcome.state, clientId: null });
+          } else {
+            broadcast(subCanvasId, { type: 'branch_created', branch: outcome.branch, clientId: null });
+          }
+        },
       });
     } catch (err) {
       return reply.code(502).send({ error: `ajan çalıştırılamadı: ${err instanceof Error ? err.message : String(err)}` });
@@ -280,6 +289,29 @@ export function registerRoutes(
     kick(canvasId, 'deleted');
     await deleteCanvas(prisma, canvasId);
     return { ok: true };
+  });
+
+  // ---------- Kanvas brifi ("kanvasın CLAUDE.md'si") ----------
+
+  app.get<{ Params: CanvasParams }>('/brief', async (req) => ({
+    brief: await getBrief(prisma, scoped(req).canvasId),
+  }));
+
+  app.get<{ Params: CanvasParams }>('/brief/revisions', async (req) => ({
+    revisions: await listBriefRevisions(prisma, scoped(req).canvasId),
+  }));
+
+  /** Editor+ yazar (graf düzenleme yetkisiyle aynı hat); her yazma yeni bir revizyondur. */
+  app.put<{ Params: CanvasParams; Body: { content?: string } }>('/brief', async (req, reply) => {
+    if (!requireEditor(req, reply)) return;
+    const { canvasId } = scoped(req);
+    try {
+      const brief = await updateBrief(prisma, canvasId, req.body?.content ?? '', req.user!.username);
+      broadcast(canvasId, { type: 'brief', brief });
+      return { brief };
+    } catch (err) {
+      return sendError(reply, err);
+    }
   });
 
   // ---------- Regions (owner-defined edit zones) ----------

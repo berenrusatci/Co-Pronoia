@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import {
   expandAll, regionViolation, summarizeOps,
-  type BranchInfo, type Commit, type CommitSummary, type EdgeDirection, type EdgeKind,
+  type BranchInfo, type CanvasBriefInfo, type Commit, type CommitSummary, type EdgeDirection, type EdgeKind,
   type GraphState, type MemberInfo, type NodeFields, type NodeType, type OpInput,
   type PlanEdge, type PlanNode, type PlanProposalInfo, type RegionInfo, type ServerMessage,
 } from '@treemapper/shared';
@@ -37,6 +37,8 @@ interface GraphStore {
   regions: RegionInfo[];
   /** Co-Pronoia ajan önerileri (yalnızca co-pronoia kanvaslarında yüklenir; WS ile canlı). */
   proposals: PlanProposalInfo[];
+  /** Kanvas notu ("kanvasın CLAUDE.md'si") — her kanvasta yüklenir, Gemini ajanı da okur; WS ile canlı. */
+  brief: CanvasBriefInfo | null;
   /** Usernames connected to this canvas right now (WS presence). */
   activeUsers: string[];
   loaded: boolean;
@@ -49,7 +51,7 @@ interface GraphStore {
   selectedNodeIds: string[];
   /** Ctrl/Shift+tık ile seçilen bölgeler: ajana açıklamaları ve içlerindeki düğümler bağlam olarak gider. */
   selectedRegionIds: string[];
-  sidePanel: 'none' | 'history' | 'connections' | 'branches' | 'members' | 'regions' | 'agent' | 'copronoia';
+  sidePanel: 'none' | 'history' | 'connections' | 'branches' | 'members' | 'regions' | 'agent' | 'copronoia' | 'brief';
 
   /** Ajan paneli sohbeti; panel kapansa da kanvastan çıkana dek korunur. */
   agentLog: AgentChatEntry[];
@@ -88,7 +90,7 @@ interface GraphStore {
   toggleSelect: (id: string) => void;
   /** Ctrl/Shift+tık: bölgeyi ajan bağlam seçimine ekler/çıkarır. */
   toggleSelectRegion: (id: string) => void;
-  togglePanel: (panel: 'history' | 'connections' | 'branches' | 'members' | 'regions' | 'agent' | 'copronoia') => void;
+  togglePanel: (panel: 'history' | 'connections' | 'branches' | 'members' | 'regions' | 'agent' | 'copronoia' | 'brief') => void;
   /** Sahip temizliği: bekleyen bir öneriyi reddeder (onay yalnızca süpervizör ajanla olur). */
   rejectProposal: (id: string) => Promise<void>;
   clearError: () => void;
@@ -244,6 +246,7 @@ export const useGraphStore = create<GraphStore>((set, get) => {
     members: [],
     regions: [],
     proposals: [],
+    brief: null,
     activeUsers: [],
     loaded: false,
     error: null,
@@ -269,13 +272,14 @@ export const useGraphStore = create<GraphStore>((set, get) => {
       try {
         // Öneri listesi yalnızca co-pronoia kanvaslarında var (diğerlerinde uç boş liste döndürür ama hiç sormayalım).
         const isCoPronoia = useCanvasStore.getState().active?.type === 'co-pronoia';
-        const [state, { commits }, { branches }, { members }, { regions }, proposalsRes] = await Promise.all([
+        const [state, { commits }, { branches }, { members }, { regions }, proposalsRes, { brief }] = await Promise.all([
           api.getState(),
           api.getCommits(),
           api.getBranches(),
           api.getMembers(),
           api.getRegions(),
           isCoPronoia ? api.getProposals() : Promise.resolve({ proposals: [] }),
+          api.getBrief(),
         ]);
         set({
           serverNodes: state.nodes,
@@ -286,6 +290,7 @@ export const useGraphStore = create<GraphStore>((set, get) => {
           headSeq: state.headSeq,
           commits, branches, members, regions,
           proposals: proposalsRes.proposals,
+          brief,
           loaded: true,
         });
       } catch (err) {
@@ -355,6 +360,9 @@ export const useGraphStore = create<GraphStore>((set, get) => {
             case 'proposals':
               set({ proposals: msg.proposals });
               break;
+            case 'brief':
+              set({ brief: msg.brief });
+              break;
             case 'canvas_gone':
               useCanvasStore.setState({
                 error: msg.reason === 'deleted' ? 'Kanvas, sahibi tarafından silindi.' : 'Bu kanvastan çıkarıldınız.',
@@ -380,7 +388,7 @@ export const useGraphStore = create<GraphStore>((set, get) => {
     reset: () =>
       set({
         serverNodes: [], serverEdges: [], nodes: [], edges: [], pending: [],
-        headSeq: 0, commits: [], branches: [], members: [], regions: [], proposals: [], activeUsers: [],
+        headSeq: 0, commits: [], branches: [], members: [], regions: [], proposals: [], brief: null, activeUsers: [],
         loaded: false, error: null, notice: null, selectedNodeId: null, selectedNodeIds: [], selectedRegionIds: [], sidePanel: 'none',
         viewingSeq: null, viewingBranchId: null, viewingState: null,
         agentLog: [], agentBusy: false, exporting: false, selectionInfoOpen: false,

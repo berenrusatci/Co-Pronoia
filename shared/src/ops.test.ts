@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { applyOp, emptyGraph, invertOp, invertOps, wouldCreateCycle, type Graph } from './ops.js';
+import { applyOp, dataEqual, emptyGraph, invertOp, invertOps, normalizeData, wouldCreateCycle, type Graph } from './ops.js';
 import type { Op, PlanNode } from './types.js';
 
 const node = (id: string, parentId: string | null = null, extra: Partial<PlanNode> = {}): PlanNode => ({
   id, parentId, title: `Node ${id}`, description: '', nodeType: 'task', status: 'planned',
-  x: null, y: null, linkedCanvasId: null, createdCommit: 1, updatedCommit: 1, ...extra,
+  x: null, y: null, linkedCanvasId: null, notes: '', data: {}, createdCommit: 1, updatedCommit: 1, ...extra,
 });
 
 const snapshot = (g: Graph) => JSON.stringify({
@@ -60,6 +60,42 @@ describe('invertOp round-trips', () => {
     applyOp(g, legacy, 1);
     expect(g.nodes.get('old')!.linkedCanvasId).toBeNull();
     expect('linkedCanvasId' in g.nodes.get('old')!).toBe(true); // JSON.stringify karşılaştırmaları için anahtar var
+    // notes/data da aynı guard'dan geçer: eski JSON'da anahtar yok → varsayılan.
+    expect(g.nodes.get('old')!.notes).toBe('');
+    expect(g.nodes.get('old')!.data).toEqual({});
+    expect('notes' in g.nodes.get('old')! && 'data' in g.nodes.get('old')!).toBe(true);
+  });
+
+  it('update_node with notes/data round-trips', () => {
+    const g = emptyGraph();
+    applyOp(g, { op: 'add_node', node: node('a') }, 1);
+    const ops: Op[] = [
+      { op: 'update_node', id: 'a', before: { notes: '', data: {} }, after: { notes: '# Detay', data: { sahip: 'ayşe', tahmin: '3g' } } },
+    ];
+    const before = snapshot(g);
+    for (const op of ops) applyOp(g, op, 2);
+    expect(g.nodes.get('a')!.notes).toBe('# Detay');
+    expect(g.nodes.get('a')!.data).toEqual({ sahip: 'ayşe', tahmin: '3g' });
+    for (const op of invertOps(ops)) applyOp(g, op, 3);
+    expect(snapshot(g)).toBe(before);
+  });
+
+  it('applyOp canonicalizes data (key order, non-string values dropped)', () => {
+    const g = emptyGraph();
+    const messy = { b: '2', a: '1', c: 3 as unknown as string };
+    applyOp(g, { op: 'add_node', node: node('a', null, { data: messy }) }, 1);
+    expect(JSON.stringify(g.nodes.get('a')!.data)).toBe('{"a":"1","b":"2"}');
+    applyOp(g, { op: 'update_node', id: 'a', before: { data: { a: '1', b: '2' } }, after: { data: messy } }, 2);
+    expect(JSON.stringify(g.nodes.get('a')!.data)).toBe('{"a":"1","b":"2"}');
+  });
+
+  it('normalizeData / dataEqual', () => {
+    expect(normalizeData(null)).toEqual({});
+    expect(normalizeData(['x'])).toEqual({});
+    expect(normalizeData({ b: '2', a: '1', n: 5, o: {} })).toEqual({ a: '1', b: '2' });
+    expect(dataEqual({ a: '1', b: '2' }, { b: '2', a: '1' })).toBe(true);
+    expect(dataEqual({ a: '1' }, { a: '2' })).toBe(false);
+    expect(dataEqual({ a: '1' }, { a: '1', b: '2' })).toBe(false);
   });
 });
 

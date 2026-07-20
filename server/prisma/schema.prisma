@@ -70,6 +70,22 @@ model Canvas {
   roleAccess CanvasRoleAccess[]
   agentTokens AgentToken[]
   proposals PlanProposal[]
+  briefRevisions CanvasBriefRevision[]
+}
+
+/// Kanvasın serbest brifing dokümanı ("kanvasın CLAUDE.md'si"). Bölgeler gibi kanvas AYARIDIR,
+/// event-sourced graf verisi değildir — commit/rebuildCheck hattına girmez. Güncel içerik = en
+/// büyük id'li revizyon; her yazma yeni satır ekler (hafif değişiklik geçmişi, append-only).
+model CanvasBriefRevision {
+  id          Int      @id @default(autoincrement())
+  canvasId    String
+  canvas      Canvas   @relation(fields: [canvasId], references: [id], onDelete: Cascade)
+  content     String
+  /// İnsan yazarında kullanıcı adı, ajan yazarında "label/roleName".
+  authorLabel String
+  createdAt   DateTime @default(now())
+
+  @@index([canvasId, id])
 }
 
 model Group {
@@ -213,6 +229,11 @@ model Node {
   /// SetNull, Node'u commit dışında değiştirir ve rebuildCheck'i bozar; kanvas silinince
   /// sarkan bağlantı UI'da "erişilemiyor" olarak gösterilir.
   linkedCanvasId String?
+  /// Serbest uzun not (markdown).
+  notes         String  @default("")
+  /// Serbest anahtar-değer özel alanlar. rowToNode/applyOp normalizeData ile kanonikleştirir,
+  /// jsonb'nin anahtar sırası rebuildCheck'i etkilemez.
+  data          Json    @default("{}")
   createdCommit Int
   updatedCommit Int
 

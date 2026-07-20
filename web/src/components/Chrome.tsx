@@ -115,6 +115,13 @@ export function Toolbar() {
             🤝 Co-Pronoia{openProposalCount > 0 ? ` (${openProposalCount})` : ''}
           </button>
         )}
+        <button
+          className={sidePanel === 'brief' ? 'active' : ''}
+          onClick={() => togglePanel('brief')}
+          title="Kanvas notu: üyelerin ve ajanların uyduğu ortak çalışma brifingi"
+        >
+          📋 Not
+        </button>
         <button className={sidePanel === 'connections' ? 'active' : ''} onClick={() => togglePanel('connections')}>
           Bağlantılar ({edgeCount})
         </button>

@@ -100,6 +100,81 @@ function LinkedCanvasSection({
   );
 }
 
+/**
+ * Serbest anahtar-değer özel alanlar (`data`). Satırlar yerelde düzenlenir; her blur/silme
+ * TÜM objeyi stage'ler (data çakışma tespitinde tek alandır, anahtar başına değil).
+ */
+function DataFieldsEditor({
+  nodeId, data, readOnly, updateNode,
+}: {
+  nodeId: string;
+  data: Record<string, string>;
+  readOnly: boolean;
+  updateNode: (id: string, fields: { data: Record<string, string> }) => void;
+}) {
+  const [rows, setRows] = useState<Array<{ key: string; value: string }>>([]);
+  useEffect(() => {
+    setRows(Object.entries(data).map(([key, value]) => ({ key, value })));
+  }, [nodeId, data]);
+
+  const commit = (nextRows: Array<{ key: string; value: string }>) => {
+    const next: Record<string, string> = {};
+    for (const r of nextRows) if (r.key.trim()) next[r.key.trim()] = r.value;
+    const changed = JSON.stringify(next) !== JSON.stringify(data);
+    if (changed) updateNode(nodeId, { data: next });
+  };
+
+  const setRow = (i: number, patch: Partial<{ key: string; value: string }>) =>
+    setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+
+  return (
+    <label>
+      Özel alanlar
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {rows.map((r, i) => (
+          <div key={i} style={{ display: 'flex', gap: 4 }}>
+            <input
+              value={r.key}
+              disabled={readOnly}
+              placeholder="alan (ör. tahmin)"
+              style={{ flex: 1, minWidth: 0 }}
+              onChange={(e) => setRow(i, { key: e.target.value })}
+              onBlur={() => commit(rows)}
+            />
+            <input
+              value={r.value}
+              disabled={readOnly}
+              placeholder="değer (ör. 3g)"
+              style={{ flex: 1.4, minWidth: 0 }}
+              onChange={(e) => setRow(i, { value: e.target.value })}
+              onBlur={() => commit(rows)}
+            />
+            {!readOnly && (
+              <button
+                type="button"
+                title="Alanı sil"
+                onClick={() => {
+                  const next = rows.filter((_, j) => j !== i);
+                  setRows(next);
+                  commit(next);
+                }}
+              >
+                ×
+              </button>
+            )}
+          </div>
+        ))}
+        {!readOnly && (
+          <button type="button" onClick={() => setRows((rs) => [...rs, { key: '', value: '' }])}>
+            ＋ Alan ekle
+          </button>
+        )}
+        {readOnly && rows.length === 0 && <span className="hint">(özel alan yok)</span>}
+      </div>
+    </label>
+  );
+}
+
 export function NodeEditorPanel() {
   const { nodes, readOnly } = useDisplayedGraph();
   const selectedNodeId = useGraphStore((s) => s.selectedNodeId);
@@ -110,10 +185,12 @@ export function NodeEditorPanel() {
   const node = nodes.find((n) => n.id === selectedNodeId) ?? null;
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  const [notes, setNotes] = useState('');
   useEffect(() => {
     setTitle(node?.title ?? '');
     setDescription(node?.description ?? '');
-  }, [node?.id, node?.title, node?.description]);
+    setNotes(node?.notes ?? '');
+  }, [node?.id, node?.title, node?.description, node?.notes]);
 
   if (!node) return null;
 
@@ -134,6 +211,7 @@ export function NodeEditorPanel() {
     const fields: Record<string, string> = {};
     if (title !== node.title && title.trim()) fields.title = title.trim();
     if (description !== node.description) fields.description = description;
+    if (notes !== node.notes) fields.notes = notes;
     if (Object.keys(fields).length > 0) updateNode(node.id, fields);
   };
 
@@ -152,6 +230,18 @@ export function NodeEditorPanel() {
         Açıklama
         <textarea value={description} disabled={readOnly} rows={4} onChange={(e) => setDescription(e.target.value)} onBlur={commitText} />
       </label>
+      <label>
+        Notlar
+        <textarea
+          value={notes}
+          disabled={readOnly}
+          rows={8}
+          placeholder="Uzun serbest not (markdown): ayrıntı, gerekçe, kabul kriterleri…"
+          onChange={(e) => setNotes(e.target.value)}
+          onBlur={commitText}
+        />
+      </label>
+      <DataFieldsEditor nodeId={node.id} data={node.data} readOnly={readOnly} updateNode={updateNode} />
       <label>
         Tür
         <select value={node.nodeType} disabled={readOnly} onChange={(e) => updateNode(node.id, { nodeType: e.target.value as NodeType })}>

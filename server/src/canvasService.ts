@@ -184,6 +184,7 @@ export async function deleteCanvas(prisma: PrismaClient, canvasId: string): Prom
   await prisma.$transaction([
     prisma.planProposal.deleteMany({ where: { canvasId } }),
     prisma.agentToken.deleteMany({ where: { canvasId } }),
+    prisma.canvasBriefRevision.deleteMany({ where: { canvasId } }),
     prisma.commit.deleteMany({ where: { canvasId } }),
     prisma.branch.deleteMany({ where: { canvasId } }),
     prisma.edge.deleteMany({ where: { canvasId } }),

@@ -16,6 +16,7 @@ import { MembersPanel } from './components/MembersPanel';
 import { RegionsPanel } from './components/RegionsPanel';
 import { AgentPanel } from './components/AgentPanel';
 import { CoPronoiaPanel } from './components/CoPronoiaPanel';
+import { BriefPanel } from './components/BriefPanel';
 import { SelectionInfoPanel } from './components/SelectionInfoPanel';
 import { LoginView } from './components/LoginView';
 import { GroupJoinPrompt } from './components/GroupJoinPrompt';
@@ -142,6 +143,7 @@ export default function App() {
         {sidePanel === 'regions' && <RegionsPanel />}
         {sidePanel === 'agent' && <AgentPanel />}
         {sidePanel === 'copronoia' && <CoPronoiaPanel />}
+        {sidePanel === 'brief' && <BriefPanel />}
       </div>
     </div>
   );

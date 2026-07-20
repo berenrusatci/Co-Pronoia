@@ -93,6 +93,27 @@ describe('commit engine', () => {
     expect(await service.rebuildCheck()).toBe(true);
   });
 
+  it('notes/data: jsonb gidiş-dönüşü rebuildCheck ile birebir (kanonikleştirme oracle testi)', async () => {
+    const { service } = await freshCanvas();
+    await service.commit([
+      { op: 'add_node', id: 'a', title: 'A', notes: '# Uzun not\nayrıntı', data: { z: 'son', a: 'ilk' } },
+      { op: 'add_node', id: 'b', title: 'B' }, // notes/data hiç verilmedi → varsayılanlar
+    ]);
+    const { state } = committed(
+      await service.commit([{ op: 'update_node', id: 'b', fields: { notes: 'ek', data: { sahip: 'ayşe' } } }]),
+    );
+    const a = state.nodes.find((n) => n.id === 'a')!;
+    expect(a.notes).toBe('# Uzun not\nayrıntı');
+    expect(JSON.stringify(a.data)).toBe('{"a":"ilk","z":"son"}'); // kanonik anahtar sırası
+    expect(state.nodes.find((n) => n.id === 'b')!.data).toEqual({ sahip: 'ayşe' });
+    // Aynı içerikli data (farklı anahtar sırası) → expand no-op üretir, durum değişmez
+    const { state: after } = committed(
+      await service.commit([{ op: 'update_node', id: 'a', fields: { data: { a: 'ilk', z: 'son' } } }]),
+    );
+    expect(JSON.stringify(after.nodes.find((n) => n.id === 'a')!.data)).toBe('{"a":"ilk","z":"son"}');
+    expect(await service.rebuildCheck()).toBe(true);
+  });
+
   it('rejects cyclic reparent', async () => {
     const { service } = await freshCanvas();
     await service.commit([

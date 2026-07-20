@@ -12,6 +12,25 @@ export function emptyGraph(): Graph {
 
 export class OpError extends Error {}
 
+/** Kanonik data: yalnız string değerler, anahtarlar sıralı. Hem replay hem DB okuması buradan
+ * geçer; jsonb anahtar sırasını değiştirse de rebuildCheck'in JSON karşılaştırması kararlı kalır. */
+export function normalizeData(v: unknown): Record<string, string> {
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) return {};
+  const out: Record<string, string> = {};
+  for (const key of Object.keys(v as Record<string, unknown>).sort()) {
+    const val = (v as Record<string, unknown>)[key];
+    if (typeof val === 'string') out[key] = val;
+  }
+  return out;
+}
+
+export function dataEqual(a: Record<string, string>, b: Record<string, string>): boolean {
+  const ka = Object.keys(a);
+  const kb = Object.keys(b);
+  if (ka.length !== kb.length) return false;
+  return ka.every((k) => b[k] === a[k]);
+}
+
 /** Apply one op to the graph, mutating it. Throws OpError if the op does not apply cleanly. */
 export function applyOp(graph: Graph, op: Op, seq: number): void {
   switch (op.op) {
@@ -19,11 +38,14 @@ export function applyOp(graph: Graph, op: Op, seq: number): void {
       if (graph.nodes.has(op.node.id)) throw new OpError(`add_node: node ${op.node.id} already exists`);
       if (op.node.parentId !== null && !graph.nodes.has(op.node.parentId))
         throw new OpError(`add_node: parent ${op.node.parentId} does not exist`);
-      // linkedCanvasId alanından önceki commit JSON'larında anahtar hiç yok; null'a normalize
-      // edilmezse rebuildCheck'in JSON karşılaştırması ve diffStates hayalet fark görür.
+      // linkedCanvasId/notes/data alanlarından önceki commit JSON'larında anahtarlar hiç yok;
+      // varsayılana normalize edilmezse rebuildCheck'in JSON karşılaştırması ve diffStates
+      // hayalet fark görür.
       graph.nodes.set(op.node.id, {
         ...op.node,
         linkedCanvasId: op.node.linkedCanvasId ?? null,
+        notes: op.node.notes ?? '',
+        data: normalizeData(op.node.data),
         createdCommit: seq,
         updatedCommit: seq,
       });
@@ -40,7 +62,9 @@ export function applyOp(graph: Graph, op: Op, seq: number): void {
             throw new OpError(`update_node: reparenting ${op.id} under ${newParent} would create a cycle`);
         }
       }
-      graph.nodes.set(op.id, { ...node, ...op.after, updatedCommit: seq });
+      const merged: PlanNode = { ...node, ...op.after, updatedCommit: seq };
+      if ('data' in op.after) merged.data = normalizeData(op.after.data);
+      graph.nodes.set(op.id, merged);
       break;
     }
     case 'delete_node': {

@@ -408,3 +408,94 @@ describe('MCP ucu: wait_for_changes (long-poll)', () => {
     expect(denied.statusCode).toBe(401);
   });
 });
+
+describe('Kanvas notu (brief): HTTP + MCP', () => {
+  it('HTTP: boş varsayılan, editor+ yazar, viewer 403, üye olmayan 404, revizyonlar sıralı', async () => {
+    const { app, sent, prisma, cookies, canvasId } = await cpSetup();
+
+    let res = await app.inject({ method: 'GET', url: `/api/canvases/${canvasId}/brief`, cookies });
+    expect(res.json().brief).toMatchObject({ content: '', authorLabel: null, revisionCount: 0 });
+
+    res = await app.inject({
+      method: 'PUT', url: `/api/canvases/${canvasId}/brief`, cookies, payload: { content: '# Hedef\nMVP ilk.' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().brief).toMatchObject({ content: '# Hedef\nMVP ilk.', authorLabel: 'sahip', revisionCount: 1 });
+
+    // viewer: okur ama yazamaz
+    const viewer = await registerVerified(app, sent, { username: 'izleyici', password: 'sifre1', email: 'v@t.com' });
+    const viewerId = viewer.res.json().user.id as string;
+    await prisma.canvasMember.create({ data: { canvasId, userId: viewerId, role: 'viewer' } });
+    res = await app.inject({ method: 'GET', url: `/api/canvases/${canvasId}/brief`, cookies: viewer.cookies });
+    expect(res.json().brief.content).toBe('# Hedef\nMVP ilk.');
+    res = await app.inject({
+      method: 'PUT', url: `/api/canvases/${canvasId}/brief`, cookies: viewer.cookies, payload: { content: 'x' },
+    });
+    expect(res.statusCode).toBe(403);
+
+    // üye olmayan 404 (membership preHandler)
+    const outsider = await registerVerified(app, sent, { username: 'disarida', password: 'sifre1', email: 'd@t.com' });
+    res = await app.inject({ method: 'GET', url: `/api/canvases/${canvasId}/brief`, cookies: outsider.cookies });
+    expect(res.statusCode).toBe(404);
+
+    // ikinci yazma yeni revizyon; geçmiş en yeniden eskiye
+    await app.inject({
+      method: 'PUT', url: `/api/canvases/${canvasId}/brief`, cookies, payload: { content: 'İkinci sürüm' },
+    });
+    res = await app.inject({ method: 'GET', url: `/api/canvases/${canvasId}/brief/revisions`, cookies });
+    const revisions = res.json().revisions as { content: string; authorLabel: string }[];
+    expect(revisions.map((r) => r.content)).toEqual(['İkinci sürüm', '# Hedef\nMVP ilk.']);
+    expect(revisions[0].authorLabel).toBe('sahip');
+
+    // içerik sınırı
+    res = await app.inject({
+      method: 'PUT', url: `/api/canvases/${canvasId}/brief`, cookies, payload: { content: 'a'.repeat(50_001) },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('MCP: update_brief tüm tokenlara açık, get_brief taşır, revizyon ajan iziyle yazılır', async () => {
+    const { app, prisma, canvasId, agent, supervisor } = await cpSetup();
+
+    // update_brief her iki token'ın tools/list çıktısında var
+    for (const secret of [agent.secret, supervisor.secret]) {
+      const res = await rpc(app, secret, 'tools/list');
+      expect((res.json().result.tools as { name: string }[]).map((t) => t.name)).toContain('update_brief');
+    }
+
+    const upd = await callTool(app, agent.secret, 'update_brief', { content: 'Karar: ödeme Stripe ile.' });
+    expect(upd.isError).toBe(false);
+    expect(JSON.parse(upd.text)).toMatchObject({ ok: true, revisionCount: 1 });
+
+    const brief = await callTool(app, supervisor.secret, 'get_brief');
+    expect(brief.text).toContain('Kanvas notu');
+    expect(brief.text).toContain('Karar: ödeme Stripe ile.');
+
+    const row = await prisma.canvasBriefRevision.findFirst({ where: { canvasId }, orderBy: { id: 'desc' } });
+    expect(row!.authorLabel).toBe('ajan-1/Mimar');
+
+    // kanvas silinince revizyonlar da gider (deleteCanvas explicit delete)
+    const { deleteCanvas } = await import('./canvasService.js');
+    await deleteCanvas(prisma, canvasId);
+    expect(await prisma.canvasBriefRevision.count({ where: { canvasId } })).toBe(0);
+  });
+
+  it('wait_for_changes: başka bir token brief güncelleyince briefChanged: true ile erken döner', async () => {
+    const { app, agent, supervisor } = await cpSetup();
+    type WaitBrief = { briefChanged: boolean; timedOut: boolean; headAdvanced: boolean };
+
+    const waiting = callTool(app, supervisor.secret, 'wait_for_changes', { timeoutMs: 5000 });
+    await new Promise((r) => setTimeout(r, 150));
+    await callTool(app, agent.secret, 'update_brief', { content: 'güncellendi' });
+    const body = JSON.parse((await waiting).text) as WaitBrief;
+    expect(body.timedOut).toBe(false);
+    expect(body.briefChanged).toBe(true);
+    expect(body.headAdvanced).toBe(false);
+
+    // değişiklik yokken briefChanged false kalır
+    const idle = await callTool(app, agent.secret, 'wait_for_changes', { timeoutMs: 200 });
+    const idleBody = JSON.parse(idle.text) as WaitBrief;
+    expect(idleBody.timedOut).toBe(true);
+    expect(idleBody.briefChanged).toBe(false);
+  });
+});

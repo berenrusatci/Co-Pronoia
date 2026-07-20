@@ -1,12 +1,13 @@
 import type { PrismaClient } from '@prisma/client';
-import type { GraphState, OpInput, RegionInfo } from '@treemapper/shared';
+import type { CanvasType, GraphState, OpInput, RegionInfo } from '@treemapper/shared';
 import { buildFlowLayoutOps } from '@treemapper/shared';
 import {
   ConflictError, RegionError, ValidationError,
   type Actor, type CommitOutcome, type CommitService,
 } from './commitService.js';
-import { createCanvas, createRegion, listRegions, type ServiceFor } from './canvasService.js';
+import { createCanvas, createRegion, listRegions, memberRole, type ServiceFor } from './canvasService.js';
 import { memberPermissions } from './groupService.js';
+import { getBrief } from './briefService.js';
 
 /** Model çağrısı enjekte edilebilir: testler sahte bir LLM verir, route Gemini'yi kullanır. */
 export type Llm = (system: string, user: string) => Promise<string>;
@@ -38,6 +39,9 @@ const MAX_NEW_REGIONS = 4;
 
 /** Bir turda modelin oluşturabileceği en fazla yeni alt kanvas. */
 const MAX_NEW_SUBCANVASES = 3;
+
+/** Bir turda modelin detaylandırma isteyebileceği en fazla mevcut alt kanvas. */
+const MAX_FILL_SUBCANVASES = 3;
 
 /**
  * Detay düzeyine göre model sırası: prototip hafif modeli (ayrı ve geniş ücretsiz kota),
@@ -83,6 +87,7 @@ async function geminiGenerate(system: string, user: string, models: string[]): P
 
 function buildSystemPrompt(
   detail: AgentDetail, stepwise: boolean, canCreateRegions: boolean, canCreateSubCanvases: boolean,
+  canFillSubCanvases: boolean,
 ): string {
   return [
     'Sen TreeMapper adlı iş birlikli planlama uygulaması için çalışan bir ajansın. Sana bir kanvasın güncel durumu (düğümler, kenarlar, bölgeler), kullanıcının yetkileri ve doğal dildeki isteği verilir.',
@@ -93,9 +98,9 @@ function buildSystemPrompt(
     '3) Zihin haritası hiyerarşisini akış diyagramına dökme isteği ("zihin haritasını akışa dök", "hiyerarşiyi akış diyagramına aktar", "her bölgeyi ayrı diyagram olarak diz", "bölgeleri ayrı ayrı akışa çıkar"): {"mode":"layout","reply":"<Türkçe kısa yanıt>"} — ops ÜRETME, koordinat/kenar HESAPLAMA. Sunucu yerleşimi kendisi deterministik yapar; sen yalnızca bu modu döndür.',
     '',
     'ops dizisindeki geçerli işlemler (intent şemaları — alanlara birebir uy):',
-    '- {"op":"add_node","id":"<benzersiz kısa id>","title":"...","parentId":"<mevcut düğüm id, isteğe bağlı>","description":"...","nodeType":"task|idea|feature|milestone","status":"planned|in_progress|done","x":<sayı>,"y":<sayı>}',
+    '- {"op":"add_node","id":"<benzersiz kısa id>","title":"...","parentId":"<mevcut düğüm id, isteğe bağlı>","description":"...","nodeType":"task|idea|feature|milestone","status":"planned|in_progress|done","x":<sayı>,"y":<sayı>,"notes":"<uzun serbest metin/markdown, isteğe bağlı>","data":{"<alan adı>":"<değer>"}}',
     '- {"op":"add_edge","sourceId":"...","targetId":"...","kind":"flow|loop|dependency|relation","label":"...","direction":"directed|bidirectional"}',
-    '- {"op":"update_node","id":"...","fields":{"title"?,"description"?,"nodeType"?,"status"?,"parentId"?}}',
+    '- {"op":"update_node","id":"...","fields":{"title"?,"description"?,"nodeType"?,"status"?,"parentId"?,"notes"?,"data"?}}',
     '- {"op":"move_node","id":"...","x":<sayı>,"y":<sayı>}',
     '- {"op":"delete_node","id":"..."} ve {"op":"delete_edge","id":"..."}',
     '',
@@ -107,10 +112,24 @@ function buildSystemPrompt(
     '- KULLANICININ YETKİSİ bölümüne uy: yazamadığı bölgelerdeki düğümlere/kenarlara DOKUNMA ve o bölgelerin içine yeni düğüm KOYMA; böyle bir istek gelirse mode "summary" ile nedenini açıkla.',
     '- AI\'YA KAPALI BÖLGELER (kesin): "aiAllowed": false olan bölgelerdeki düğümlere/kenarlara DOKUNMA ve o bölgelerin içine yeni düğüm KOYMA — bu bölgelerde AI çalışması yasaktır, kullanıcı orada bir iş istese bile. Böyle bir istek gelirse o bölge için yapamayacağını reply\'de kısaca belirt AMA istekteki AI\'ya açık/bölge dışı diğer işleri normal şekilde yapmaya devam et (mümkünse yine mode "diagram" döndür).',
     '- BÖLGE AÇIKLAMALARI: Her bölgenin "description" alanı varsa, o bölgenin içinde ya da onunla ilgili iş üretirken açıklamayı bağlam/yönerge olarak kullan (ör. o bölgeye eklediğin düğümlerin içeriği açıklamaya uygun olsun).',
+    '- NOTES/DATA: title kısa bir başlıktır, description 1-2 cümlelik özettir — daha uzun ayrıntı, gerekçe, kabul kriteri, kod/komut örneği gibi içerikleri düğümün "notes" alanına (markdown serbest metin) yaz. Yapılandırılmış ek bilgiyi (ör. {"tahmin":"3g","sahip":"ayşe","öncelik":"yüksek"}) "data" alanına anahtar-değer olarak koy. Dar alanlara uzun metin TIKIŞTIRMA; kullanıcı ayrıntı istedikçe notes/data kullan.',
     '- Özet/analiz isteklerinde ASLA ops üretme; mode "summary" olsun.',
     '- Kullanıcı açıkça silme istemedikçe delete_node / delete_edge kullanma.',
     '- Kullanıcı bir bölgeden bahsediyorsa düğümlerin "regions" alanına bakarak o bölgedeki düğümleri esas al.',
-    '- SEÇİLİ DÜĞÜMLER verilmişse komutun hedefi onlardır: "detaylandır / alt adımlara böl" → her seçili düğüm için alt adımlar üret (kırılım istendiği için parentId olarak o seçili düğümün id\'sini kullanabilirsin); "değiştir / yeniden adlandır / durumunu güncelle" → update_node ile o düğümleri güncelle; "bundan sonrasını ... şekilde çiz" → akışı seçili düğümden devam ettir, ilk yeni düğümü ona bir kenarla bağla ve kullanıcı isterse seçili düğümden SONRAKİ mevcut akışı değiştir. Seçili düğümlerin konumuna yakın koordinatlar tercih et (bölge kuralı önceliklidir).',
+    `- SEÇİLİ DÜĞÜMLER verilmişse komutun hedefi onlardır: ${
+      canFillSubCanvases
+        ? '"bu kanvasta alt adımlara böl / buraya alt adım ekle" gibi AÇIKÇA kanvas içi kırılım istenirse her seçili düğüm için alt adımlar üret (parentId olarak o seçili düğümün id\'sini kullanabilirsin); yalın "detaylandır / ayrıntılandır" için DETAYLANDIRMA kuralına bak;'
+        : '"detaylandır / alt adımlara böl" → her seçili düğüm için alt adımlar üret (kırılım istendiği için parentId olarak o seçili düğümün id\'sini kullanabilirsin);'
+    } "değiştir / yeniden adlandır / durumunu güncelle" → update_node ile o düğümleri güncelle; "bundan sonrasını ... şekilde çiz" → akışı seçili düğümden devam ettir, ilk yeni düğümü ona bir kenarla bağla ve kullanıcı isterse seçili düğümden SONRAKİ mevcut akışı değiştir. Seçili düğümlerin konumuna yakın koordinatlar tercih et (bölge kuralı önceliklidir).`,
+    ...(canFillSubCanvases
+      ? [
+          `- DETAYLANDIRMA (kesin): Seçili düğüm(ler) için yalın "detaylandır / ayrıntılandır / derinleştir" isteği ALT KANVAS işidir — ayrıntı BU kanvasa değil düğümün alt kanvasına çizilir; bu düğümler için BU kanvasa içerik ops ÜRETME ("ops" boş dizi olabilir). "linkedCanvasId" değeri dolu (zaten bağlı) her seçili düğüm için diagram yanıtına "fillSubCanvases" dizisinde bir kayıt ekle: [{"nodeId":"<düğüm id>","prompt":"<alt kanvasta neyin detaylandırılacağını anlatan 1-2 cümle>"}] (en fazla ${MAX_FILL_SUBCANVASES}). ${
+            canCreateSubCanvases
+              ? 'linkedCanvasId boş (bağsız) seçili düğümler için ise "newSubCanvases" kullan — sunucu alt kanvası oluşturur, bağlar ve planı içine çizer.'
+              : 'linkedCanvasId boş (bağsız) düğümlerde alt kanvas oluşturma kapalı olduğu için detayı bu kanvasta alt adımlara bölerek üret (parentId = seçili düğüm).'
+          } Kanvas içi kırılım yalnızca kullanıcı "bu kanvasta" gibi açık bir ifade kullanırsa yapılır.`,
+        ]
+      : []),
     ...(canCreateRegions
       ? [
           `- BÖLGE OLUŞTURMA: Kullanıcı yeni bir bölge/alan oluşturmayı isterse (ya da istek belirgin biçimde ayrı bir çalışma alanı gerektiriyorsa) diagram yanıtına "newRegions" dizisi ekle: [{"name":"...","x":<sayı>,"y":<sayı>,"width":<sayı>,"height":<sayı>,"description":"<bölgenin amacını anlatan 1-2 cümle>"}] (en fazla ${MAX_NEW_REGIONS}). Mevcut bölgelerle ve düğümlerle ÇAKIŞMAYAN boş bir alan seç; dikdörtgeni içine koyacağın düğümlere yetecek kadar büyük tut (düğüm başına ~240x130, ör. 6 düğüm için en az 800x500). Bölgeler sunucuda AI izni açık olarak oluşturulur ve kanvas sahibi tarafından yönetilir. Ardından ops'taki yeni düğümleri BÖLGE KURALI'na uyarak bu dikdörtgenin içine yerleştir ve içeriği bölgenin adına/açıklamasına uygun doldur.`,
@@ -118,7 +137,7 @@ function buildSystemPrompt(
       : ['- BÖLGE OLUŞTURMA yalnızca kanvas sahibinin ajanına açıktır; bu kullanıcı sahip değil — "newRegions" alanı KULLANMA. Bölge oluşturma isteğini mode "summary" ile kibarca reddet (diğer işleri normal yap).']),
     ...(canCreateSubCanvases
       ? [
-          `- ALT KANVAS OLUŞTURMA: Kullanıcı bir düğümün/adımın kendi kanvasında ayrıntılı planlanmasını isterse ("bu adımı kendi kanvasında planla", "X için alt kanvas aç" gibi) diagram yanıtına "newSubCanvases" dizisi ekle: [{"nodeId":"<mevcut ya da bu yanıtta eklediğin bir düğümün id'si>","name":"<alt kanvasın adı>","description":"<alt kanvasın amacını anlatan 1-2 cümle>"}] (en fazla ${MAX_NEW_SUBCANVASES}). Sunucu alt kanvası aynı grupta oluşturur, düğüme bağlar ve içine bu amaca uygun bir plan çizilir. "linkedCanvasId" değeri null olmayan (zaten alt kanvası olan) düğümlere yenisini bağlama. ops içinde linkedCanvasId alanını ASLA kendin yazma — bağlama işini yalnızca "newSubCanvases" yapar.`,
+          `- ALT KANVAS OLUŞTURMA: Kullanıcı bir düğümün/adımın kendi kanvasında ayrıntılı planlanmasını isterse ("bu adımı kendi kanvasında planla", "X için alt kanvas aç" gibi — seçili bağsız düğümler için yalın "detaylandır" da buna dahildir, DETAYLANDIRMA kuralına bak) diagram yanıtına "newSubCanvases" dizisi ekle: [{"nodeId":"<mevcut ya da bu yanıtta eklediğin bir düğümün id'si>","name":"<alt kanvasın adı>","description":"<alt kanvasın amacını anlatan 1-2 cümle>"}] (en fazla ${MAX_NEW_SUBCANVASES}). Sunucu alt kanvası aynı grupta oluşturur, düğüme bağlar ve içine bu amaca uygun bir plan çizilir. "linkedCanvasId" değeri null olmayan (zaten alt kanvası olan) düğümlere yenisini bağlama. ops içinde linkedCanvasId alanını ASLA kendin yazma — bağlama işini yalnızca "newSubCanvases" yapar.`,
         ]
       : ['- ALT KANVAS OLUŞTURMA bu kanvasta/bu kullanıcı için kapalı — "newSubCanvases" alanı KULLANMA ve ops içinde linkedCanvasId alanını ASLA yazma. Alt kanvas isteğini mode "summary" ile kibarca reddet (diğer işleri normal yap).']),
     '- reply her zaman Türkçe, kısa ve net olsun.',
@@ -152,7 +171,7 @@ interface CurrentPart {
 function buildUserText(
   canvasName: string, state: GraphState, regions: RegionInfo[], actor: Actor,
   prompt: string, selectedIds: string[], selectedRegionIds: string[],
-  currentPart?: CurrentPart,
+  currentPart?: CurrentPart, brief?: string,
 ): string {
   const inRegion = (n: { x: number | null; y: number | null }, r: RegionInfo) =>
     n.x != null && n.y != null &&
@@ -178,6 +197,8 @@ function buildUserText(
     x: n.x,
     y: n.y,
     linkedCanvasId: n.linkedCanvasId,
+    notes: n.notes.slice(0, 500),
+    data: n.data,
     regions: regions.filter((r) => inRegion(n, r)).map((r) => r.name),
   }));
   const edges = state.edges.map((e) => ({
@@ -211,6 +232,9 @@ function buildUserText(
     '',
     `KULLANICININ YETKİSİ: ${permission}`,
     '',
+    ...(brief
+      ? [`KANVAS NOTU (kanvasın ortak çalışma brifingi; ürettiğin işleri buna uygun kur): ${brief.slice(0, 4000)}`, '']
+      : []),
     `BÖLGELER: ${JSON.stringify(regionInfo)}`,
     '',
     `DÜĞÜMLER: ${JSON.stringify(nodes)}`,
@@ -306,6 +330,28 @@ function parseNewSubCanvases(value: unknown): NewSubCanvasInput[] {
   return out;
 }
 
+/** Modelin detaylandırılmasını istediği, zaten bağlı bir alt kanvas: detay oraya çizilir. */
+export interface FillSubCanvasInput {
+  nodeId: string;
+  prompt?: string;
+}
+
+function parseFillSubCanvases(value: unknown): FillSubCanvasInput[] {
+  if (!Array.isArray(value)) return [];
+  const out: FillSubCanvasInput[] = [];
+  for (const f of value) {
+    if (!f || typeof f !== 'object') continue;
+    const { nodeId, prompt } = f as Record<string, unknown>;
+    if (typeof nodeId !== 'string' || !nodeId.trim()) continue;
+    out.push({
+      nodeId: nodeId.trim(),
+      ...(typeof prompt === 'string' && prompt.trim() ? { prompt: prompt.trim().slice(0, 500) } : {}),
+    });
+    if (out.length >= MAX_FILL_SUBCANVASES) break;
+  }
+  return out;
+}
+
 /**
  * Modelin ops'larından linkedCanvasId'yi soyar: bağlama yalnızca sunucunun newSubCanvases
  * yolundan yapılır — model keyfî kanvas id'lerine bağ kuramaz.
@@ -327,10 +373,10 @@ function stripLinkedCanvasId(ops: OpInput[]): OpInput[] {
   return out;
 }
 
-/** Model çıktısını çöz: JSON değilse metni özet yanıtı say; ops/parts/newRegions/newSubCanvases yalnızca "diagram" modunda geçerli. */
-function parseModelOutput(raw: string): { mode: string; reply: string; message: string; ops: OpInput[]; parts: string[]; newRegions: NewRegionInput[]; newSubCanvases: NewSubCanvasInput[] } {
+/** Model çıktısını çöz: JSON değilse metni özet yanıtı say; ops/parts/newRegions/newSubCanvases/fillSubCanvases yalnızca "diagram" modunda geçerli. */
+function parseModelOutput(raw: string): { mode: string; reply: string; message: string; ops: OpInput[]; parts: string[]; newRegions: NewRegionInput[]; newSubCanvases: NewSubCanvasInput[]; fillSubCanvases: FillSubCanvasInput[] } {
   const text = raw.trim().replace(/^```(json)?\s*/i, '').replace(/```\s*$/, '').trim();
-  type ModelOut = { mode?: string; reply?: unknown; message?: unknown; ops?: unknown; parts?: unknown; newRegions?: unknown; newSubCanvases?: unknown };
+  type ModelOut = { mode?: string; reply?: unknown; message?: unknown; ops?: unknown; parts?: unknown; newRegions?: unknown; newSubCanvases?: unknown; fillSubCanvases?: unknown };
   let out: ModelOut | null = null;
   // Model ara sıra kapanış parantezlerini yutuyor; eksik }/] tamamlayarak da dene.
   for (const candidate of [text, text + '}', text + ']}', text + '"}']) {
@@ -358,11 +404,13 @@ function parseModelOutput(raw: string): { mode: string; reply: string; message: 
     : [];
   let newRegions = parseNewRegions(out.newRegions);
   let newSubCanvases = parseNewSubCanvases(out.newSubCanvases);
+  let fillSubCanvases = parseFillSubCanvases(out.fillSubCanvases);
   if (out.mode !== 'diagram') {
     ops = [];
     parts = [];
     newRegions = [];
     newSubCanvases = [];
+    fillSubCanvases = [];
   }
   return {
     mode: String(out.mode ?? 'summary'),
@@ -372,6 +420,7 @@ function parseModelOutput(raw: string): { mode: string; reply: string; message: 
     parts,
     newRegions,
     newSubCanvases,
+    fillSubCanvases,
   };
 }
 
@@ -460,6 +509,8 @@ export async function runAgent(opts: {
   llm?: Llm;
   /** Her başarılı commit/branch sonucunda çağrılır — route WS yayını için kullanır. */
   onOutcome?: (outcome: CommitOutcome) => void;
+  /** Bir alt kanvasa commit indiğinde çağrılır — route o kanvasın izleyicilerine WS yayını yapar. */
+  onSubCommit?: (subCanvasId: string, outcome: CommitOutcome) => void;
   /** Ajan bölge oluşturduğunda güncel bölge listesiyle çağrılır — route WS yayını için kullanır. */
   onRegions?: (regions: RegionInfo[]) => void;
 }): Promise<AgentResult> {
@@ -472,16 +523,25 @@ export async function runAgent(opts: {
 
   // Alt kanvas oluşturma: kanvas bir gruba bağlı olmalı ve aktörün o grupta kanvas oluşturma
   // yetkisi olmalı (admin ya da rolünün canCreateCanvas'ı). Viewer'a kapalı — bağ commit'i zaten reddedilirdi.
-  const canvasRow = await prisma.canvas.findUnique({ where: { id: canvasId }, select: { groupId: true } });
+  const canvasRow = await prisma.canvas.findUnique({ where: { id: canvasId }, select: { groupId: true, type: true } });
   const groupId = canvasRow?.groupId ?? null;
+  // Alt kanvas parent'ın türünü miras alır — co-pronoia kanvasta oluşturulan alt kanvas da
+  // co-pronoia olmalı, yoksa MCP ajan token'ları ona bağlanamaz.
+  const canvasType = (canvasRow?.type ?? 'plan') as CanvasType;
   const perms = groupId ? await memberPermissions(prisma, groupId, actor.userId) : null;
   const canCreateSubCanvases = Boolean(
     opts.serviceFor && groupId && actor.role !== 'viewer' && perms?.canCreateCanvas,
   );
-  const system = buildSystemPrompt(detail, stepwise, canCreateRegions, canCreateSubCanvases);
+  // Mevcut bir alt kanvası detaylandırmak yeni bir şey OLUŞTURMAZ; grup/kanvas-oluşturma yetkisi
+  // gerekmez. Hedef kanvastaki gerçek yetki, yürütme anında memberRole ile ayrıca çözülür.
+  const canFillSubCanvases = Boolean(opts.serviceFor) && actor.role !== 'viewer';
+  const system = buildSystemPrompt(detail, stepwise, canCreateRegions, canCreateSubCanvases, canFillSubCanvases);
 
-  const [state, initialRegions] = await Promise.all([service.getState(), listRegions(prisma, canvasId)]);
+  const [state, initialRegions, canvasBrief] = await Promise.all([
+    service.getState(), listRegions(prisma, canvasId), getBrief(prisma, canvasId),
+  ]);
   let regions = initialRegions;
+  const briefText = canvasBrief.content || undefined;
 
   /**
    * Modelin istediği bölgeleri oluşturur (yalnızca sahip; aiAllowed zorla true) ve bölge
@@ -551,11 +611,43 @@ export async function runAgent(opts: {
         notes.push(`Not: "${node.title}" düğümü AI'ya kapalı bir bölgede olduğu için "${w.name}" alt kanvası oluşturulmadı.`);
         continue;
       }
-      const canvas = await createCanvas(prisma, opts.serviceFor!, w.name, actor.userId, { groupId: groupId! });
+      const canvas = await createCanvas(prisma, opts.serviceFor!, w.name, actor.userId, { groupId: groupId!, type: canvasType });
       linkOps.push({ op: 'update_node', id: w.nodeId, fields: { linkedCanvasId: canvas.id } });
       created.push({ canvasId: canvas.id, name: w.name, description: w.description, nodeTitle: node.title });
     }
     return { linkOps, notes, created };
+  };
+
+  /**
+   * Ortak çekirdek: bir alt kanvasa tek LLM çağrısıyla plan çizip commit'ler. Hem yeni oluşturulan
+   * hem mevcut alt kanvaslar için kullanılır; bölge kuralları hedef kanvasın kendi bölgeleri ve
+   * verilen aktörle işler. `false` döner = model işlem üretmedi (commit yok).
+   */
+  const drawIntoSubCanvas = async (
+    subCanvasId: string, subName: string, fillPrompt: string, subActor: Actor, message: string,
+  ): Promise<boolean> => {
+    const subService = opts.serviceFor!(subCanvasId);
+    const [subState, subRegions, subBrief] = await Promise.all([
+      subService.getState(), listRegions(prisma, subCanvasId), getBrief(prisma, subCanvasId),
+    ]);
+    // Recursion yok: parça/bölge/alt-kanvas kapalı bir sistem prompt'u; parts vb. zaten işlenmez.
+    const fillSystem = buildSystemPrompt(detail, false, false, false, false);
+    const fillRaw = await llm(
+      fillSystem,
+      buildUserText(subName, subState, subRegions, subActor, fillPrompt, [], [], undefined, subBrief.content || undefined),
+    );
+    const fillParsed = parseModelOutput(fillRaw);
+    // AI'ya kapalı bölgeler hedef kanvasta da geçerlidir.
+    const { kept } = filterAiClosedRegions(subState, subRegions, fillParsed.ops);
+    if (kept.length === 0) return false;
+    const outcome = await subService.commit(kept, {
+      message,
+      baseSeq: subState.headSeq,
+      authorId: actor.userId,
+      actor: subActor,
+    });
+    opts.onSubCommit?.(subCanvasId, outcome);
+    return true;
   };
 
   /**
@@ -564,34 +656,64 @@ export async function runAgent(opts: {
    */
   const fillSubCanvas = async (c: CreatedSubCanvas): Promise<string> => {
     try {
-      const subService = opts.serviceFor!(c.canvasId);
-      const subState = await subService.getState();
-      // Recursion yok: parça/bölge/alt-kanvas kapalı bir sistem prompt'u; parts vb. zaten işlenmez.
-      const fillSystem = buildSystemPrompt(detail, false, false, false);
       const fillPrompt = `Bu kanvas, "${canvasName}" kanvasındaki "${c.nodeTitle}" düğümünün alt kanvasıdır. Amacı: ${c.description ?? c.name}. Bu iş için adım adım bir plan çiz; mevcut kök düğümü başlangıç kabul et ve ilk yeni düğümü ona bir kenarla bağla.`;
-      const fillRaw = await llm(fillSystem, buildUserText(c.name, subState, [], actor, fillPrompt, [], []));
-      const fillParsed = parseModelOutput(fillRaw);
-      if (fillParsed.ops.length === 0)
+      const drew = await drawIntoSubCanvas(
+        c.canvasId, c.name, fillPrompt,
+        { userId: actor.userId, role: 'owner' }, // yeni alt kanvasın sahibi istek atan kullanıcıdır
+        'ajan: alt kanvas planı',
+      );
+      if (!drew)
         return `Not: "${c.name}" alt kanvası oluşturuldu ve "${c.nodeTitle}" düğümüne bağlandı ama planı doldurulamadı (model işlem üretmedi).`;
-      await subService.commit(fillParsed.ops, {
-        message: 'ajan: alt kanvas planı',
-        authorId: actor.userId,
-        actor: { userId: actor.userId, role: 'owner' }, // alt kanvasın sahibi istek atan kullanıcıdır
-      });
       return `Not: "${c.name}" alt kanvası oluşturuldu, "${c.nodeTitle}" düğümüne bağlandı ve içine bir plan çizildi.`;
     } catch (err) {
       return `Not: "${c.name}" alt kanvası oluşturuldu ama planı doldurulamadı (${err instanceof Error ? err.message : String(err)}).`;
     }
   };
+
+  /**
+   * "Detaylandır": zaten bağlı bir alt kanvasın içine plan çizer. Hedefteki gerçek rol
+   * memberRole ile çözülür ve commit o rolle atılır — hedef kanvasın bölge/rol kuralları
+   * aynen işler, asla 'owner'a yükseltilmez. Her sorun Türkçe nota döner, turu düşürmez.
+   */
+  const elaborateSubCanvas = async (f: FillSubCanvasInput, roundState: GraphState): Promise<string> => {
+    const node = roundState.nodes.find((n) => n.id === f.nodeId);
+    if (!node) return `Not: "${f.nodeId}" id'li düğüm bulunamadığı için detaylandırılamadı.`;
+    if (!node.linkedCanvasId)
+      return `Not: "${node.title}" düğümünün bağlı bir alt kanvası olmadığı için oraya detaylandırma yapılamadı.`;
+    const closed = regions.filter((r) => !r.aiAllowed);
+    if (node.x != null && node.y != null &&
+        closed.some((r) => node.x! >= r.x && node.x! <= r.x + r.width && node.y! >= r.y && node.y! <= r.y + r.height))
+      return `Not: "${node.title}" düğümü AI'ya kapalı bir bölgede olduğu için detaylandırılmadı.`;
+    const subRole = await memberRole(prisma, node.linkedCanvasId, actor.userId);
+    if (!subRole)
+      return `Not: "${node.title}" düğümünün alt kanvasına erişiminiz olmadığı için (ya da kanvas silinmiş) detaylandırılamadı.`;
+    if (subRole === 'viewer')
+      return `Not: "${node.title}" düğümünün alt kanvasında rolünüz "viewer" (salt okunur) olduğu için detaylandırılamadı.`;
+    const subCanvas = await prisma.canvas.findUnique({ where: { id: node.linkedCanvasId }, select: { name: true } });
+    if (!subCanvas) return `Not: "${node.title}" düğümünün bağlı kanvası bulunamadı (silinmiş olabilir).`;
+    try {
+      const fillPrompt = `Bu kanvas, "${canvasName}" kanvasındaki "${node.title}" düğümünün alt kanvasıdır. Kullanıcı bu düğümün detaylandırılmasını istedi${f.prompt ? `: ${f.prompt}` : '.'} Mevcut planı koru ve derinleştir: eksik adımları ekle, gerekiyorsa mevcut düğümleri update_node ile zenginleştir (description/notes), yeni düğümleri mevcut akışa kenarlarla bağla.`;
+      const drew = await drawIntoSubCanvas(
+        node.linkedCanvasId, subCanvas.name, fillPrompt,
+        { userId: actor.userId, role: subRole },
+        `ajan: "${node.title}" detaylandırması`,
+      );
+      if (!drew) return `Not: "${node.title}" düğümünün alt kanvası için model işlem üretmedi.`;
+      return `Not: "${node.title}" düğümünün detayı "${subCanvas.name}" alt kanvasına çizildi.`;
+    } catch (err) {
+      return `Not: "${node.title}" düğümünün alt kanvası detaylandırılamadı (${err instanceof Error ? err.message : String(err)}).`;
+    }
+  };
   const raw = await llm(
     system,
-    buildUserText(canvasName, state, regions, actor, prompt, selectedIds, selectedRegionIds),
+    buildUserText(canvasName, state, regions, actor, prompt, selectedIds, selectedRegionIds, undefined, briefText),
   );
   const parsed = parseModelOutput(raw);
   let { reply } = parsed;
   let message = parsed.message;
   let ops: OpInput[];
   let createdSubs: CreatedSubCanvas[] = [];
+  let pendingFills: FillSubCanvasInput[] = [];
 
   if (parsed.mode === 'layout') {
     // Zihin haritası hiyerarşisini akışa dök: yerleşimi/kenarları sunucu deterministik hesaplar.
@@ -628,7 +750,13 @@ export async function runAgent(opts: {
     ops = [...kept, ...sub.linkOps];
     createdSubs = sub.created;
     for (const note of sub.notes) reply = `${reply}\n\n${note}`;
-    if (ops.length === 0) return { reply, committed: false };
+    // Mevcut alt kanvas detaylandırmaları: üst kanvasa commit gerektirmez, tur sonrası işlenir.
+    if (parsed.fillSubCanvases.length > 0) {
+      if (canFillSubCanvases) pendingFills = parsed.fillSubCanvases;
+      else reply = `${reply}\n\nNot: alt kanvas detaylandırma bu istekte kullanılamadı (yetki yok).`;
+    }
+    // "Detaylandır" turu üst kanvasa hiçbir şey yazmadan meşru olabilir (yalnızca fill).
+    if (ops.length === 0 && pendingFills.length === 0) return { reply, committed: false };
   }
 
   if (actor.role === 'viewer') {
@@ -672,31 +800,37 @@ export async function runAgent(opts: {
       ? `\n\nNot: ${subs.map((c) => `"${c.name}"`).join(', ')} alt kanvası/kanvasları oluşturuldu ama düğüme bağlanamadı; panodan ulaşabilirsiniz.`
       : '';
 
-  const first = await commitRound(ops, parts.length > 0 ? `${message} (parça 1/${total})` : message, state.headSeq);
-  if (first.kind === 'failed') {
-    return {
-      reply: `Değişiklik uygulanamadı: ${first.error}\n\nPlanlanan değişiklik: ${reply}${unlinkedNote(createdSubs)}`,
-      committed: false,
-      error: first.error,
-    };
-  }
-  if (first.kind === 'branched') {
-    return {
-      reply: `${reply}\n\nNot: bu sırada kanvas değişip çakışma oluştuğu için değişiklikler "${first.branch}" dalına yazıldı. Dallar panelinden birleştirebilir veya iptal edebilirsiniz.${
-        parts.length > 0 ? ' Kalan parçalar üretilmedi.' : ''
-      }${unlinkedNote(createdSubs)}`,
-      committed: false,
-      branched: true,
-      branch: first.branch,
-    };
-  }
-
-  let commitSeq = first.seq;
-  let opCount = ops.length;
+  // "Yalnızca detaylandırma" turunda üst kanvasa commit yoktur; ops varsa normal tur işler.
+  let commitSeq: number | undefined;
+  let opCount = 0;
   const replies = [reply];
+  if (ops.length > 0) {
+    const first = await commitRound(ops, parts.length > 0 ? `${message} (parça 1/${total})` : message, state.headSeq);
+    if (first.kind === 'failed') {
+      return {
+        reply: `Değişiklik uygulanamadı: ${first.error}\n\nPlanlanan değişiklik: ${reply}${unlinkedNote(createdSubs)}`,
+        committed: false,
+        error: first.error,
+      };
+    }
+    if (first.kind === 'branched') {
+      return {
+        reply: `${reply}\n\nNot: bu sırada kanvas değişip çakışma oluştuğu için değişiklikler "${first.branch}" dalına yazıldı. Dallar panelinden birleştirebilir veya iptal edebilirsiniz.${
+          parts.length > 0 ? ' Kalan parçalar üretilmedi.' : ''
+        }${unlinkedNote(createdSubs)}`,
+        committed: false,
+        branched: true,
+        branch: first.branch,
+      };
+    }
+    commitSeq = first.seq;
+    opCount = ops.length;
+  }
 
   // Bağ commit'i durduğuna göre yeni alt kanvasların içi doldurulabilir (hatalar nota döner).
   for (const c of createdSubs) replies.push(await fillSubCanvas(c));
+  // Mevcut alt kanvas detaylandırmaları: her biri kendi kanvasına ayrı bir commit (hatalar nota döner).
+  for (const f of pendingFills) replies.push(await elaborateSubCanvas(f, state));
 
   // Kalan parçalar: her biri taze durum üzerinde ayrı bir LLM çağrısı + ayrı bir commit.
   for (let i = 0; i < parts.length; i++) {
@@ -709,12 +843,12 @@ export async function runAgent(opts: {
         system,
         buildUserText(canvasName, partState, regions, actor, prompt, selectedIds, selectedRegionIds, {
           title: partTitle, index: partNo, total, remaining: parts.slice(i + 1),
-        }),
+        }, briefText),
       );
     } catch (err) {
       // Önceki parçalar commit'li kaldı; model hatası üretimi keser ama sonucu bozmaz.
       replies.push(`Not: "${partTitle}" parçası üretilemedi (${err instanceof Error ? err.message : String(err)}); kalan parçalar atlandı.`);
-      return { reply: replies.join('\n\n'), committed: true, commitSeq, opCount };
+      return { reply: replies.join('\n\n'), committed: commitSeq !== undefined, commitSeq, opCount };
     }
     const partParsed = parseModelOutput(partRaw);
     const partRegionNote = await applyNewRegions(partParsed.newRegions);
@@ -727,24 +861,28 @@ export async function runAgent(opts: {
     const partSub = await applyNewSubCanvases(partParsed.newSubCanvases, partState, partFilter.kept);
     for (const note of partSub.notes) replies.push(note);
     const partOps = [...partFilter.kept, ...partSub.linkOps];
-    if (partOps.length === 0) {
+    const partFills = canFillSubCanvases ? partParsed.fillSubCanvases : [];
+    if (partOps.length === 0 && partFills.length === 0) {
       replies.push(`Not: "${partTitle}" parçası için işlem üretilmedi, atlandı.`);
       continue;
     }
-    const round = await commitRound(partOps, `${partTitle} (parça ${partNo}/${total})`, partState.headSeq);
-    if (round.kind === 'failed') {
-      replies.push(`Not: "${partTitle}" parçası uygulanamadı (${round.error}); kalan parçalar üretilmedi. Önceki parçalar kanvasta duruyor.${unlinkedNote(partSub.created)}`);
-      return { reply: replies.join('\n\n'), committed: true, commitSeq, opCount, error: round.error };
+    if (partOps.length > 0) {
+      const round = await commitRound(partOps, `${partTitle} (parça ${partNo}/${total})`, partState.headSeq);
+      if (round.kind === 'failed') {
+        replies.push(`Not: "${partTitle}" parçası uygulanamadı (${round.error}); kalan parçalar üretilmedi. Önceki parçalar kanvasta duruyor.${unlinkedNote(partSub.created)}`);
+        return { reply: replies.join('\n\n'), committed: commitSeq !== undefined, commitSeq, opCount, error: round.error };
+      }
+      if (round.kind === 'branched') {
+        replies.push(`Not: "${partTitle}" parçası çakışma yüzünden "${round.branch}" dalına yazıldı; kalan parçalar üretilmedi. Dallar panelinden birleştirebilir veya iptal edebilirsiniz.${unlinkedNote(partSub.created)}`);
+        return { reply: replies.join('\n\n'), committed: commitSeq !== undefined, commitSeq, opCount, branched: true, branch: round.branch };
+      }
+      commitSeq = round.seq;
+      opCount += partOps.length;
+      replies.push(partParsed.reply || `"${partTitle}" parçası eklendi.`);
     }
-    if (round.kind === 'branched') {
-      replies.push(`Not: "${partTitle}" parçası çakışma yüzünden "${round.branch}" dalına yazıldı; kalan parçalar üretilmedi. Dallar panelinden birleştirebilir veya iptal edebilirsiniz.${unlinkedNote(partSub.created)}`);
-      return { reply: replies.join('\n\n'), committed: true, commitSeq, opCount, branched: true, branch: round.branch };
-    }
-    commitSeq = round.seq;
-    opCount += partOps.length;
-    replies.push(partParsed.reply || `"${partTitle}" parçası eklendi.`);
     for (const c of partSub.created) replies.push(await fillSubCanvas(c));
+    for (const f of partFills) replies.push(await elaborateSubCanvas(f, partState));
   }
 
-  return { reply: replies.join('\n\n'), committed: true, commitSeq, opCount };
+  return { reply: replies.join('\n\n'), committed: commitSeq !== undefined, commitSeq, opCount };
 }

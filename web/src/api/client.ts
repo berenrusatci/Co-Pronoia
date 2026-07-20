@@ -1,6 +1,6 @@
 import type {
   AdminCanvasInfo, AdminGroupInfo, AdminStats, AdminUserInfo, AgentRoleInfo, AgentTokenInfo,
-  BranchInfo, CanvasAccess, CanvasInfo, CanvasPreview, CanvasType, Commit, CommitSummary, EdgeDirection, EdgeKind,
+  BranchInfo, CanvasAccess, CanvasBriefInfo, CanvasBriefRevisionInfo, CanvasInfo, CanvasPreview, CanvasType, Commit, CommitSummary, EdgeDirection, EdgeKind,
   GraphState, GroupInfo, GroupMemberInfo, GroupRole, GroupRoleDefInfo, GroupType, MemberInfo, NodeFields, NodeType,
   OpInput, PlanProposalInfo, RegionInfo, SiteAppearance,
 } from '@treemapper/shared';
@@ -136,6 +136,10 @@ export const api = {
   setMemberRole: (userId: string, role: 'editor' | 'viewer') =>
     patch<{ members: MemberInfo[] }>(`${base()}/members/${userId}`, { role }),
   removeMember: (userId: string) => del<{ members: MemberInfo[] }>(`${base()}/members/${userId}`),
+
+  getBrief: () => request<{ brief: CanvasBriefInfo }>(`${base()}/brief`),
+  getBriefRevisions: () => request<{ revisions: CanvasBriefRevisionInfo[] }>(`${base()}/brief/revisions`),
+  putBrief: (content: string) => put<{ brief: CanvasBriefInfo }>(`${base()}/brief`, { content }),
 
   getRegions: () => request<{ regions: RegionInfo[] }>(`${base()}/regions`),
   createRegion: (data: { name: string; x: number; y: number; width: number; height: number; color?: string; description?: string; aiAllowed?: boolean }) =>

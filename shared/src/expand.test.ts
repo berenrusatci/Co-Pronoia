@@ -5,7 +5,7 @@ import type { PlanNode } from './types.js';
 
 const node = (id: string, parentId: string | null = null, extra: Partial<PlanNode> = {}): PlanNode => ({
   id, parentId, title: `Node ${id}`, description: '', nodeType: 'task', status: 'planned',
-  x: null, y: null, linkedCanvasId: null, createdCommit: 1, updatedCommit: 1, ...extra,
+  x: null, y: null, linkedCanvasId: null, notes: '', data: {}, createdCommit: 1, updatedCommit: 1, ...extra,
 });
 
 /** root ← a ← b, root ← c, edges a→c and b→root. */
@@ -59,6 +59,23 @@ describe('expand', () => {
       after: { linkedCanvasId: 'canvas-2' },
     });
     expect(expand(g, { op: 'update_node', id: 'a', fields: { linkedCanvasId: null } }, [])).toEqual([]);
+  });
+
+  it('notes/data: add_node fills defaults, update canonicalizes, deep-equal data is a no-op', () => {
+    const g = fixture();
+    const [added] = expand(g, { op: 'add_node', id: 'n1', title: 'N' }, []);
+    expect(added).toMatchObject({ op: 'add_node', node: { notes: '', data: {} } });
+
+    const [op] = expand(g, { op: 'update_node', id: 'a', fields: { notes: 'uzun not', data: { b: '2', a: '1' } } }, []);
+    expect(op).toEqual({
+      op: 'update_node', id: 'a',
+      before: { notes: '', data: {} },
+      after: { notes: 'uzun not', data: { a: '1', b: '2' } }, // kanonik: anahtarlar sıralı
+    });
+    applyOp(g, op, 6);
+    // Aynı içerik, farklı referans ve anahtar sırası → değişiklik yok.
+    expect(expand(g, { op: 'update_node', id: 'a', fields: { data: { b: '2', a: '1' } } }, [])).toEqual([]);
+    expect(expand(g, { op: 'update_node', id: 'a', fields: { data: { a: '1', b: '3' } } }, [])).toHaveLength(1);
   });
 
   it('no-op update/move expand to []', () => {

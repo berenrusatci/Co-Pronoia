@@ -49,15 +49,15 @@ async function freshCanvas() {
 const asLlm = (payload: unknown): Llm => async () => JSON.stringify(payload);
 
 /** Gruba bağlı kanvas + serviceFor geçirilen run: alt kanvas (newSubCanvases) testleri için. */
-async function freshGroupCanvas() {
+async function freshGroupCanvas(type: 'plan' | 'co-pronoia' = 'plan') {
   const built = await buildApp(await db.fresh());
   opened.push(built);
   const owner = await built.prisma.user.create({ data: { username: 'owner', passwordHash: 'x' } });
   const group = await built.prisma.group.create({
-    data: { name: 'Ekip', members: { create: { userId: owner.id, role: 'admin', status: 'approved' } } },
+    data: { name: 'Ekip', type, members: { create: { userId: owner.id, role: 'admin', status: 'approved' } } },
   });
   const canvas = await createCanvas(built.prisma, built.serviceFor, 'Test', owner.id, {
-    seedRoot: false, groupId: group.id,
+    seedRoot: false, groupId: group.id, type,
   });
   const service = built.serviceFor(canvas.id);
   await service.commit([{ op: 'add_node', id: 'root', title: 'Kök' }]);
@@ -565,6 +565,20 @@ describe('agent', () => {
     expect(await service.rebuildCheck()).toBe(true);
   });
 
+  it('sub-canvases inherit the parent canvas type (co-pronoia stays co-pronoia so MCP tokens work)', async () => {
+    const { prisma, canvas, run } = await freshGroupCanvas('co-pronoia');
+    const llm: Llm = async () =>
+      JSON.stringify({
+        mode: 'diagram', reply: 'Alt kanvas açtım.', message: 'detay',
+        newSubCanvases: [{ nodeId: 'root', name: 'Kök Planı' }],
+      });
+    const result = await run(llm);
+
+    expect(result.committed).toBe(true);
+    const sub = await prisma.canvas.findFirst({ where: { id: { not: canvas.id } } });
+    expect(sub!.type).toBe('co-pronoia');
+  });
+
   it('drops newSubCanvases without canvas-create permission; ops still commit', async () => {
     const { prisma, service, group, canvas, run } = await freshGroupCanvas();
     const member = await prisma.user.create({ data: { username: 'kisitli', passwordHash: 'x' } });
@@ -669,6 +683,214 @@ describe('agent', () => {
     expect(root.title).toBe('Yeni Kök'); // kalan alan uygulandı
     expect(root.linkedCanvasId).toBe(existing.id); // hileli id yazılmadı
     expect(state.nodes.find((n) => n.id === 's1')!.linkedCanvasId).toBeNull();
+  });
+
+  it('notes/data: prompt anlatır, projeksiyon taşır, ops içindeki alanlar commit edilir', async () => {
+    const { service, run } = await freshCanvas();
+    await service.commit([{ op: 'update_node', id: 'root', fields: { notes: 'kök notu', data: { sahip: 'bora' } } }]);
+    const calls: Array<{ system: string; user: string }> = [];
+    const llm: Llm = async (system, user) => {
+      calls.push({ system, user });
+      return JSON.stringify({
+        mode: 'diagram', reply: 'Ekledim.', message: 'notlu düğüm',
+        ops: [
+          { op: 'add_node', id: 'n1', title: 'Adım', notes: '# Ayrıntı\nuzun metin', data: { tahmin: '3g' } },
+          { op: 'update_node', id: 'root', fields: { data: { sahip: 'ayşe' } } },
+        ],
+      });
+    };
+    const result = await run(llm);
+    expect(calls[0].system).toContain('NOTES/DATA');
+    expect(calls[0].user).toContain('kök notu'); // projeksiyon notes taşıyor
+    expect(calls[0].user).toContain('"sahip":"bora"');
+    expect(result.committed).toBe(true);
+    const state = await service.getState();
+    expect(state.nodes.find((n) => n.id === 'n1')!.notes).toBe('# Ayrıntı\nuzun metin');
+    expect(state.nodes.find((n) => n.id === 'n1')!.data).toEqual({ tahmin: '3g' });
+    expect(state.nodes.find((n) => n.id === 'root')!.data).toEqual({ sahip: 'ayşe' });
+    expect(await service.rebuildCheck()).toBe(true);
+  });
+
+  it('detaylandır: ops boş + newSubCanvases → üst kanvasa yalnız bağ commit\'i iner', async () => {
+    const { prisma, service, serviceFor, run } = await freshGroupCanvas();
+    const calls: string[] = [];
+    const llm: Llm = async (system) => {
+      calls.push(system);
+      if (calls.length === 1) {
+        return JSON.stringify({
+          mode: 'diagram', reply: 'Detay alt kanvasa.', message: 'detaylandırma',
+          ops: [], // üst kanvasa içerik yok — DETAYLANDIRMA kuralına uygun
+          newSubCanvases: [{ nodeId: 'root', name: 'Kök Detayı' }],
+        });
+      }
+      return JSON.stringify({
+        mode: 'diagram', reply: 'Plan.', message: 'iç plan',
+        ops: [{ op: 'add_node', id: 'd1', title: 'Detay adımı' }],
+      });
+    };
+    const result = await run(llm);
+    expect(calls[0]).toContain('DETAYLANDIRMA (kesin)');
+    expect(result.committed).toBe(true);
+    const state = await service.getState();
+    // Üst kanvasta içerik düğümü YOK; yalnızca kök + bağ.
+    expect(state.nodes).toHaveLength(1);
+    const sub = await prisma.canvas.findFirst({ where: { name: 'Kök Detayı' } });
+    expect(state.nodes[0].linkedCanvasId).toBe(sub!.id);
+    expect((await serviceFor(sub!.id).getState()).nodes.some((n) => n.id === 'd1')).toBe(true);
+  });
+
+  it('fillSubCanvases: bağlı düğümün detayı mevcut alt kanvasa çizilir, üst kanvasa commit inmez', async () => {
+    const { prisma, service, serviceFor, group, owner, run } = await freshGroupCanvas();
+    const sub = await createCanvas(prisma, serviceFor, 'Mevcut Plan', owner.id, { groupId: group.id });
+    await service.commit([{ op: 'update_node', id: 'root', fields: { linkedCanvasId: sub.id } }]);
+    const parentHead = (await service.getState()).headSeq;
+    const subHead = (await serviceFor(sub.id).getState()).headSeq;
+
+    const calls: Array<{ system: string; user: string }> = [];
+    const subCommits: string[] = [];
+    const llm: Llm = async (system, user) => {
+      calls.push({ system, user });
+      if (calls.length === 1) {
+        return JSON.stringify({
+          mode: 'diagram', reply: 'Detaylandırıyorum.', message: 'detay',
+          ops: [],
+          fillSubCanvases: [{ nodeId: 'root', prompt: 'ödeme akışını derinleştir' }],
+        });
+      }
+      return JSON.stringify({
+        mode: 'diagram', reply: 'Derinleştirdim.', message: 'derin',
+        ops: [{ op: 'add_node', id: 'derin-1', title: 'Derin adım', notes: 'ayrıntı' }],
+      });
+    };
+    const result = await runAgent({
+      prisma, service, serviceFor, canvasId: (await prisma.canvas.findFirst({ where: { name: 'Test' } }))!.id,
+      canvasName: 'Test', prompt: 'kökü detaylandır', actor: { userId: owner.id, role: 'owner' }, llm,
+      onSubCommit: (subId) => subCommits.push(subId),
+    });
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0].system).toContain('fillSubCanvases');
+    expect(calls[1].user).toContain('ödeme akışını derinleştir'); // model prompt'u fill çağrısına taşındı
+    expect(result.committed).toBe(false); // üst kanvasa commit yok
+    expect(result.reply).toContain('alt kanvasına çizildi');
+    expect((await service.getState()).headSeq).toBe(parentHead); // üst kanvas dokunulmadı
+    const subState = await serviceFor(sub.id).getState();
+    expect(subState.headSeq).toBe(subHead + 1);
+    expect(subState.nodes.some((n) => n.id === 'derin-1')).toBe(true);
+    expect(subCommits).toEqual([sub.id]);
+    expect(await serviceFor(sub.id).rebuildCheck()).toBe(true);
+    expect(await service.rebuildCheck()).toBe(true);
+    expect(run).toBeTruthy();
+  });
+
+  it('fillSubCanvases: hedefte üyelik yoksa ya da rol viewer ise notla düşer, commit inmez', async () => {
+    const { prisma, service, serviceFor, group, owner, canvas } = await freshGroupCanvas();
+    const other = await prisma.user.create({ data: { username: 'baskasi', passwordHash: 'x' } });
+    // Ajanı çağıran kullanıcı: kanvas erişimi 'none' olan bir role sahip sıradan grup üyesi
+    // (grup admin'i olsaydı memberRole onu her grup kanvasında editör sayardı).
+    const kisitli = await prisma.user.create({ data: { username: 'kisitli', passwordHash: 'x' } });
+    const roleDef = await prisma.groupRoleDef.create({
+      data: { groupId: group.id, name: 'dar', defaultCanvasAccess: 'none' },
+    });
+    await prisma.groupMember.create({
+      data: { groupId: group.id, userId: kisitli.id, status: 'approved', roleDefId: roleDef.id },
+    });
+    await prisma.canvasMember.create({ data: { canvasId: canvas.id, userId: kisitli.id, role: 'editor' } });
+    // Alt kanvasların sahibi başka biri; kisitli birinde hiç üye değil, diğerinde viewer.
+    const foreignSub = await createCanvas(prisma, serviceFor, 'Yabancı Plan', other.id, { groupId: group.id });
+    const viewerSub = await createCanvas(prisma, serviceFor, 'Salt Okunur Plan', other.id, { groupId: group.id });
+    await prisma.canvasMember.create({ data: { canvasId: viewerSub.id, userId: kisitli.id, role: 'viewer' } });
+    await service.commit([
+      { op: 'add_node', id: 'n-yabanci', title: 'Yabancı', linkedCanvasId: foreignSub.id },
+      { op: 'add_node', id: 'n-viewer', title: 'İzleyici', linkedCanvasId: viewerSub.id },
+      { op: 'add_node', id: 'n-bagsiz', title: 'Bağsız' },
+    ]);
+
+    let llmCalls = 0;
+    const llm: Llm = async () => {
+      llmCalls++;
+      return JSON.stringify({
+        mode: 'diagram', reply: 'Deniyorum.', message: 'detay',
+        ops: [],
+        fillSubCanvases: [
+          { nodeId: 'n-yabanci' },
+          { nodeId: 'hayalet' },
+          { nodeId: 'n-viewer' },
+          { nodeId: 'n-bagsiz' }, // 4. kayıt: MAX_FILL_SUBCANVASES sınırında düşer
+        ],
+      });
+    };
+    const result = await runAgent({
+      prisma, service, serviceFor, canvasId: canvas.id, canvasName: canvas.name,
+      prompt: 'hepsini detaylandır', actor: { userId: kisitli.id, role: 'editor' }, llm,
+    });
+
+    expect(llmCalls).toBe(1); // hiçbir hedef için fill çağrısı yapılmadı
+    expect(result.committed).toBe(false);
+    expect(result.reply).toContain('erişiminiz olmadığı');
+    expect(result.reply).toContain('salt okunur');
+    expect(result.reply).toContain('bulunamadığı');
+    expect(result.reply).not.toContain('Bağsız'); // sınır: 4. kayıt hiç işlenmedi
+    expect((await serviceFor(foreignSub.id).getState()).headSeq).toBe(1); // yalnızca seed commit
+    expect((await serviceFor(viewerSub.id).getState()).headSeq).toBe(1);
+    expect(owner.id).toBeTruthy();
+  });
+
+  it('fillSubCanvases diagram dışı modlarda temizlenir; viewer aktörle yetenek kapalı', async () => {
+    const { prisma, service, serviceFor, group, owner, canvas } = await freshGroupCanvas();
+    const sub = await createCanvas(prisma, serviceFor, 'Hedef', owner.id, { groupId: group.id });
+    await service.commit([{ op: 'update_node', id: 'root', fields: { linkedCanvasId: sub.id } }]);
+
+    // summary modunda fillSubCanvases yok sayılır.
+    let calls = 0;
+    const summaryLlm: Llm = async () => {
+      calls++;
+      return JSON.stringify({ mode: 'summary', reply: 'Özet.', fillSubCanvases: [{ nodeId: 'root' }] });
+    };
+    const r1 = await runAgent({
+      prisma, service, serviceFor, canvasId: canvas.id, canvasName: canvas.name,
+      prompt: 'özetle', actor: { userId: owner.id, role: 'owner' }, llm: summaryLlm,
+    });
+    expect(calls).toBe(1);
+    expect(r1.committed).toBe(false);
+    expect((await serviceFor(sub.id).getState()).headSeq).toBe(1);
+
+    // viewer: sistem prompt'unda DETAYLANDIRMA kuralı yok, sızan fillSubCanvases nota döner.
+    const viewer = await prisma.user.create({ data: { username: 'izleyen', passwordHash: 'x' } });
+    let viewerSystem = '';
+    const viewerLlm: Llm = async (s) => {
+      viewerSystem = s;
+      return JSON.stringify({
+        mode: 'diagram', reply: 'Deniyorum.', message: 'x',
+        ops: [], fillSubCanvases: [{ nodeId: 'root' }],
+      });
+    };
+    const r2 = await runAgent({
+      prisma, service, serviceFor, canvasId: canvas.id, canvasName: canvas.name,
+      prompt: 'detaylandır', actor: { userId: viewer.id, role: 'viewer' }, llm: viewerLlm,
+    });
+    expect(viewerSystem).not.toContain('DETAYLANDIRMA (kesin)');
+    expect(r2.committed).toBe(false);
+    expect(r2.reply).toContain('kullanılamadı');
+    expect((await serviceFor(sub.id).getState()).headSeq).toBe(1);
+  });
+
+  it('kanvas notu (brief) ajan bağlamına taşınır; boşken blok hiç eklenmez', async () => {
+    const { prisma, canvas, run } = await freshCanvas();
+    let user = '';
+    const llm: Llm = async (_s, u) => {
+      user = u;
+      return JSON.stringify({ mode: 'summary', reply: 'Tamam.' });
+    };
+    await run(llm);
+    expect(user).not.toContain('KANVAS NOTU');
+
+    await prisma.canvasBriefRevision.create({
+      data: { canvasId: canvas.id, content: 'Hedef: MVP önce ödeme akışı.', authorLabel: 'sahip' },
+    });
+    await run(llm);
+    expect(user).toContain('KANVAS NOTU');
+    expect(user).toContain('Hedef: MVP önce ödeme akışı.');
   });
 
   it('reports invalid ops as an error reply instead of throwing', async () => {

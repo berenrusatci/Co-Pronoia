@@ -114,7 +114,18 @@ export function NodeCard({ data, selected }: NodeProps<FlowNode>) {
       <div className="node-card-meta">
         <span className={`status-pill status-${plan.status}`}>{statusLabels[plan.status]}</span>
         <span className="commit-badge">{plan.createdCommit === 0 ? 'yeni•' : `#${plan.createdCommit}`}</span>
+        {plan.notes && <span title="Bu düğümde uzun not var (düzenleyicide görün)">📝</span>}
       </div>
+      {Object.keys(plan.data).length > 0 && (
+        <div className="node-card-meta" title={Object.entries(plan.data).map(([k, v]) => `${k}: ${v}`).join('\n')}>
+          {Object.entries(plan.data).slice(0, 3).map(([k, v]) => (
+            <span key={k} className="commit-badge">{k}: {v.length > 12 ? `${v.slice(0, 12)}…` : v}</span>
+          ))}
+          {Object.keys(plan.data).length > 3 && (
+            <span className="commit-badge">+{Object.keys(plan.data).length - 3}</span>
+          )}
+        </div>
+      )}
       {exporting && plan.description && <div className="node-card-desc">{plan.description}</div>}
       {plan.linkedCanvasId && <SubCanvasPreview canvasId={plan.linkedCanvasId} />}
       {showChildButton && !readOnly && (

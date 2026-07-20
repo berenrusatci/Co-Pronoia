@@ -99,7 +99,7 @@ export async function buildApp(dbUrl: string, opts?: { emailSender?: EmailSender
     // gibi mesajlar bekleyicileri ilgilendirmez, onlar için sinyal üretilmez).
     if (
       msg.type === 'commit' || msg.type === 'branch_created' ||
-      msg.type === 'branch_resolved' || msg.type === 'proposals'
+      msg.type === 'branch_resolved' || msg.type === 'proposals' || msg.type === 'brief'
     )
       canvasEvents.notify(canvasId);
   };

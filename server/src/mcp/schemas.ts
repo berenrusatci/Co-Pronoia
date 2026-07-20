@@ -12,6 +12,11 @@ const nodeStatus = z.enum(['planned', 'in_progress', 'done']);
 const edgeKind = z.enum(['flow', 'loop', 'dependency', 'relation']);
 const edgeDirection = z.enum(['directed', 'bidirectional']);
 
+/** Serbest özel alanlar: en fazla 50 anahtar, string değerler. */
+const nodeData = z
+  .record(z.string().min(1).max(100), z.string().max(2000))
+  .refine((v) => Object.keys(v).length <= 50, { message: 'en fazla 50 özel alan' });
+
 const nodeFields = z
   .object({
     parentId: z.string().nullable(),
@@ -20,6 +25,8 @@ const nodeFields = z
     nodeType,
     status: nodeStatus,
     linkedCanvasId: z.string().nullable(),
+    notes: z.string().max(20000),
+    data: nodeData,
   })
   .partial();
 
@@ -35,6 +42,8 @@ export const opInputSchema = z.discriminatedUnion('op', [
     x: z.number().finite().nullable().optional(),
     y: z.number().finite().nullable().optional(),
     linkedCanvasId: z.string().nullable().optional(),
+    notes: z.string().max(20000).optional(),
+    data: nodeData.optional(),
   }),
   z.object({ op: z.literal('update_node'), id: z.string(), fields: nodeFields }),
   z.object({ op: z.literal('delete_node'), id: z.string() }),
