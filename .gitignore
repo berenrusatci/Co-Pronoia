@@ -11,3 +11,6 @@ server/data/
 *~
 # Claude Code yerel ayarları ve worktree'leri (içinde ayrı git depoları var).
 .claude/
+
+# Yerel MCP yapılandırması: canlı ajan token'larını (tma_) içerir — asla commitlenmez.
+.mcp.json
