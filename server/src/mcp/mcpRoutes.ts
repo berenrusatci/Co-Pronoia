@@ -3,6 +3,7 @@ import type { PrismaClient } from '@prisma/client';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { ServerMessage } from '@treemapper/shared';
 import type { ServiceFor } from '../canvasService.js';
+import type { CanvasEvents } from '../canvasEvents.js';
 import { resolveAgentToken } from '../agentRoleService.js';
 import { buildCoPronoiaServer } from './mcpServer.js';
 
@@ -20,6 +21,7 @@ export function registerMcpRoutes(
   prisma: PrismaClient,
   serviceFor: ServiceFor,
   broadcast: Broadcast,
+  events: CanvasEvents,
 ): void {
   app.post('/api/mcp', async (req, reply) => {
     const auth = req.headers.authorization ?? '';
@@ -29,7 +31,7 @@ export function registerMcpRoutes(
     if (token.canvas.type !== 'co-pronoia')
       return reply.code(403).send({ error: 'bu anahtarın kanvası artık co-pronoia türünde değil' });
 
-    const server = buildCoPronoiaServer({ prisma, serviceFor, broadcast, token });
+    const server = buildCoPronoiaServer({ prisma, serviceFor, broadcast, events, token });
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,

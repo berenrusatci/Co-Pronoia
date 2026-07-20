@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { PrismaClient } from '@prisma/client';
 import type { ServerMessage } from '@treemapper/shared';
 import { listRegions, type ServiceFor } from '../canvasService.js';
+import type { CanvasEvents } from '../canvasEvents.js';
 import { listAgentTokens, type ResolvedAgentToken } from '../agentRoleService.js';
 import {
   approveProposal, decideProposal, getProposal, listProposals, submitProposal,
@@ -14,8 +15,47 @@ export interface McpContext {
   prisma: PrismaClient;
   serviceFor: ServiceFor;
   broadcast: (canvasId: string, msg: ServerMessage) => void;
+  events: CanvasEvents;
   token: ResolvedAgentToken;
 }
+
+/**
+ * wait_for_changes üst sınırı: Streamable HTTP yanıtı bekleme boyunca açık kalır; 25 sn,
+ * Node'un http requestTimeout'unun (varsayılan 300 sn — yalnızca isteğin ALINMASINI sınırlar,
+ * yanıtı değil) ve tipik proxy read-timeout'larının (30-60 sn) güvenle altındadır.
+ */
+const WAIT_MAX_MS = 25_000;
+const WAIT_DEFAULT_MS = 20_000;
+
+type ProposalSnapshot = Map<
+  string,
+  { status: string; branchName: string | null; appliedCommitSeq: number | null; updatedAt: Date }
+>;
+
+/** Değişen önerilerin özeti; status: null = öneri artık yok (kanvasla birlikte silinmiş). */
+type ChangedProposal = {
+  id: string;
+  status: string | null;
+  branchName: string | null;
+  appliedCommitSeq: number | null;
+};
+
+const diffProposals = (baseline: ProposalSnapshot, current: ProposalSnapshot): ChangedProposal[] => {
+  const changed: ChangedProposal[] = [];
+  for (const id of new Set([...baseline.keys(), ...current.keys()])) {
+    const b = baseline.get(id);
+    const c = current.get(id);
+    // updatedAt karşılaştırması, statüyü değiştirmeyen update_proposal'ı da (revize edilmiş
+    // içerik, durum yine 'submitted') değişiklik sayar — süpervizör bunu görmek ister.
+    if (b && c && b.status === c.status && b.updatedAt.getTime() === c.updatedAt.getTime()) continue;
+    changed.push(
+      c
+        ? { id, status: c.status, branchName: c.branchName, appliedCommitSeq: c.appliedCommitSeq }
+        : { id, status: null, branchName: null, appliedCommitSeq: null },
+    );
+  }
+  return changed;
+};
 
 const text = (s: string) => ({ content: [{ type: 'text' as const, text: s }] });
 const errText = (s: string) => ({ isError: true as const, content: [{ type: 'text' as const, text: s }] });
@@ -30,7 +70,7 @@ const proposalStatus = z.enum(['submitted', 'changes_requested', 'withdrawn', 'r
  * aracı bilinçli olarak YOKTUR — main'e giden tek yol süpervizörün approve_proposal'ıdır.
  */
 export function buildCoPronoiaServer(ctx: McpContext): McpServer {
-  const { prisma, serviceFor, broadcast, token } = ctx;
+  const { prisma, serviceFor, broadcast, events, token } = ctx;
   const canvasId = token.canvasId;
   const label = `${token.label}/${token.role.name}`;
 
@@ -54,13 +94,14 @@ export function buildCoPronoiaServer(ctx: McpContext): McpServer {
       const supervisorRules = token.role.isSupervisor
         ? [
             'SEN SÜPERVİZÖRSÜN: diğer ajanların önerilerini list_proposals/get_proposal ile incele.',
+            'Yeni/güncellenen önerileri beklerken list_proposals ile dönüp durma: wait_for_changes çağır — bir öneri değişince ya da yeni öneri gelince hemen döner, timedOut: true dönerse tekrar çağır.',
             'En uyumlu planı kur: uyumlu önerileri approve_proposal ile sırayla onayla (her onay güncel duruma karşı yeniden doğrulanır ve normal commit denetimlerinden geçer).',
             'Çakışan/uygunsuz önerilere reject_proposal, düzeltilebilir olanlara request_changes uygula (note alanına Türkçe gerekçe yaz).',
             'Gerekirse birleşik planı kendin submit_proposal ile önerip onaylayabilirsin.',
           ]
         : [
             'Öneri hazırla: get_state ile durumu oku, submit_proposal ile plan öner (title + summary + intents + baseSeq).',
-            'Hiçbir önerin süpervizör onayı olmadan kanvasa uygulanmaz. Kararları düzenli aralıklarla list_proposals ile yokla.',
+            'Hiçbir önerin süpervizör onayı olmadan kanvasa uygulanmaz. Kararı beklerken list_proposals ile dönüp durma: wait_for_changes {proposalIds: [öneri id], sinceSeq: baseSeq} çağır — durum değişince ya da head ilerleyince hemen döner, timedOut: true dönerse tekrar çağır.',
             "request_changes gelirse update_proposal ile düzelt; vazgeçersen withdraw_proposal kullan.",
           ];
       const brief = [
@@ -132,6 +173,80 @@ export function buildCoPronoiaServer(ctx: McpContext): McpServer {
     'list_agents',
     { description: 'Bu kanvasa tanımlı ajan kadrosunu listele (etiket, rol, süpervizör mü, son görülme).' },
     async () => json(await listAgentTokens(prisma, canvasId)),
+  );
+
+  server.registerTool(
+    'wait_for_changes',
+    {
+      description:
+        'Long-poll: kanvasta değişiklik bekle — list_proposals ile dönüp durmak yerine bunu kullan. ' +
+        "Head commit sinceSeq'i geçince (verilmezse çağrı anındaki head esas alınır) YA DA izlenen bir önerinin " +
+        'durumu değişince hemen döner (proposalIds verilmezse kanvasın tüm önerileri izlenir; yeni öneri de değişiklik sayılır). ' +
+        "Değişiklik yoksa timeoutMs'e kadar (en çok 25 sn) bekleyip timedOut: true döner — o zaman tekrar çağır. " +
+        'Dönüş: { headSeq, headAdvanced, changedProposals: [{id, status, branchName, appliedCommitSeq}], timedOut }.',
+      inputSchema: {
+        sinceSeq: z.number().int().min(0).optional(),
+        proposalIds: z.array(z.string()).max(100).optional(),
+        timeoutMs: z.number().int().min(0).max(WAIT_MAX_MS).optional(),
+      },
+    },
+    async ({ sinceSeq, proposalIds, timeoutMs }, extra) => {
+      const service = serviceFor(canvasId);
+      const watchAll = proposalIds === undefined;
+      const watchedIds = [...new Set(proposalIds ?? [])];
+      const snapshot = async (): Promise<ProposalSnapshot> => {
+        if (!watchAll && watchedIds.length === 0) return new Map();
+        const rows = await prisma.planProposal.findMany({
+          // Sorgu her zaman token'ın kanvasına sabitlenir: başka kanvasın önerileri görünmez,
+          // yabancı id'ler hiçbir zaman eşleşmez (bilgi sızıntısı yok).
+          where: watchAll ? { canvasId } : { canvasId, id: { in: watchedIds } },
+          select: { id: true, status: true, branchName: true, appliedCommitSeq: true, updatedAt: true },
+        });
+        return new Map(rows.map((r) => [r.id, r]));
+      };
+
+      // Referans noktası çağrı anıdır; sinyal aboneliği ilk kontrolden ÖNCE kurulur ki
+      // kontrol ile bekleme arasına düşen bir değişiklik kaçmasın (sinyal → yeniden kontrol).
+      const baselineHead = sinceSeq ?? (await service.headSeq());
+      const baseline = await snapshot();
+      const deadline = Date.now() + (timeoutMs ?? WAIT_DEFAULT_MS);
+
+      let signaled = false;
+      let wake: (() => void) | null = null;
+      const unsubscribe = events.subscribe(canvasId, () => {
+        signaled = true;
+        wake?.();
+      });
+      try {
+        while (true) {
+          const headSeq = await service.headSeq();
+          const changedProposals = diffProposals(baseline, await snapshot());
+          const headAdvanced = headSeq > baselineHead;
+          if (headAdvanced || changedProposals.length > 0)
+            return json({ headSeq, headAdvanced, changedProposals, timedOut: false });
+          const remaining = deadline - Date.now();
+          if (remaining <= 0 || extra.signal.aborted)
+            return json({ headSeq, headAdvanced: false, changedProposals: [], timedOut: true });
+          if (!signaled) {
+            // Sinyale, kalan süreye ya da istemcinin isteği iptaline kadar uyu (DB polling yok).
+            await new Promise<void>((resolve) => {
+              const timer = setTimeout(done, remaining);
+              function done() {
+                clearTimeout(timer);
+                extra.signal.removeEventListener('abort', done);
+                wake = null;
+                resolve();
+              }
+              wake = done;
+              extra.signal.addEventListener('abort', done, { once: true });
+            });
+          }
+          signaled = false;
+        }
+      } finally {
+        unsubscribe();
+      }
+    },
   );
 
   server.registerTool(

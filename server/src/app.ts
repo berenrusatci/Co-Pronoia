@@ -17,6 +17,7 @@ import { registerCanvasRoutes } from './canvasRoutes.js';
 import { registerGroupRoutes, registerGroupMemberRoutes } from './groupRoutes.js';
 import { registerAdminRoutes } from './adminRoutes.js';
 import { registerMcpRoutes } from './mcp/mcpRoutes.js';
+import { CanvasEvents } from './canvasEvents.js';
 import { getSiteAsset, LOGIN_PREVIEW } from './siteAssetService.js';
 
 declare module 'fastify' {
@@ -82,6 +83,7 @@ export async function buildApp(dbUrl: string, opts?: { emailSender?: EmailSender
   });
 
   const wsClients = new Set<WsClient>();
+  const canvasEvents = new CanvasEvents();
   const broadcast = (canvasId: string, msg: ServerMessage) => {
     const data = JSON.stringify(msg);
     for (const c of wsClients) {
@@ -92,6 +94,14 @@ export async function buildApp(dbUrl: string, opts?: { emailSender?: EmailSender
         wsClients.delete(c);
       }
     }
+    // MCP wait_for_changes long-poll bekleyicileri aynı choke point'ten uyanır: head'i
+    // ilerletebilen ya da önerileri değiştiren her mesaj bir sinyaldir (presence/members
+    // gibi mesajlar bekleyicileri ilgilendirmez, onlar için sinyal üretilmez).
+    if (
+      msg.type === 'commit' || msg.type === 'branch_created' ||
+      msg.type === 'branch_resolved' || msg.type === 'proposals'
+    )
+      canvasEvents.notify(canvasId);
   };
 
   const broadcastPresence = (canvasId: string) => {
@@ -201,7 +211,7 @@ export async function buildApp(dbUrl: string, opts?: { emailSender?: EmailSender
   }
   registerCanvasRoutes(app, prisma, serviceFor, broadcast);
   registerGroupRoutes(app, prisma);
-  registerMcpRoutes(app, prisma, serviceFor, broadcast);
+  registerMcpRoutes(app, prisma, serviceFor, broadcast, canvasEvents);
 
   // All graph routes live under a canvas and require membership.
   await app.register(

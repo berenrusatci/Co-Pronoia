@@ -128,6 +128,7 @@ describe('MCP ucu: kimlik ve araç görünürlüğü', () => {
     const agentTools = await names(agent.secret);
     expect(agentTools).toContain('submit_proposal');
     expect(agentTools).toContain('get_brief');
+    expect(agentTools).toContain('wait_for_changes');
     expect(agentTools).not.toContain('approve_proposal');
     const supTools = await names(supervisor.secret);
     expect(supTools).toEqual(expect.arrayContaining(['approve_proposal', 'reject_proposal', 'request_changes']));
@@ -140,9 +141,11 @@ describe('MCP ucu: kimlik ve araç görünürlüğü', () => {
     expect(brief.text).toContain('Mimar personası.');
     expect(brief.text).toContain('ajan-1');
     expect(brief.text).toContain('süper-1');
+    expect(brief.text).toContain('wait_for_changes');
     expect(brief.text).not.toContain('SEN SÜPERVİZÖRSÜN');
     const supBrief = await callTool(app, supervisor.secret, 'get_brief');
     expect(supBrief.text).toContain('SEN SÜPERVİZÖRSÜN');
+    expect(supBrief.text).toContain('wait_for_changes');
   });
 });
 
@@ -296,5 +299,112 @@ describe('MCP ucu: öneri yaşam döngüsü ve süpervizör zorlaması', () => {
     expect(fail.text).toContain('görüntüleyici');
     // kanvas değişmedi
     expect((await state()).headSeq).toBe(head0);
+  });
+});
+
+describe('MCP ucu: wait_for_changes (long-poll)', () => {
+  type WaitResult = {
+    headSeq: number;
+    headAdvanced: boolean;
+    changedProposals: { id: string; status: string | null; branchName: string | null }[];
+    timedOut: boolean;
+  };
+
+  it('değişiklik yokken timeout süresi dolunca boş döner', async () => {
+    const { app, agent, state } = await cpSetup();
+    const head0 = (await state()).headSeq;
+    const t0 = Date.now();
+    const res = await callTool(app, agent.secret, 'wait_for_changes', { sinceSeq: head0, timeoutMs: 300 });
+    expect(res.isError).toBe(false);
+    const body = JSON.parse(res.text) as WaitResult;
+    expect(body.timedOut).toBe(true);
+    expect(body.headAdvanced).toBe(false);
+    expect(body.headSeq).toBe(head0);
+    expect(body.changedProposals).toEqual([]);
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(250);
+  });
+
+  it('bekleme sırasında başka bir istemci commit atınca erken döner', async () => {
+    const { app, cookies, canvasId, agent, state } = await cpSetup();
+    const head0 = (await state()).headSeq;
+    const t0 = Date.now();
+    const waiting = callTool(app, agent.secret, 'wait_for_changes', { sinceSeq: head0, timeoutMs: 10_000 });
+    // long-poll gerçekten beklemeye geçsin, sonra insan HTTP'den commit atsın
+    await new Promise((r) => setTimeout(r, 150));
+    const human = await app.inject({
+      method: 'POST', url: `/api/canvases/${canvasId}/commit`, cookies,
+      payload: { ops: [{ op: 'add_node', title: 'Araya giren' }], baseSeq: head0 },
+    });
+    expect(human.json().result).toBe('committed');
+    const body = JSON.parse((await waiting).text) as WaitResult;
+    expect(body.timedOut).toBe(false);
+    expect(body.headAdvanced).toBe(true);
+    expect(body.headSeq).toBe(head0 + 1);
+    // timeout'u beklemedi
+    expect(Date.now() - t0).toBeLessThan(5_000);
+  });
+
+  it('izlenen önerinin durumu değişince erken döner', async () => {
+    const { app, agent, supervisor, state } = await cpSetup();
+    const head0 = (await state()).headSeq;
+    const sub = await callTool(app, agent.secret, 'submit_proposal', {
+      title: 'Beklenen', intents: [{ op: 'add_node', title: 'B' }], baseSeq: head0,
+    });
+    const proposalId = (JSON.parse(sub.text) as { id: string }).id;
+
+    const t0 = Date.now();
+    const waiting = callTool(app, agent.secret, 'wait_for_changes', {
+      proposalIds: [proposalId], sinceSeq: head0, timeoutMs: 10_000,
+    });
+    await new Promise((r) => setTimeout(r, 150));
+    const rc = await callTool(app, supervisor.secret, 'request_changes', {
+      id: proposalId, note: 'Başlığı netleştir.',
+    });
+    expect(rc.isError).toBe(false);
+    const body = JSON.parse((await waiting).text) as WaitResult;
+    expect(body.timedOut).toBe(false);
+    expect(body.headAdvanced).toBe(false);
+    expect(body.changedProposals).toEqual([
+      expect.objectContaining({ id: proposalId, status: 'changes_requested' }),
+    ]);
+    expect(Date.now() - t0).toBeLessThan(5_000);
+  });
+
+  it("başka kanvasın token'ı öneriyi göremez; iptal edilmiş anahtar 401 alır", async () => {
+    const { app, cookies, groupId, canvasId, agent, supervisor, state } = await cpSetup();
+    const head0 = (await state()).headSeq;
+    const sub = await callTool(app, agent.secret, 'submit_proposal', {
+      title: 'Gizli', intents: [{ op: 'add_node', title: 'G' }], baseSeq: head0,
+    });
+    const proposalId = (JSON.parse(sub.text) as { id: string }).id;
+
+    // aynı grupta ikinci co-pronoia kanvası + oraya bağlı anahtar
+    const canvasB = (await app.inject({
+      method: 'POST', url: '/api/canvases', cookies, payload: { name: 'B', groupId, type: 'co-pronoia' },
+    })).json().canvas.id as string;
+    const roleB = (await app.inject({
+      method: 'POST', url: `/api/groups/${groupId}/agent-roles`, cookies,
+      payload: { name: 'Gözcü', persona: 'x', isSupervisor: false },
+    })).json().role.id as string;
+    const mintB = await app.inject({
+      method: 'POST', url: `/api/canvases/${canvasB}/agent-tokens`, cookies, payload: { roleId: roleB, label: 'b-ajan' },
+    });
+    const secretB = mintB.json().secret as string;
+    const tokenB = mintB.json().token.id as string;
+
+    // B'nin bekleyicisi A'daki durum değişikliğini ne görür ne de ondan uyanır
+    const waiting = callTool(app, secretB, 'wait_for_changes', { proposalIds: [proposalId], timeoutMs: 800 });
+    await new Promise((r) => setTimeout(r, 150));
+    await callTool(app, supervisor.secret, 'request_changes', { id: proposalId, note: 'düzelt' });
+    const body = JSON.parse((await waiting).text) as WaitResult;
+    expect(body.timedOut).toBe(true);
+    expect(body.changedProposals).toEqual([]);
+
+    // iptal edilen anahtar araca hiç ulaşamaz
+    await app.inject({ method: 'DELETE', url: `/api/canvases/${canvasB}/agent-tokens/${tokenB}`, cookies });
+    const denied = await rpc(app, secretB, 'tools/call', {
+      name: 'wait_for_changes', arguments: { timeoutMs: 0 },
+    });
+    expect(denied.statusCode).toBe(401);
   });
 });
