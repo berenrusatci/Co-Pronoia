@@ -264,19 +264,13 @@ export class CommitService {
 
       let branchId: string;
       let expandBase: Graph;
-      if (personal) {
-        // Açık kişisel dal varsa yeni değişiklikler de oraya eklenir (dal state'ine göre genişletilir).
+      if (personal && (await this.appliesTo(personal, inputs))) {
+        // Açık kişisel dal varsa VE değişiklik oraya uyuyorsa aynı dala eklenir.
         branchId = personal.id;
-        const branchGraph = await this.replayGraph(2147483647, personal.id, personal.baseSeq);
-        try {
-          expandBase = branchGraph;
-          expandAll(branchGraph, inputs);
-        } catch {
-          throw new ConflictError(
-            'değişiklik açık dalınızla da uyuşmuyor — önce dalınızı birleştirin ya da atın',
-          );
-        }
+        expandBase = await this.replayGraph(2147483647, personal.id, personal.baseSeq);
       } else {
+        // Açık dal yok ya da değişiklik ona uymuyor → kullanıcıyı engellemeden yeni bir dala park et
+        // (ilk çakışmadaki davranışın aynısı). Eski hata "önce dalını birleştir" ölü uçtu.
         expandBase = await this.replayGraph(baseSeq);
         branchId = '';
       }
@@ -340,6 +334,17 @@ export class CommitService {
   }
 
   // ---------- Internals ----------
+
+  /** True when `inputs` expand cleanly against an open branch's state (so they can be appended to it). */
+  private async appliesTo(branch: { id: string; baseSeq: number }, inputs: OpInput[]): Promise<boolean> {
+    const branchGraph = await this.replayGraph(2147483647, branch.id, branch.baseSeq);
+    try {
+      expandAll(branchGraph, inputs);
+      return true;
+    } catch {
+      return false;
+    }
+  }
 
   /** Branches must exist AND belong to this canvas — never leak another canvas's branch. */
   private async findBranch(branchId: string) {

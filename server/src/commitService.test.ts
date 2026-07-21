@@ -327,6 +327,21 @@ describe('branching & co-op', () => {
     expect(await service.rebuildCheck()).toBe(true);
   });
 
+  it('a later conflict that does not fit the open branch lands on a NEW branch (never hard-blocks)', async () => {
+    const { service, u1, u2 } = await withUsers();
+    const head = await service.headSeq();
+    // u2's branch state ends up WITHOUT node 'a' (they deleted it while u1 edited it).
+    committed(await service.commit([{ op: 'update_node', id: 'a', fields: { title: 'A-u1' } }], { authorId: u1.id, baseSeq: head }));
+    const first = branched(await service.commit([{ op: 'delete_node', id: 'a' }], { authorId: u2.id, baseSeq: head }));
+    // main keeps moving on 'a'
+    committed(await service.commit([{ op: 'update_node', id: 'a', fields: { title: 'A-u1b' } }], { authorId: u1.id }));
+    // u2 edits 'a' again from a stale base → conflicts with main AND cannot expand on their
+    // branch (a is deleted there). Old behavior threw ConflictError and blocked the user.
+    const second = branched(await service.commit([{ op: 'update_node', id: 'a', fields: { title: 'A-u2' } }], { authorId: u2.id, baseSeq: head }));
+    expect(second.branch.id).not.toBe(first.branch.id);
+    expect(await service.rebuildCheck()).toBe(true);
+  });
+
   it('delete-vs-update conflict creates a branch', async () => {
     const { service, u1, u2 } = await withUsers();
     const head = await service.headSeq();
