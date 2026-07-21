@@ -1,8 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import type { PrismaClient } from '@prisma/client';
 import type { ServerMessage } from '@treemapper/shared';
-import { acceptInvite, createCanvas, inviteInfo, listCanvases, listMembers, type ServiceFor } from './canvasService.js';
+import { acceptInvite, createCanvas, createRegion, inviteInfo, listCanvases, listMembers, type ServiceFor } from './canvasService.js';
 import { memberPermissions } from './groupService.js';
+import { bundleToIntents, parseCanvasBundle, BundleError } from '@treemapper/shared';
 
 /** Dashboard-level routes: canvas list/create + invite lookup/accept (not canvas-scoped). */
 export function registerCanvasRoutes(
@@ -33,6 +34,44 @@ export function registerCanvasRoutes(
         return reply.code(400).send({ error: 'co-pronoia kanvası yalnızca co-pronoia türündeki bir grupta oluşturulabilir' });
     }
     return { canvas: await createCanvas(prisma, serviceFor, name, req.user!.id, { groupId, type }) };
+  });
+
+  /**
+   * JSON paketinden YENİ kanvas oluştur (plandaki tp3). groupId zorunlu; kanvas oluşturma yetkisi
+   * `POST /api/canvases` ile aynı kurala tabidir; owner = içe aktaran. Düğüm+kenarlar tek commit'le
+   * (aktör = içe aktaran) normal commit yolundan iner; bölgeler owner config olarak yeniden kurulur.
+   */
+  app.post<{ Body: { groupId?: string; bundle?: unknown; name?: string } | null }>('/api/canvases/import', async (req, reply) => {
+    const groupId = req.body?.groupId || undefined;
+    if (!groupId) return reply.code(400).send({ error: 'kanvas bir gruba bağlı olmalı (groupId gerekli)' });
+    let bundle;
+    try {
+      bundle = parseCanvasBundle(req.body?.bundle);
+    } catch (e) {
+      return reply.code(400).send({ error: e instanceof BundleError ? e.message : 'geçersiz paket' });
+    }
+    const name = ((req.body?.name ?? bundle.name) || 'İçe aktarılan kanvas').trim().slice(0, 80) || 'İçe aktarılan kanvas';
+    const perms = await memberPermissions(prisma, groupId, req.user!.id);
+    if (!perms) return reply.code(403).send({ error: 'bu grubun onaylı üyesi değilsiniz' });
+    if (!perms.canCreateCanvas) return reply.code(403).send({ error: 'bu grupta kanvas oluşturma yetkiniz yok' });
+
+    // Seed kök YOK: paketin kendi kökleri gelecek.
+    const canvas = await createCanvas(prisma, serviceFor, name, req.user!.id, { groupId, seedRoot: false });
+    const intents = bundleToIntents(bundle);
+    if (intents.length > 0) {
+      await serviceFor(canvas.id).commit(intents, {
+        message: `İçe aktarım: ${bundle.nodes.length} düğüm, ${bundle.edges.length} kenar`,
+        authorId: req.user!.id,
+        actor: { userId: req.user!.id, role: 'owner' },
+      });
+    }
+    for (const r of bundle.regions) {
+      await createRegion(prisma, canvas.id, {
+        name: r.name, x: r.x, y: r.y, width: r.width, height: r.height,
+        color: r.color, description: r.description, aiAllowed: r.aiAllowed,
+      });
+    }
+    return { canvas };
   });
 
   app.get<{ Params: { token: string } }>('/api/invites/:token', async (req, reply) => {

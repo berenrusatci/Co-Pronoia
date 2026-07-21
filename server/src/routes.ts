@@ -1,6 +1,8 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { PrismaClient } from '@prisma/client';
 import type { CanvasPreview, OpInput, ServerMessage } from '@treemapper/shared';
+import { buildPdfModel, resolveTemplate, serializeCanvas } from '@treemapper/shared';
+import { renderPdf } from './pdfRender.js';
 import { ConflictError, RegionError, ValidationError, type Actor } from './commitService.js';
 import {
   createInvite, createRegion, deleteCanvas, deleteRegion, getCanvasInfo, listMembers, listRegions,
@@ -17,6 +19,14 @@ type Kick = (canvasId: string, reason: 'deleted' | 'removed', userId?: string) =
 
 interface CanvasParams {
   canvasId: string;
+}
+
+/** Dosya adı için güvenli slug (Türkçe sadeleştirilir). */
+const TR_SLUG: Record<string, string> = { ç: 'c', ğ: 'g', ı: 'i', ö: 'o', ş: 's', ü: 'u', Ç: 'c', Ğ: 'g', İ: 'i', Ö: 'o', Ş: 's', Ü: 'u' };
+function slugify(name: string | null | undefined): string {
+  return (name ?? 'kanvas')
+    .replace(/[çğıöşüÇĞİÖŞÜ]/g, (ch) => TR_SLUG[ch] ?? ch)
+    .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'kanvas';
 }
 
 /**
@@ -55,6 +65,45 @@ export function registerRoutes(
   const actorOf = (req: FastifyRequest): Actor => ({ userId: req.user!.id, role: req.memberRole! });
 
   app.get('/state', async (req) => scoped(req).service.getState());
+
+  /**
+   * Zihin haritasını sunucu tarafında vektörel PDF olarak indir (`?template=a4-portrait|
+   * a3-landscape|presentation`). Üyelik preHandler'ı üye olmayana zaten 404 verir. Web'deki
+   * html-to-image rasterleştiricisinden farklı: metin seçilebilir, dosya küçük.
+   */
+  app.get<{ Params: CanvasParams; Querystring: { template?: string } }>('/pdf', async (req, reply) => {
+    const { canvasId, service } = scoped(req);
+    const [state, canvas] = await Promise.all([
+      service.getState(),
+      prisma.canvas.findUnique({ where: { id: canvasId }, select: { name: true } }),
+    ]);
+    const template = resolveTemplate(req.query.template);
+    const model = buildPdfModel(state, { title: canvas?.name ?? 'Kanvas', template: template.id });
+    const bytes = await renderPdf(model);
+    return reply
+      .header('Content-Type', 'application/pdf')
+      .header('Content-Disposition', `attachment; filename="${slugify(canvas?.name)}-plan.pdf"`)
+      .send(Buffer.from(bytes));
+  });
+
+  /**
+   * Kanvası taşınabilir JSON paketi olarak indir (plandaki tp2). Snapshot: düğümler+kenarlar+
+   * bölgeler. Üyelik preHandler'ı üye olmayana zaten 404 verir. `POST /api/canvases/import` ile
+   * yeni kanvasa geri yüklenir.
+   */
+  app.get('/export', async (req, reply) => {
+    const { canvasId, service } = scoped(req);
+    const [state, canvas, regions] = await Promise.all([
+      service.getState(),
+      prisma.canvas.findUnique({ where: { id: canvasId }, select: { name: true } }),
+      listRegions(prisma, canvasId),
+    ]);
+    const bundle = serializeCanvas(state, { name: canvas?.name ?? 'kanvas', regions });
+    return reply
+      .header('Content-Type', 'application/json; charset=utf-8')
+      .header('Content-Disposition', `attachment; filename="${slugify(canvas?.name)}-paket.json"`)
+      .send(JSON.stringify(bundle, null, 2));
+  });
 
   /** Bağlı-kanvas kartı için hafif önizleme; üyelik preHandler'ı üye olmayana zaten 404 verir. */
   app.get('/preview', async (req) => {

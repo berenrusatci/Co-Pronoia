@@ -164,6 +164,11 @@ body {
   cursor: pointer; font-size: 13px; color: var(--text);
 }
 .toolbar-right button.active { background: var(--accent-soft-bg); border-color: var(--accent-soft-border); }
+.server-pdf { display: inline-flex; gap: 4px; align-items: center; }
+.server-pdf select {
+  border: 1px solid var(--border-strong); background: var(--bg-panel); color: var(--text);
+  border-radius: 6px; padding: 4px 6px; font-size: 12px; cursor: pointer;
+}
 .theme-toggle {
   border: 1px solid var(--border-strong); background: var(--bg-panel); border-radius: 6px;
   padding: 5px 9px; cursor: pointer; font-size: 14px; line-height: 1;
@@ -517,6 +522,13 @@ body.exporting .export-btn { visibility: hidden; }
   border: 1px solid var(--border-strong); border-radius: 8px; background: var(--bg-panel); color: var(--text);
 }
 .canvas-create .login-btn { padding: 9px 18px; white-space: nowrap; }
+.import-canvas-btn {
+  display: inline-flex; align-items: center; white-space: nowrap; cursor: pointer;
+  padding: 9px 16px; border: 1px solid var(--border-strong); border-radius: 8px;
+  background: var(--bg-panel); color: var(--text); font-size: 14px;
+}
+.import-canvas-btn.busy { opacity: .6; cursor: default; }
+.import-err { align-self: center; color: var(--danger, #c0392b); font-size: 13px; }
 .canvas-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
 .canvas-card {
   background: var(--bg-panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px;

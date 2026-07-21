@@ -124,6 +124,27 @@ export const api = {
   updateEdge: (id: string, fields: EdgeFields, ctx: CommitContext) =>
     postCommit([{ op: 'delete_edge', id }, { op: 'add_edge', id, ...fields }], ctx),
 
+  /** Zihin haritasını sunucu tarafında vektörel PDF olarak indirir (çerez auth). */
+  pdfBlob: async (template: string): Promise<Blob> => {
+    const res = await fetch(`${base()}/pdf?template=${encodeURIComponent(template)}`);
+    if (!res.ok) {
+      if (res.status === 401) onUnauthorized();
+      const body = await res.json().catch(() => ({ error: res.statusText }));
+      throw new ApiError(res.status, (body as { error?: string }).error ?? res.statusText);
+    }
+    return res.blob();
+  },
+  /** Kanvası taşınabilir JSON paketi olarak indirir (tp2). */
+  exportBlob: async (): Promise<Blob> => {
+    const res = await fetch(`${base()}/export`);
+    if (!res.ok) {
+      if (res.status === 401) onUnauthorized();
+      const body = await res.json().catch(() => ({ error: res.statusText }));
+      throw new ApiError(res.status, (body as { error?: string }).error ?? res.statusText);
+    }
+    return res.blob();
+  },
+
   revert: (seq: number, clientId: string | null) => post<CommitResult>(`${base()}/commits/${seq}/revert`, { clientId }),
   restore: (seq: number, clientId: string | null) => post<CommitResult>(`${base()}/commits/${seq}/restore`, { clientId }),
 
@@ -174,6 +195,9 @@ export const canvasApi = {
   list: () => request<{ canvases: CanvasInfo[] }>('/api/canvases'),
   create: (name: string, groupId: string, type?: CanvasType) =>
     post<{ canvas: CanvasInfo }>('/api/canvases', { name, groupId, ...(type ? { type } : {}) }),
+  /** JSON paketinden yeni kanvas oluştur (tp3). */
+  import: (groupId: string, bundle: unknown, name?: string) =>
+    post<{ canvas: CanvasInfo }>('/api/canvases/import', { groupId, bundle, ...(name ? { name } : {}) }),
   /** Bağlı-kanvas kartının mini haritası; aktif olmayan kanvaslar için de çalışır (düz URL). */
   preview: (canvasId: string) => request<{ preview: CanvasPreview }>(`/api/canvases/${canvasId}/preview`),
   /** Bağlı kanvası panoya uğramadan açabilmek için CanvasInfo. */

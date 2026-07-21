@@ -604,6 +604,8 @@ export function Dashboard() {
   const [groupId, setGroupId] = useState('');
   const [canvasType, setCanvasType] = useState<CanvasType>('plan');
   const [busy, setBusy] = useState(false);
+  const [importBusy, setImportBusy] = useState(false);
+  const [importErr, setImportErr] = useState<string | null>(null);
 
   useEffect(() => {
     loadList();
@@ -628,6 +630,22 @@ export function Dashboard() {
       setGroupId('');
       setCanvasType('plan');
       open(canvas); // jump straight into the freshly created canvas
+    }
+  };
+
+  const importFile = async (file: File) => {
+    if (importBusy || !effectiveGroupId) return;
+    setImportBusy(true);
+    setImportErr(null);
+    try {
+      const bundle = JSON.parse(await file.text());
+      const { canvas } = await canvasApi.import(effectiveGroupId, bundle);
+      await loadList();
+      open(canvas);
+    } catch (e) {
+      setImportErr(e instanceof ApiError ? e.message : e instanceof SyntaxError ? 'geçersiz JSON dosyası' : 'içe aktarılamadı');
+    } finally {
+      setImportBusy(false);
     }
   };
 
@@ -693,6 +711,21 @@ export function Dashboard() {
             <button type="submit" className="login-btn" disabled={!name.trim() || busy || !effectiveGroupId}>
               + Kanvas oluştur
             </button>
+            <label className={`import-canvas-btn${importBusy ? ' busy' : ''}`} title="JSON paketinden yeni kanvas oluştur (seçili gruba)">
+              {importBusy ? 'İçe aktarılıyor…' : '📥 JSON içe aktar'}
+              <input
+                type="file"
+                accept="application/json,.json"
+                hidden
+                disabled={importBusy}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = '';
+                  if (f) void importFile(f);
+                }}
+              />
+            </label>
+            {importErr && <span className="import-err" role="alert">{importErr}</span>}
           </form>
         ) : (
           <p className="empty-note">

@@ -4,6 +4,7 @@ import { useAuthStore } from '../store/authStore';
 import { useCanvasStore } from '../store/canvasStore';
 import { useThemeStore } from '../store/themeStore';
 import { Brand } from './Logo';
+import { ServerPdfButton } from './ServerPdfButton';
 
 const views: { key: ViewMode; label: string }[] = [
   { key: 'flow', label: 'Zihin Haritası' },
@@ -153,6 +154,7 @@ export function Toolbar() {
         <button className={sidePanel === 'history' ? 'active' : ''} onClick={() => togglePanel('history')}>
           Geçmiş (#{headSeq})
         </button>
+        <ServerPdfButton />
         <button onClick={copyInvite} title="Bu kanvasa üye ekleme linki oluştur ve kopyala">
           {copied ? 'Kopyalandı ✓' : '🔗 Davet'}
         </button>
