@@ -1,5 +1,7 @@
+import { createHash } from 'node:crypto';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import type { PlanNode } from '@treemapper/shared';
 import type { PrismaClient } from '@prisma/client';
 import type { ServerMessage } from '@treemapper/shared';
 import { listRegions, createRegion, type ServiceFor } from '../canvasService.js';
@@ -64,6 +66,30 @@ const json = (v: unknown) => text(JSON.stringify(v, null, 2));
 
 const proposalStatus = z.enum(['submitted', 'changes_requested', 'withdrawn', 'rejected', 'applied']);
 
+/** get_state compact modunun düşürdüğü sunum alanları — planlamada gereksiz, token yer. */
+const COMPACT_DROP: readonly (keyof PlanNode)[] = ['x', 'y', 'url', 'urlBy'];
+const NODE_KEYS: readonly (keyof PlanNode)[] = [
+  'id', 'parentId', 'title', 'description', 'nodeType', 'status',
+  'x', 'y', 'linkedCanvasId', 'notes', 'url', 'urlBy', 'data', 'createdCommit', 'updatedCommit',
+];
+
+/**
+ * Düğümleri token verimli biçimde projekte eder. `fields` verilirse yalnız o alanlar (id her
+ * zaman korunur, bilinmeyen adlar yok sayılır); yoksa `compact` sunum alanlarını (x/y/url/urlBy)
+ * düşürür. İkisi de yoksa düğüm olduğu gibi döner.
+ */
+function projectNodes(nodes: PlanNode[], compact: boolean, fields?: string[]): Partial<PlanNode>[] {
+  if (fields && fields.length > 0) {
+    const keep = new Set<keyof PlanNode>(['id', ...fields.filter((f): f is keyof PlanNode => NODE_KEYS.includes(f as keyof PlanNode))]);
+    return nodes.map((n) => Object.fromEntries(NODE_KEYS.filter((k) => keep.has(k)).map((k) => [k, n[k]])));
+  }
+  if (compact) {
+    const drop = new Set<keyof PlanNode>(COMPACT_DROP);
+    return nodes.map((n) => Object.fromEntries(NODE_KEYS.filter((k) => !drop.has(k)).map((k) => [k, n[k]])));
+  }
+  return nodes;
+}
+
 /**
  * Bir ajan token'ına bağlı, kanvas kapsamlı Co-Pronoia MCP sunucusu. Stateless kurulur:
  * her HTTP isteği için yeniden inşa edilir; süpervizör araçları yalnızca token'ın rolü
@@ -84,15 +110,40 @@ export function buildCoPronoiaServer(ctx: McpContext): McpServer {
     'get_brief',
     {
       description:
-        'Rol brifingini al: kimliğin, personan, kanvas bağlamı, diğer ajanlar ve çalışma kuralları. İlk çağrın bu olmalı.',
+        'Rol brifingini al: kimliğin, personan, kanvas bağlamı, diğer ajanlar, bölgeler ve çalışma kuralları. İlk çağrın bu olmalı. ' +
+        'Yanıtın başındaki "Sürüm (version)" statik brifing bağlamının (persona + kadro + kanvas notu + bölgeler) imzasıdır; ' +
+        'knownVersion ile bu değeri geri gönderirsen ve değişmediyse tam brifing yerine kısa bir "değişmedi" yanıtı döner — token tasarrufu.',
+      inputSchema: { knownVersion: z.string().max(64).optional() },
     },
-    async () => {
+    async ({ knownVersion }) => {
       const state = await serviceFor(canvasId).getState();
       const canvasBrief = await getBrief(prisma, canvasId);
+      const regions = await listRegions(prisma, canvasId);
       const tokens = (await listAgentTokens(prisma, canvasId)).filter((t) => !t.revoked);
       const roster = tokens
         .map((t) => `- ${t.label} (${t.roleName}${t.isSupervisor ? ', süpervizör' : ''})`)
         .join('\n');
+      const regionLines = regions.map(
+        (r) => `- ${r.name}${r.aiAllowed ? '' : ' (yapay zekâya kapalı)'}${r.description ? `: ${r.description}` : ''}`,
+      );
+      // Sürüm imzası: yalnız STATİK bağlam (headSeq/düğüm sayısı gibi her commit'te değişen
+      // canlı sayılar hariç). Böylece brifing gerçekten değişmedikçe aynı kalır → ajan tekrar çekmez.
+      const version = createHash('sha256')
+        .update(JSON.stringify({
+          persona: token.role.persona ?? '',
+          isSupervisor: token.role.isSupervisor,
+          roster,
+          brief: canvasBrief.content ?? '',
+          briefRev: canvasBrief.revisionCount,
+          regions: regions.map((r) => ({ name: r.name, description: r.description, aiAllowed: r.aiAllowed })),
+        }))
+        .digest('hex')
+        .slice(0, 16);
+      if (knownVersion !== undefined && knownVersion === version)
+        return json({
+          unchanged: true, version, headSeq: state.headSeq,
+          note: 'Brifing değişmedi; mevcut brifini kullanmaya devam et.',
+        });
       const supervisorRules = token.role.isSupervisor
         ? [
             'SEN SÜPERVİZÖRSÜN: diğer ajanların önerilerini list_proposals/get_proposal ile incele.',
@@ -108,6 +159,7 @@ export function buildCoPronoiaServer(ctx: McpContext): McpServer {
           ];
       const brief = [
         `# Co-Pronoia Brifingi — ${token.label}`,
+        `Sürüm (version): ${version} — get_brief {knownVersion:"${version}"} ile değişip değişmediğini az token'la yoklayabilirsin.`,
         '',
         `Kanvas: "${token.canvas.name}" (head commit: #${state.headSeq}, ${state.nodes.length} düğüm, ${state.edges.length} kenar)`,
         `Rolün: ${token.role.name}${token.role.isSupervisor ? ' (SÜPERVİZÖR)' : ''}`,
@@ -117,6 +169,9 @@ export function buildCoPronoiaServer(ctx: McpContext): McpServer {
         '',
         '## Bağlı ajanlar',
         roster || '(başka ajan yok)',
+        '',
+        '## Bölgeler',
+        regionLines.length ? regionLines.join('\n') : '(bölge yok)',
         '',
         '## Kanvas notu (ortak çalışma brifingi)',
         canvasBrief.content || '(kanvas notu boş)',
@@ -138,14 +193,35 @@ export function buildCoPronoiaServer(ctx: McpContext): McpServer {
     'get_state',
     {
       description:
-        'Kanvasın güncel durumu: düğümler, kenarlar, bölgeler ve head commit numarası (baseSeq için). JSON döner.',
+        'Kanvasın güncel durumu: düğümler, kenarlar, bölgeler ve head commit numarası (baseSeq için). JSON döner. ' +
+        'Token verimliliği: sinceSeq verirsen yalnız o seq\'ten sonra değişen düğüm/kenarlar + silinen id\'ler döner ' +
+        '(regions dahil edilmez — gerekirse list_regions çağır). compact:true sunum alanlarını (x/y/url/urlBy) düşürür; ' +
+        'fields ile yalnız istediğin düğüm alanlarını seçebilirsin (id her zaman döner).',
+      inputSchema: {
+        sinceSeq: z.number().int().min(0).optional(),
+        compact: z.boolean().optional(),
+        fields: z.array(z.string()).max(20).optional(),
+      },
     },
-    async () => {
-      const state = await serviceFor(canvasId).getState();
+    async ({ sinceSeq, compact, fields }) => {
+      const service = serviceFor(canvasId);
+      const project = (nodes: PlanNode[]) => projectNodes(nodes, compact === true, fields);
+      if (sinceSeq !== undefined) {
+        const delta = await service.stateDelta(sinceSeq);
+        return json({
+          headSeq: delta.headSeq,
+          sinceSeq: delta.sinceSeq,
+          changedNodes: project(delta.changedNodes),
+          deletedNodeIds: delta.deletedNodeIds,
+          changedEdges: delta.changedEdges,
+          deletedEdgeIds: delta.deletedEdgeIds,
+        });
+      }
+      const state = await service.getState();
       const regions = await listRegions(prisma, canvasId);
       return json({
         headSeq: state.headSeq,
-        nodes: state.nodes,
+        nodes: project(state.nodes),
         edges: state.edges,
         regions: regions.map((r) => ({
           id: r.id, name: r.name, x: r.x, y: r.y, width: r.width, height: r.height,
@@ -174,10 +250,18 @@ export function buildCoPronoiaServer(ctx: McpContext): McpServer {
   server.registerTool(
     'list_proposals',
     {
-      description: 'Bu kanvastaki plan önerilerini listele (isteğe bağlı durum süzgeciyle).',
-      inputSchema: { status: proposalStatus.optional() },
+      description:
+        'Bu kanvastaki plan önerilerini listele (isteğe bağlı durum süzgeciyle). Token verimliliği: ' +
+        'sinceUpdatedAt (ISO tarih) yalnız o andan sonra değişen önerileri döndürür (artımlı tarama), ' +
+        'limit sonucu keser. Değişiklikleri beklerken wait_for_changes yeğdir.',
+      inputSchema: {
+        status: proposalStatus.optional(),
+        sinceUpdatedAt: z.string().max(40).optional(),
+        limit: z.number().int().min(1).max(500).optional(),
+      },
     },
-    async ({ status }) => json(await listProposals(prisma, canvasId, status)),
+    async ({ status, sinceUpdatedAt, limit }) =>
+      json(await listProposals(prisma, canvasId, status, { sinceUpdatedAt, limit })),
   );
 
   server.registerTool(

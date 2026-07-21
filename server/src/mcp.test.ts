@@ -554,3 +554,145 @@ describe('MCP ucu: bölge araçları', () => {
     expect(bad.rpcError ?? bad.isError).toBeTruthy();
   });
 });
+
+describe('MCP ucu: token verimliliği (get_state sinceSeq/compact/fields, get_brief version, list_proposals sayfalama)', () => {
+  /** Bir öneriyi gönderip süpervizörle onaylar (head'i bir commit ilerletir); proposalId döner. */
+  async function submitAndApprove(
+    app: App, agent: string, supervisor: string, title: string, intents: OpInput[], baseSeq: number,
+  ) {
+    const sub = await callTool(app, agent, 'submit_proposal', { title, intents, baseSeq });
+    expect(sub.isError).toBe(false);
+    const id = (JSON.parse(sub.text) as { id: string }).id;
+    const ok = await callTool(app, supervisor, 'approve_proposal', { id });
+    expect(ok.isError).toBe(false);
+    return id;
+  }
+
+  it('get_state {sinceSeq}: değişen/eklenen düğümler + silinen id\'ler döner', async () => {
+    const { app, serviceFor, canvasId, agent, supervisor, state } = await cpSetup();
+    const head0 = (await state()).headSeq;
+
+    await submitAndApprove(app, agent.secret, supervisor.secret, 'Ekle', [
+      { op: 'add_node', id: 'n1', title: 'Alfa' },
+      { op: 'add_node', id: 'n2', title: 'Beta' },
+    ], head0);
+    const head1 = (await state()).headSeq;
+
+    // head0'dan bu yana: iki yeni düğüm değişmiş, hiçbiri silinmemiş.
+    const d1 = JSON.parse((await callTool(app, agent.secret, 'get_state', { sinceSeq: head0 })).text) as {
+      headSeq: number; sinceSeq: number;
+      changedNodes: { id: string; title: string }[]; deletedNodeIds: string[];
+      changedEdges: unknown[]; deletedEdgeIds: string[]; regions?: unknown;
+    };
+    expect(d1.headSeq).toBe(head1);
+    expect(d1.sinceSeq).toBe(head0);
+    expect(d1.changedNodes.map((n) => n.title).sort()).toEqual(['Alfa', 'Beta']);
+    expect(d1.deletedNodeIds).toEqual([]);
+    expect(d1.regions).toBeUndefined(); // delta regions taşımaz
+
+    // Bir düğümü sil → sinceSeq=head1 farkı yalnız silmeyi gösterir.
+    await submitAndApprove(app, agent.secret, supervisor.secret, 'Sil', [
+      { op: 'delete_node', id: 'n2' },
+    ], head1);
+    const d2 = JSON.parse((await callTool(app, agent.secret, 'get_state', { sinceSeq: head1 })).text) as {
+      changedNodes: { id: string }[]; deletedNodeIds: string[];
+    };
+    expect(d2.deletedNodeIds).toEqual(['n2']);
+    expect(d2.changedNodes).toEqual([]);
+
+    // sinceSeq = güncel head → boş fark.
+    const headNow = (await state()).headSeq;
+    const empty = JSON.parse((await callTool(app, agent.secret, 'get_state', { sinceSeq: headNow })).text) as {
+      changedNodes: unknown[]; deletedNodeIds: unknown[]; changedEdges: unknown[]; deletedEdgeIds: unknown[];
+    };
+    expect(empty.changedNodes).toEqual([]);
+    expect(empty.deletedNodeIds).toEqual([]);
+    expect(empty.changedEdges).toEqual([]);
+    expect(empty.deletedEdgeIds).toEqual([]);
+    await serviceFor(canvasId).rebuildCheck();
+  });
+
+  it('get_state {compact} sunum alanlarını düşürür; {fields} yalnız istenen alanları verir', async () => {
+    const { app, agent, supervisor, state } = await cpSetup();
+    const head0 = (await state()).headSeq;
+    await submitAndApprove(app, agent.secret, supervisor.secret, 'Ekle', [
+      { op: 'add_node', id: 'n1', title: 'Alfa', x: 10, y: 20 },
+    ], head0);
+
+    const compact = JSON.parse((await callTool(app, agent.secret, 'get_state', { compact: true })).text) as {
+      nodes: Record<string, unknown>[];
+    };
+    for (const n of compact.nodes) {
+      expect(n).not.toHaveProperty('x');
+      expect(n).not.toHaveProperty('y');
+      expect(n).not.toHaveProperty('url');
+      expect(n).not.toHaveProperty('urlBy');
+      expect(n).toHaveProperty('id');
+      expect(n).toHaveProperty('title');
+    }
+
+    const projected = JSON.parse((await callTool(app, agent.secret, 'get_state', {
+      fields: ['title', 'status', 'bilinmeyen'],
+    })).text) as { nodes: Record<string, unknown>[] };
+    const alfa = projected.nodes.find((n) => n.title === 'Alfa')!;
+    expect(Object.keys(alfa).sort()).toEqual(['id', 'status', 'title']); // id her zaman, bilinmeyen atılır
+  });
+
+  it('get_brief version imzası: knownVersion aynıysa "değişmedi", brief değişince version değişir', async () => {
+    const { app, agent } = await cpSetup();
+    const b1 = await callTool(app, agent.secret, 'get_brief');
+    const version = /Sürüm \(version\): ([0-9a-f]+)/.exec(b1.text)![1];
+    expect(version).toHaveLength(16);
+
+    // Aynı version → kısa "değişmedi" yanıtı, tam brief değil.
+    const unchanged = JSON.parse((await callTool(app, agent.secret, 'get_brief', { knownVersion: version })).text) as {
+      unchanged: boolean; version: string;
+    };
+    expect(unchanged.unchanged).toBe(true);
+    expect(unchanged.version).toBe(version);
+
+    // Kanvas notu değişince version da değişir → tam brief yeniden döner.
+    await callTool(app, agent.secret, 'update_brief', { content: 'Yeni ortak hedef.' });
+    const b2 = await callTool(app, agent.secret, 'get_brief', { knownVersion: version });
+    expect(b2.text).toContain('Sürüm (version):');
+    expect(b2.text).toContain('Yeni ortak hedef.');
+    const version2 = /Sürüm \(version\): ([0-9a-f]+)/.exec(b2.text)![1];
+    expect(version2).not.toBe(version);
+  });
+
+  it('list_proposals {limit, sinceUpdatedAt}: sayfalama ve artımlı süzgeç', async () => {
+    const { app, agent, supervisor, state } = await cpSetup();
+    const head0 = (await state()).headSeq;
+    const s1 = await callTool(app, agent.secret, 'submit_proposal', {
+      title: 'Öneri 1', intents: [{ op: 'add_node', id: 'a', title: 'A' }], baseSeq: head0,
+    });
+    expect(s1.isError).toBe(false);
+    const s2 = await callTool(app, supervisor.secret, 'submit_proposal', {
+      title: 'Öneri 2', intents: [{ op: 'add_node', id: 'b', title: 'B' }], baseSeq: head0,
+    });
+    expect(s2.isError).toBe(false);
+
+    const all = JSON.parse((await callTool(app, agent.secret, 'list_proposals')).text) as
+      { id: string; title: string; updatedAt: string }[];
+    expect(all).toHaveLength(2);
+
+    // limit sonucu keser (createdAt asc → ilk öneri).
+    const limited = JSON.parse((await callTool(app, agent.secret, 'list_proposals', { limit: 1 })).text) as
+      { title: string }[];
+    expect(limited).toHaveLength(1);
+    expect(limited[0].title).toBe('Öneri 1');
+
+    // sinceUpdatedAt = 1. önerinin updatedAt'i → yalnız daha yeni (2.) öneri döner.
+    const p1 = all.find((p) => p.title === 'Öneri 1')!;
+    const since = JSON.parse((await callTool(app, agent.secret, 'list_proposals', {
+      sinceUpdatedAt: p1.updatedAt,
+    })).text) as { title: string }[];
+    expect(since.map((p) => p.title)).toEqual(['Öneri 2']);
+
+    // Gelecekteki bir tarih → boş.
+    const future = JSON.parse((await callTool(app, agent.secret, 'list_proposals', {
+      sinceUpdatedAt: '2999-01-01T00:00:00.000Z',
+    })).text) as unknown[];
+    expect(future).toEqual([]);
+  });
+});

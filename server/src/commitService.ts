@@ -2,7 +2,7 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import {
   applyOp, autoMessage, dataEqual, depthOf, emptyGraph, expandAll, invertOps, normalizeData,
   OpError, regionViolation, summarizeOps, ValidationError,
-  type CanvasRole, type Commit, type CommitSummary, type Graph, type GraphState, type Op,
+  type CanvasRole, type Commit, type CommitSummary, type Graph, type GraphDelta, type GraphState, type Op,
   type OpInput, type PlanEdge, type PlanNode,
 } from '@treemapper/shared';
 import { listRegions } from './canvasService.js';
@@ -130,6 +130,29 @@ export class CommitService {
   async stateAt(seq: number): Promise<GraphState> {
     const graph = await this.replayGraph(seq);
     return { nodes: [...graph.nodes.values()], edges: [...graph.edges.values()], headSeq: seq };
+  }
+
+  /**
+   * `sinceSeq`'ten güncel head'e kadarki fark: değişen/eklenen düğüm-kenarlar + silinen id'ler.
+   * `sinceSeq` head'e eşit/büyükse tüm listeler boştur. Ajanların tüm durumu tekrar çekmeden
+   * güncel kalması için (MCP get_state {sinceSeq}). Değişiklik testi düğüm/kenar nesnesinin
+   * tam eşitliği (createdCommit/updatedCommit dahil) üzerinden yapılır.
+   */
+  async stateDelta(sinceSeq: number): Promise<GraphDelta> {
+    const [current, previous] = await Promise.all([this.getState(), this.stateAt(sinceSeq)]);
+    const prevNodes = new Map(previous.nodes.map((n) => [n.id, n]));
+    const prevEdges = new Map(previous.edges.map((e) => [e.id, e]));
+    const curNodeIds = new Set(current.nodes.map((n) => n.id));
+    const curEdgeIds = new Set(current.edges.map((e) => e.id));
+    const differs = (a: unknown, b: unknown) => a === undefined || JSON.stringify(a) !== JSON.stringify(b);
+    return {
+      headSeq: current.headSeq,
+      sinceSeq,
+      changedNodes: current.nodes.filter((n) => differs(prevNodes.get(n.id), n)),
+      deletedNodeIds: previous.nodes.filter((n) => !curNodeIds.has(n.id)).map((n) => n.id),
+      changedEdges: current.edges.filter((e) => differs(prevEdges.get(e.id), e)),
+      deletedEdgeIds: previous.edges.filter((e) => !curEdgeIds.has(e.id)).map((e) => e.id),
+    };
   }
 
   private async replayGraph(uptoSeq: number, branchId: string | null = null, branchBase?: number): Promise<Graph> {

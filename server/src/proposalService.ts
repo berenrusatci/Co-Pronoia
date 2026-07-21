@@ -38,14 +38,33 @@ const toInfo = (p: ProposalRow): PlanProposalInfo => ({
   updatedAt: p.updatedAt.toISOString(),
 });
 
+/**
+ * Öneri listeleme sayfalama/süzgeç seçenekleri (MCP token verimliliği): `sinceUpdatedAt`
+ * yalnız o andan SONRA değişen önerileri döndürür (artımlı tarama), `limit` sonucu keser.
+ * Hiçbiri verilmezse davranış eskisiyle birebir aynıdır (createdAt asc, tümü) — web/WS yolu bunu kullanır.
+ */
+export interface ListProposalsOptions {
+  /** ISO tarih dizesi; updatedAt bundan büyük (strictly after) olan öneriler döner. */
+  sinceUpdatedAt?: string;
+  /** En çok kaç öneri döndürüleceği (createdAt asc sıralamasının başından). */
+  limit?: number;
+}
+
 export async function listProposals(
   prisma: PrismaClient,
   canvasId: string,
   status?: ProposalStatus,
+  opts: ListProposalsOptions = {},
 ): Promise<PlanProposalInfo[]> {
+  const since = opts.sinceUpdatedAt ? new Date(opts.sinceUpdatedAt) : undefined;
   const rows = await prisma.planProposal.findMany({
-    where: { canvasId, ...(status ? { status } : {}) },
+    where: {
+      canvasId,
+      ...(status ? { status } : {}),
+      ...(since && !Number.isNaN(since.getTime()) ? { updatedAt: { gt: since } } : {}),
+    },
     orderBy: { createdAt: 'asc' },
+    ...(opts.limit !== undefined ? { take: opts.limit } : {}),
   });
   return rows.map(toInfo);
 }

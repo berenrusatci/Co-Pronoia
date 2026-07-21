@@ -206,6 +206,20 @@ export interface GraphState {
   headSeq: number;
 }
 
+/**
+ * `sinceSeq`'ten head'e kadarki değişimin farkı (MCP token verimliliği): tüm durumu tekrar
+ * çekmek yerine yalnız değişen/eklenen düğüm-kenarlar + silinen id'ler. `sinceSeq >= headSeq`
+ * ise tüm listeler boştur (değişiklik yok).
+ */
+export interface GraphDelta {
+  headSeq: number;
+  sinceSeq: number;
+  changedNodes: PlanNode[];
+  deletedNodeIds: string[];
+  changedEdges: PlanEdge[];
+  deletedEdgeIds: string[];
+}
+
 /** Bağlı-kanvas kartındaki mini harita için hafif önizleme (`GET /api/canvases/:id/preview`). */
 export interface CanvasPreview {
   id: string;
