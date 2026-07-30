@@ -23,6 +23,9 @@ import { GroupJoinPrompt } from './components/GroupJoinPrompt';
 import { Dashboard } from './components/Dashboard';
 import { AdminPanel } from './components/AdminPanel';
 import { useAdminStore } from './store/adminStore';
+import { useModeStore } from './store/modeStore';
+import { ActivationView } from './components/ActivationView';
+import { ActivationApprove } from './components/ActivationApprove';
 import { Toolbar, ReadOnlyBanner, ErrorToast } from './components/Chrome';
 
 export default function App() {
@@ -46,6 +49,17 @@ export default function App() {
   const view = useGraphStore((s) => s.view);
   const sidePanel = useGraphStore((s) => s.sidePanel);
 
+  const mode = useModeStore((s) => s.mode);
+  const activated = useModeStore((s) => s.activated);
+  const modeChecked = useModeStore((s) => s.checked);
+  const loadMode = useModeStore((s) => s.load);
+
+  // Bulut tarafı aktivasyon onayı (?aktivasyon=STATE&donus=…&kanit=…): giriş yapıldıktan
+  // sonra onay ekranı çıkar — ?davet= desenindeki gibi, sonra URL'den temizlenir.
+  const [approvePending, setApprovePending] = useState(
+    () => new URLSearchParams(window.location.search).has('aktivasyon'),
+  );
+
   // Invite link (?davet=TOKEN): accepted right after login, then stripped from the URL.
   const [joinPending, setJoinPending] = useState(
     () => new URLSearchParams(window.location.search).has('davet'),
@@ -57,8 +71,9 @@ export default function App() {
 
   useEffect(() => {
     setOnUnauthorized(dropSession);
+    loadMode();
     check();
-  }, [check, dropSession]);
+  }, [check, dropSession, loadMode]);
 
   // Logging out (or a 401) drops back to the login screen with clean stores.
   useEffect(() => {
@@ -97,8 +112,26 @@ export default function App() {
     }
   }, [user, activeCanvas, load, connectWs, disconnectWs, resetGraph]);
 
-  if (!checked) return <div className="loading">Yükleniyor…</div>;
+  if (!checked || !modeChecked) return <div className="loading">Yükleniyor…</div>;
+  // Yerel kurulum, henüz bulut hesabıyla eşleşmemiş: giriş ekranı yerine aktivasyon.
+  if (mode === 'local' && !activated) return <ActivationView />;
   if (!user) return <LoginView />;
+  if (approvePending) {
+    const params = new URLSearchParams(window.location.search);
+    return (
+      <ActivationApprove
+        state={params.get('aktivasyon') ?? ''}
+        redirect={params.get('donus') ?? ''}
+        proof={params.get('kanit') ?? ''}
+        onCancel={() => {
+          for (const key of ['aktivasyon', 'donus', 'kanit']) params.delete(key);
+          const qs = params.toString();
+          window.history.replaceState(null, '', window.location.pathname + (qs ? `?${qs}` : ''));
+          setApprovePending(false);
+        }}
+      />
+    );
+  }
   if (joinPending) return <div className="loading">Davet linki işleniyor…</div>;
   if (groupJoinPending) {
     return (
@@ -113,7 +146,7 @@ export default function App() {
       />
     );
   }
-  if (!activeCanvas) return adminOpen && user.isAdmin ? <AdminPanel /> : <Dashboard />;
+  if (!activeCanvas) return adminOpen && user.isAdmin && mode !== 'local' ? <AdminPanel /> : <Dashboard />;
   if (!loaded) return <div className="loading">Yükleniyor…</div>;
 
   return (

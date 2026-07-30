@@ -19,6 +19,10 @@ import { registerAdminRoutes } from './adminRoutes.js';
 import { registerMcpRoutes } from './mcp/mcpRoutes.js';
 import { CanvasEvents } from './canvasEvents.js';
 import { getSiteAsset, LOGIN_PREVIEW } from './siteAssetService.js';
+import { cloudUrl, isLocal } from './mode.js';
+import { registerActivationRoutes } from './activationRoutes.js';
+import { activatedUser, activationStatus } from './activationService.js';
+import type { CloudClient } from './cloudClient.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -46,9 +50,16 @@ export interface WsClient {
   isAlive: boolean;
 }
 
-export async function buildApp(dbUrl: string, opts?: { emailSender?: EmailSender }) {
+export async function buildApp(
+  dbUrl: string,
+  opts?: { emailSender?: EmailSender; cloudClient?: CloudClient },
+) {
   const adapter = new PrismaPg({ connectionString: dbUrl });
   const prisma = new PrismaClient({ adapter });
+
+  // Mod bir kez, kurulum anında sabitlenir: tek süreçte iki app (testlerde bulut + yerel)
+  // ayağa kalkabilsin ve istek anında env değişse bile karışmasın.
+  const localMode = isLocal();
 
   // One CommitService per canvas: its promise-chain mutex serializes writes per canvas.
   const services = new Map<string, CommitService>();
@@ -74,12 +85,21 @@ export async function buildApp(dbUrl: string, opts?: { emailSender?: EmailSender
     if (!req.url.startsWith('/api')) return;
     // /api/site/*: giriş ekranı oturum açılmadan çizildiği için görünüm ayarı herkese açık.
     // /api/mcp: oturum çerezi yerine Bearer ajan anahtarıyla korunur (mcpRoutes.ts kendisi 401 verir).
+    // /api/activation/* + /api/instance/*: aktivasyon el sıkışmasının kendisi (yerelde oturum
+    // henüz yok, bulutta Bearer kurulum anahtarıyla korunur — activationRoutes.ts 401 verir).
+    // İstisnanın istisnası: /api/activation/pull el sıkışmanın parçası değil, aktive edilmiş
+    // kurulumun tetiklediği bir işlem — normal kimlik kontrolünden geçer.
+    const activationHandshake =
+      req.url.startsWith('/api/activation/') && !req.url.startsWith('/api/activation/pull');
     if (
       req.url.startsWith('/api/auth/') || req.url.startsWith('/api/site/') ||
-      req.url.startsWith('/api/mcp') || req.url === '/api/health'
+      req.url.startsWith('/api/mcp') || req.url === '/api/health' || req.url === '/api/mode' ||
+      activationHandshake || req.url.startsWith('/api/instance/')
     ) return;
-    req.user = await resolveSession(prisma, sessionToken(req));
-    if (!req.user) return reply.code(401).send({ error: 'oturum gerekli' });
+    // Yerel mod tek kullanıcılıdır: çerez yerine aktive edilmiş kimlik kullanılır.
+    req.user = localMode ? await activatedUser(prisma) : await resolveSession(prisma, sessionToken(req));
+    if (!req.user)
+      return reply.code(401).send({ error: localMode ? 'kurulum etkinleştirilmemiş' : 'oturum gerekli' });
   });
 
   const wsClients = new Set<WsClient>();
@@ -156,6 +176,13 @@ export async function buildApp(dbUrl: string, opts?: { emailSender?: EmailSender
 
   app.get('/api/health', async () => ({ ok: true }));
 
+  // Web hangi ekranı çizeceğini (giriş / aktivasyon / pano) buradan bilir; oturum gerekmez.
+  app.get('/api/mode', async () => ({
+    mode: localMode ? 'local' : 'cloud',
+    ...(localMode ? { activated: (await activationStatus(prisma)).activated } : { activated: true }),
+    cloudUrl: localMode ? cloudUrl() : null,
+  }));
+
   // ---------- Herkese açık site görünümü (giriş ekranı için; oturum gerekmez) ----------
 
   app.get('/api/site/appearance', async () => {
@@ -206,7 +233,9 @@ export async function buildApp(dbUrl: string, opts?: { emailSender?: EmailSender
   });
 
   registerAuthRoutes(app, prisma, opts?.emailSender);
-  if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+  registerActivationRoutes(app, prisma, serviceFor, opts?.cloudClient);
+  // Google girişi yerel modda anlamsız (hesap yönetimi yok).
+  if (!localMode && process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
     await registerGoogleAuth(app, prisma);
   }
   registerCanvasRoutes(app, prisma, serviceFor, broadcast);
@@ -243,7 +272,8 @@ export async function buildApp(dbUrl: string, opts?: { emailSender?: EmailSender
   );
 
   // Site yönetim paneli: yalnızca isAdmin kullanıcılar (401'i global hook verir).
-  await app.register(
+  // Yerel modda site yönetimi diye bir şey yok — uçlar hiç oluşturulmaz (404).
+  if (!localMode) await app.register(
     async (scope) => {
       scope.addHook('preHandler', async (req, reply) => {
         if (!req.user?.isAdmin) return reply.code(403).send({ error: 'yönetici yetkisi gerekli' });

@@ -66,6 +66,24 @@ A second canvas/group **type** (`Canvas.type`/`Group.type`, plain strings `'plan
 - **Human surface**: `GET .../proposals` (members), `POST .../proposals/:id/reject` (owner-only cleanup hatch — approve deliberately has NO human/HTTP path). WS: `{ type: 'proposals', proposals }` full-refresh message (regions pattern) broadcast after every proposal mutation; approve additionally broadcasts `commit`/`branch_created` with `clientId: null`. Web: `CoPronoiaPanel.tsx` (tokens + live proposal cards, secret shown once with a ready `.mcp.json` snippet), `🤝 Co-Pronoia` toolbar button gated on `active?.type === 'co-pronoia'` (Chrome.tsx), `proposals` state in graphStore (loaded only for co-pronoia canvases).
 - Tests: `server/src/copronoia.test.ts` (type gating, role CRUD permission matrix, token mint/revoke), `server/src/mcp.test.ts` (raw JSON-RPC over `app.inject` — needs `Accept: application/json, text/event-stream`; auth, tools/list visibility, full lifecycle incl. conflict-branch and refusal paths).
 
+### Yerel mod & bulut aktivasyonu
+
+Tek kod tabanı, iki mod (`server/src/mode.ts`: `APP_MODE=local|cloud`, default `cloud`; `isLocal()`, `cloudUrl()`). **`buildApp` modu bir kez, kurulum anında sabitler** (`const localMode = isLocal()`) — testler tek süreçte hem bulut hem yerel app ayağa kaldırdığı için istek anında env okunmaz. Public `GET /api/mode` → `{ mode, activated, cloudUrl }` (auth hook muafiyet listesinde, `/api/site/` gibi); web `modeStore` bundan hangi ekranı çizeceğini bilir.
+
+| | cloud | local (Docker imajı) |
+|---|---|---|
+| kayıt/doğrulama/login/logout/şifre, Google | var | route hiç register edilmez (404) |
+| `/api/admin/*` + AdminPanel | var | register edilmez (404) |
+| `bootstrapAdmin` | çağrılır | çağrılmaz |
+| kimlik | `tm_session` çerezi | aktive edilmiş tek `User` (`activatedUser()`; aktive değilse her `/api` 401) |
+| aktivasyon uçları | onay **sunucusu** (`approve`/`exchange`, Bearer `/api/instance/*`) | onay **istemcisi** (`start`/`callback`/`pull`/`status`) |
+
+**El sıkışma (PKCE benzeri; şifre asla yerele girilmez)**: yerel `GET /api/activation/start` state+verifier üretip pending `Activation` satırını yazar ve tarayıcıyı `${CLOUD_URL}/?aktivasyon=<state>&donus=<yerelOrigin>&kanit=sha256(verifier)`e 302'ler → bulut web'i (`ActivationApprove.tsx`, `?davet=` deseninin eşi) giriş sonrası onay ekranı gösterir → `POST /api/activation/approve` (oturumlu) `Instance` satırını yazar ve `<donus>/api/activation/callback?state&code`e döndürür → yerel sunucu **sunucudan sunucuya** `POST ${CLOUD_URL}/api/activation/exchange {state, code, verifier}` yapar; bulut kodu tek kullanımlık tüketir, `sha256(verifier) === proofHash` doğrular ve `{ user, instanceToken }` döner (`tmi_<nanoid(32)>`, DB'de sha256 — `AgentToken` deseni) → yerel taraf bulut kimliğini yansıtan `User` (passwordHash yok) + "Yerel çalışma alanı" grubunu kurar, `Activation`ı kalıcı yazar. Bulut çağrıları enjekte edilebilir `CloudClient` (`cloudClient.ts`) arkasında — `EmailSender`/`Llm` deseni; `activation.test.ts` sahte istemciyle bulut app'ine `app.inject` üzerinden bağlanır.
+
+**Çekme**: aktivasyondan hemen sonra ve panodaki "☁ Buluttan çek" ile tekrar; bulut `GET /api/instance/canvases` + `…/:id/export` → yerel `importBundle()` (`canvasImportService.ts`, `POST /api/canvases/import` ile **aynı** gövde). `CloudImport(cloudCanvasId @unique)` sayesinde aynı kanvas iki kez alınmaz; tek kanvasın hatası çekmeyi durdurmaz.
+
+Modeller: `Activation` (yerel, tek satır `id='singleton'`), `CloudImport` (yerel), `Instance` (bulut). Dağıtım: `Dockerfile` `APP_MODE=local` + non-root + HEALTHCHECK, `deploy/docker-compose.yml` (GHCR imajı + Postgres, port **`127.0.0.1`e bağlı** — yerelde giriş ekranı olmadığı için ağa açmak bilinçli tercihtir), `.github/workflows/docker.yml` GHCR'a yayınlar, `render.yaml` `APP_MODE=cloud` verir.
+
 ### Auth & WebSocket
 
 Session cookie (`tm_session`) auth: scrypt hashes in `server/src/auth.ts`, routes in `authRoutes.ts`, a global preHandler hook 401s every `/api` route except `/api/auth/*` and `/api/health`. Commits record `authorId` (a null author renders as "sistem").

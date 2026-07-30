@@ -1,0 +1,44 @@
+# Co-Pronoia'yı kendi makinenizde çalıştırın.
+#
+#   1. Bu dosyayı ve .env.example'ı indirin, .env.example'ı `.env` olarak kopyalayın
+#   2. docker compose up -d
+#   3. http://localhost:3001 → "Bulut hesabıyla etkinleştir"
+#
+# Tüm veri (kanvaslar, commitler, bölgeler, ajan anahtarları) aşağıdaki `pgdata`
+# hacminde, yani bu makinede kalır. Buluttan gelen tek şey hesap doğrulamasıdır.
+services:
+  app:
+    image: ghcr.io/berenrusatci/co-pronoia:latest
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      APP_MODE: local
+      DATABASE_URL: postgresql://treemapper:${POSTGRES_PASSWORD:-treemapper}@postgres:5432/treemapper?schema=public
+      CLOUD_URL: ${CLOUD_URL:-https://co-pronoia.onrender.com}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    env_file:
+      - .env
+    ports:
+      # UYARI: yalnızca bu makineden erişilir. Yerel kurulumda giriş ekranı yoktur —
+      # portu ağa açarsanız (ör. "3001:3001") aynı ağdaki herkes kanvaslarınıza erişir.
+      - "127.0.0.1:3001:3001"
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: treemapper
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-treemapper}
+      POSTGRES_DB: treemapper
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U treemapper -d treemapper"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:

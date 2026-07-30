@@ -27,6 +27,7 @@ model User {
   groupMemberships GroupMember[]
   groupInvitesCreated GroupInvite[]
   agentTokens  AgentToken[]
+  instances    Instance[]
 }
 
 model Session {
@@ -361,4 +362,54 @@ model SiteAsset {
   data      Bytes?
   url       String?
   updatedAt DateTime @updatedAt
+}
+
+// ---------- Yerel mod (APP_MODE=local) & bulut aktivasyonu ----------
+
+/// YEREL kurulumda tek satır (id sabit 'singleton'): kurulumun bulut hesabıyla
+/// eşleşmesi. Bekleyen aktivasyonda state/verifier doludur; tamamlanınca bulut
+/// kimliği + instance token'ı kalıcı olarak burada durur (internet gerekmez).
+model Activation {
+  id            String   @id @default("singleton")
+  state         String?
+  verifier      String?
+  cloudUserId   String?
+  cloudUsername String?
+  /// Bulutun verdiği `tmi_` anahtarı; yalnız yerel kurulumda ve ham saklanır
+  /// (kendi makinesindeki DB'de; buluttaki karşılığı sha256'lı Instance satırıdır).
+  instanceToken String?
+  localUserId   String?
+  activatedAt   DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+/// YEREL kurulumda: buluttan çekilmiş her kanvas bir kez alınır (tekrar çekmede atlanır).
+model CloudImport {
+  cloudCanvasId String   @id
+  localCanvasId String
+  name          String
+  importedAt    DateTime @default(now())
+}
+
+/// BULUT tarafında: bir yerel kurulumun aktivasyonu. Önce onay (state/codeHash/
+/// proofHash/expiresAt), sonra exchange ile tek kullanımlık kod tüketilip kalıcı
+/// instance token (sha256, AgentToken deseni) yazılır.
+model Instance {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  state      String    @unique
+  codeHash   String
+  proofHash  String
+  redirect   String
+  expiresAt  DateTime
+  usedAt     DateTime?
+  tokenHash  String?   @unique
+  label      String    @default("yerel kurulum")
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
 }

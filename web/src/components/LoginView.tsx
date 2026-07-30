@@ -192,6 +192,11 @@ export function LoginView() {
                   🔗 Bir kanvas davet linkiyle geldiniz — giriş yapınca (veya kayıt olunca) kanvasa otomatik ekleneceksiniz.
                 </p>
               )}
+              {new URLSearchParams(window.location.search).has('aktivasyon') && (
+                <p className="login-invite-note">
+                  🖥 Yerel bir kurulumu etkinleştiriyorsunuz — giriş yapınca onay ekranı çıkacak.
+                </p>
+              )}
               {new URLSearchParams(window.location.search).has('grupDavet') && (
                 <p className="login-invite-note">
                   🔗 Bir grup davet linkiyle geldiniz — giriş yapınca (veya kayıt olunca) gruba katılma isteği göndereceksiniz.

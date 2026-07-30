@@ -5,7 +5,8 @@ import { useGroupStore } from '../store/groupStore';
 import { useAuthStore } from '../store/authStore';
 import { useThemeStore } from '../store/themeStore';
 import { useAdminStore } from '../store/adminStore';
-import { canvasApi, groupApi, ApiError, type RoleDefInput } from '../api/client';
+import { useModeStore } from '../store/modeStore';
+import { activationApi, canvasApi, groupApi, ApiError, type RoleDefInput } from '../api/client';
 import { AgentRoleEditor } from './AgentRoleEditor';
 import { Brand } from './Logo';
 
@@ -501,6 +502,7 @@ function GroupsSection() {
 function UserSettings() {
   const user = useAuthStore((s) => s.user);
   const updateProfile = useAuthStore((s) => s.updateProfile);
+  const isLocalMode = useModeStore((s) => s.mode) === 'local';
   const [openSection, setOpenSection] = useState(false);
   const [displayName, setDisplayName] = useState(user?.displayName ?? '');
   const [avatarUrl, setAvatarUrl] = useState(user?.avatarUrl ?? '');
@@ -561,6 +563,8 @@ function UserSettings() {
             <button type="submit" className="login-btn" disabled={profileBusy}>Kaydet</button>
             {profileMsg && <div className={profileMsg.ok ? 'settings-ok' : 'login-error'}>{profileMsg.text}</div>}
           </form>
+          {/* Yerel kurulumda hesap/şifre diye bir şey yok: kimlik aktivasyondan gelir. */}
+          {!isLocalMode && (
           <form className="settings-form" onSubmit={submit}>
             <h4>Şifre değiştir</h4>
             <input
@@ -576,6 +580,7 @@ function UserSettings() {
             </button>
             {msg && <div className={msg.ok ? 'settings-ok' : 'login-error'}>{msg.text}</div>}
           </form>
+          )}
         </>
       )}
     </div>
@@ -606,11 +611,48 @@ export function Dashboard() {
   const [busy, setBusy] = useState(false);
   const [importBusy, setImportBusy] = useState(false);
   const [importErr, setImportErr] = useState<string | null>(null);
+  const isLocalMode = useModeStore((s) => s.mode) === 'local';
+  const [pullBusy, setPullBusy] = useState(false);
+  const [pullMsg, setPullMsg] = useState<string | null>(null);
+
+  // Yerel kurulum: bulut kanvaslarını (daha önce alınmayanları) buraya kopyala.
+  const pullFromCloud = async () => {
+    setPullBusy(true);
+    setPullMsg(null);
+    try {
+      const r = await activationApi.pull();
+      await loadList();
+      setPullMsg(
+        r.imported > 0
+          ? `☁ ${r.imported} kanvas alındı${r.skipped ? ` (${r.skipped} tanesi zaten alınmıştı)` : ''}.`
+          : 'Buluttaki kanvasların hepsi zaten alınmış.',
+      );
+    } catch (e) {
+      setPullMsg(e instanceof ApiError ? `Çekilemedi: ${e.message}` : 'Çekilemedi.');
+    } finally {
+      setPullBusy(false);
+    }
+  };
 
   useEffect(() => {
     loadList();
     loadGroups();
   }, [loadList, loadGroups]);
+
+  // Aktivasyon dönüşü (?etkin=1&alinan=N): sonucu bir kez göster, parametreleri URL'den temizle.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (!params.has('etkin')) return;
+    const count = Number(params.get('alinan') ?? '0');
+    setPullMsg(
+      count > 0
+        ? `✅ Kurulum etkinleştirildi ve buluttan ${count} kanvas alındı.`
+        : '✅ Kurulum etkinleştirildi. Bulut kanvaslarınızı "☁ Buluttan çek" ile alabilirsiniz.',
+    );
+    for (const key of ['etkin', 'alinan']) params.delete(key);
+    const qs = params.toString();
+    window.history.replaceState(null, '', window.location.pathname + (qs ? `?${qs}` : ''));
+  }, []);
 
   // Her kanvas bir gruba bağlı olmalı; oluşturma yetkisi admin ya da rolün canCreateCanvas'ı.
   const creatableGroups = groups.filter((g) => g.canCreateCanvas);
@@ -670,8 +712,13 @@ export function Dashboard() {
             {user?.avatarUrl && <img className="user-avatar" src={user.avatarUrl} alt="" />}
             {user?.displayName || user?.username}
           </span>
-          {user?.isAdmin && (
+          {user?.isAdmin && !isLocalMode && (
             <button onClick={() => setAdminOpen(true)} title="Site yönetim paneli">🛡 Yönetim</button>
+          )}
+          {isLocalMode && (
+            <button onClick={pullFromCloud} disabled={pullBusy} title="Bulut hesabınızdaki kanvasları bu kuruluma kopyala">
+              {pullBusy ? '☁ Çekiliyor…' : '☁ Buluttan çek'}
+            </button>
           )}
           <button
             className="theme-toggle"
@@ -680,11 +727,13 @@ export function Dashboard() {
           >
             {theme === 'dark' ? '☀️' : '🌙'}
           </button>
-          <button onClick={logout} title="Oturumu kapat">Çıkış</button>
+          {/* Yerel kurulumda oturum yok — çıkış yapılacak bir yer de yok. */}
+          {!isLocalMode && <button onClick={logout} title="Oturumu kapat">Çıkış</button>}
         </div>
       </div>
       <div className="dashboard-body">
         <h2>Kanvaslarım</h2>
+        {pullMsg && <p className="empty-note">{pullMsg}</p>}
         {creatableGroups.length > 0 ? (
           <form className="canvas-create" onSubmit={submit}>
             <input

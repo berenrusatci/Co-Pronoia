@@ -1,7 +1,9 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { PrismaClient, User } from '@prisma/client';
 import { createSession, generateCode, hashPassword, resolveSession, SESSION_COOKIE, sessionToken, verifyPassword, setSessionCookie } from './auth.js';
 import { defaultEmailSender, emailConfigured, isProd, type EmailSender } from './email.js';
+import { isLocal } from './mode.js';
+import { activatedUser } from './activationService.js';
 
 interface Credentials {
   username?: string;
@@ -35,6 +37,18 @@ export function registerAuthRoutes(
   prisma: PrismaClient,
   emailSender: EmailSender = defaultEmailSender,
 ): void {
+  // Yerel modda hesap yönetimi yok: kimlik bir kerelik bulut aktivasyonundan gelir.
+  // Kayıt/doğrulama/giriş/çıkış/şifre uçları hiç oluşturulmaz (404), yalnızca
+  // "ben kimim" ve profil düzenleme kalır.
+  if (isLocal()) {
+    app.get('/api/auth/me', async (_req, reply) => {
+      const user = await activatedUser(prisma);
+      if (!user) return reply.code(401).send({ error: 'kurulum etkinleştirilmemiş' });
+      return { user };
+    });
+    registerProfileRoute(app, prisma, () => activatedUser(prisma));
+    return;
+  }
   // Kayıt: gerçek User oluşturmaz. Doğrulama kodunu e-postayla gönderir ve
   // bekleyen kaydı EmailVerification tablosuna yazar. Kullanıcı verify-email ile
   // kodu onaylayınca hesap oluşur (aşağıya bak).
@@ -176,11 +190,19 @@ export function registerAuthRoutes(
     return { ok: true };
   });
 
-  /** Display name + avatar URL (dashboard user settings). */
+  registerProfileRoute(app, prisma, (req) => resolveSession(prisma, sessionToken(req)));
+}
+
+/** Display name + avatar URL (dashboard user settings). Kimliği çözme yolu moda göre değişir. */
+function registerProfileRoute(
+  app: FastifyInstance,
+  prisma: PrismaClient,
+  currentUser: (req: FastifyRequest) => Promise<{ id: string } | null>,
+): void {
   app.patch<{ Body: { displayName?: string | null; avatarUrl?: string | null } }>(
     '/api/auth/profile',
     async (req, reply) => {
-      const user = await resolveSession(prisma, sessionToken(req));
+      const user = await currentUser(req);
       if (!user) return reply.code(401).send({ error: 'oturum yok' });
       const data: { displayName?: string | null; avatarUrl?: string | null } = {};
       if (req.body?.displayName !== undefined) {

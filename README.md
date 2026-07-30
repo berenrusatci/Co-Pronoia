@@ -116,7 +116,26 @@ Web tarafında öneriler **🤝 Co-Pronoia** panelinde canlı akar (durumlar: `b
 
 Site admini `ADMIN_USERNAME`/`ADMIN_PASSWORD` env değişkenleriyle sunucu açılışında oluşturulur/yükseltilir (idempotent, mevcut şifreyi ezmez).
 
-## Çalıştırma
+## Kendi Docker'ınızda çalıştırın (yerel kurulum)
+
+Uygulamayı kendi makinenizde çalıştırabilirsiniz: **tüm veri** (kanvaslar, commitler, bölgeler, ajan anahtarları) sizin Postgres hacminizde kalır. Buluttan gelen tek şey **hesap doğrulamasıdır** — bir kez onay verirsiniz, sonrası internetsiz de çalışır.
+
+```bash
+mkdir co-pronoia && cd co-pronoia
+curl -O https://raw.githubusercontent.com/berenrusatci/Co-Pronoia/main/deploy/docker-compose.yml
+curl -o .env https://raw.githubusercontent.com/berenrusatci/Co-Pronoia/main/deploy/.env.example
+docker compose up -d
+```
+
+Sonra http://localhost:3001 → **"Bulut hesabıyla etkinleştir"** → bulutta mevcut hesabınızla onaylayın → yerel kurulum kimliğinizi ve bulut kanvaslarınızın bir kopyasını alır. Panodaki **☁ Buluttan çek** butonuyla sonradan eklenen kanvasları da alabilirsiniz (aynı kanvas iki kez alınmaz).
+
+Yerel kurulumda **kayıt, giriş ve site yönetim paneli yoktur** (`APP_MODE=local`): tek kullanıcılıdır, istekler otomatik olarak aktive edilmiş kimlikle çalışır. Bu yüzden compose dosyası portu **yalnızca `127.0.0.1`e** bağlar.
+
+> ⚠️ Port eşlemesini `"3001:3001"` yaparsanız giriş ekranı olmadığı için **aynı ağdaki herkes** kanvaslarınıza tam yetkiyle erişir. Ağa açmak bilinçli bir tercih olmalı (önüne kimlik doğrulayan bir ters vekil koyun).
+
+İmaj her `main` push'unda `ghcr.io/berenrusatci/co-pronoia:latest` olarak yayınlanır (`.github/workflows/docker.yml`). Barındırılan kurulum (Render) aynı imajı `APP_MODE=cloud` ile çalıştırır.
+
+## Çalıştırma (geliştirme)
 
 Node 22+ gerekir. Önce Postgres'i ayağa kaldırın (5432 çoğu zaman meşgul olduğu için 5433'te dinler):
 

@@ -254,6 +254,11 @@ export const siteApi = {
   appearance: () => request<{ appearance: SiteAppearance }>('/api/site/appearance'),
 };
 
+/** Yerel kurulum uçları (APP_MODE=local); bulutta kayıtlı değildir. */
+export const activationApi = {
+  pull: () => post<{ imported: number; skipped: number; names: string[] }>('/api/activation/pull'),
+};
+
 export const adminApi = {
   stats: () => request<{ stats: AdminStats }>('/api/admin/stats'),
   setLoginPreview: (body: { dataUrl: string } | { url: string }) =>

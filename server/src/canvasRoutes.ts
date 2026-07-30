@@ -1,9 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import type { PrismaClient } from '@prisma/client';
 import type { ServerMessage } from '@treemapper/shared';
-import { acceptInvite, createCanvas, createRegion, inviteInfo, listCanvases, listMembers, type ServiceFor } from './canvasService.js';
+import { acceptInvite, createCanvas, inviteInfo, listCanvases, listMembers, type ServiceFor } from './canvasService.js';
 import { memberPermissions } from './groupService.js';
-import { bundleToIntents, parseCanvasBundle, BundleError } from '@treemapper/shared';
+import { parseCanvasBundle, BundleError } from '@treemapper/shared';
+import { importBundle } from './canvasImportService.js';
 
 /** Dashboard-level routes: canvas list/create + invite lookup/accept (not canvas-scoped). */
 export function registerCanvasRoutes(
@@ -55,23 +56,7 @@ export function registerCanvasRoutes(
     if (!perms) return reply.code(403).send({ error: 'bu grubun onaylı üyesi değilsiniz' });
     if (!perms.canCreateCanvas) return reply.code(403).send({ error: 'bu grupta kanvas oluşturma yetkiniz yok' });
 
-    // Seed kök YOK: paketin kendi kökleri gelecek.
-    const canvas = await createCanvas(prisma, serviceFor, name, req.user!.id, { groupId, seedRoot: false });
-    const intents = bundleToIntents(bundle);
-    if (intents.length > 0) {
-      await serviceFor(canvas.id).commit(intents, {
-        message: `İçe aktarım: ${bundle.nodes.length} düğüm, ${bundle.edges.length} kenar`,
-        authorId: req.user!.id,
-        actor: { userId: req.user!.id, role: 'owner' },
-      });
-    }
-    for (const r of bundle.regions) {
-      await createRegion(prisma, canvas.id, {
-        name: r.name, x: r.x, y: r.y, width: r.width, height: r.height,
-        color: r.color, description: r.description, aiAllowed: r.aiAllowed,
-      });
-    }
-    return { canvas };
+    return { canvas: await importBundle(prisma, serviceFor, bundle, { name, ownerId: req.user!.id, groupId }) };
   });
 
   app.get<{ Params: { token: string } }>('/api/invites/:token', async (req, reply) => {
