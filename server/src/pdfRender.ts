@@ -1,5 +1,5 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage, type RGB } from 'pdf-lib';
-import type { PdfDocModel, PdfPrim } from '@treemapper/shared';
+import type { PdfDocModel, PdfPrim } from '@co-pronoia/shared';
 
 /**
  * Plandaki "PDF Çizim Motoru" (pdf-render-engine): shared'ın ürettiği ilkel çizim modelini
@@ -76,7 +76,7 @@ function drawPrim(page: PDFPage, pageH: number, prim: PdfPrim, font: PDFFont, bo
 export async function renderPdf(model: PdfDocModel): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
   doc.setTitle(model.title);
-  doc.setCreator('TreeMapper');
+  doc.setCreator('Co-Pronoia');
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
 

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { PrismaClient } from '@prisma/client';
-import type { GroupRole, ServerMessage } from '@treemapper/shared';
+import type { GroupRole, ServerMessage } from '@co-pronoia/shared';
 import {
   adminSetPassword, deleteGroup, deleteUser, getStats, listAllCanvases, listAllGroups,
   listAllUsers, revokeUserSessions, setUserAdmin,

@@ -1,5 +1,5 @@
-import type { CanvasBundle } from '@treemapper/shared';
-import { parseCanvasBundle } from '@treemapper/shared';
+import type { CanvasBundle } from '@co-pronoia/shared';
+import { parseCanvasBundle } from '@co-pronoia/shared';
 import { cloudUrl } from './mode.js';
 
 export interface CloudUser {

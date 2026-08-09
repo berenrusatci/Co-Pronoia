@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { GroupInfo, GroupMemberInfo, GroupRole, GroupType } from '@treemapper/shared';
+import type { GroupInfo, GroupMemberInfo, GroupRole, GroupType } from '@co-pronoia/shared';
 import { ApiError, groupApi, type RoleDefInput } from '../api/client';
 
 interface GroupStore {

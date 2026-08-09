@@ -1,5 +1,5 @@
 {
-  "name": "@treemapper/web",
+  "name": "@co-pronoia/web",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@treemapper/shared": "*",
+    "@co-pronoia/shared": "*",
     "@xyflow/react": "^12.4.0",
     "d3-hierarchy": "^3.1.2",
     "html-to-image": "^1.11.13",

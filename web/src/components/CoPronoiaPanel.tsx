@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { AgentRoleInfo, AgentTokenInfo, NodeClaimInfo, PlanProposalInfo, ProposalStatus } from '@treemapper/shared';
+import type { AgentRoleInfo, AgentTokenInfo, NodeClaimInfo, PlanProposalInfo, ProposalStatus } from '@co-pronoia/shared';
 import { api, ApiError } from '../api/client';
 import { useGraphStore } from '../store/graphStore';
 import { useCanvasStore } from '../store/canvasStore';

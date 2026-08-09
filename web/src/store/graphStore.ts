@@ -4,7 +4,7 @@ import {
   type BranchInfo, type CanvasBriefInfo, type Commit, type CommitSummary, type EdgeDirection, type EdgeKind,
   type GraphState, type MemberInfo, type NodeClaimInfo, type NodeFields, type NodeType, type OpInput,
   type PlanEdge, type PlanNode, type PlanProposalInfo, type RegionInfo, type ServerMessage,
-} from '@treemapper/shared';
+} from '@co-pronoia/shared';
 import { api, ApiError, type CommitOutcome } from '../api/client';
 import { applyIntents, genId, pushIntent, toGraph } from './applyIntents';
 import { useCanvasStore } from './canvasStore';

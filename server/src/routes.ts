@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { PrismaClient } from '@prisma/client';
-import type { CanvasPreview, OpInput, ServerMessage } from '@treemapper/shared';
-import { buildPdfModel, resolveTemplate, serializeCanvas } from '@treemapper/shared';
+import type { CanvasPreview, OpInput, ServerMessage } from '@co-pronoia/shared';
+import { buildPdfModel, resolveTemplate, serializeCanvas } from '@co-pronoia/shared';
 import { renderPdf } from './pdfRender.js';
 import { ConflictError, RegionError, ValidationError, type Actor } from './commitService.js';
 import {

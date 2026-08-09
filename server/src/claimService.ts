@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import type { NodeClaimInfo, OpInput, PlanNode, RegionInfo } from '@treemapper/shared';
+import type { NodeClaimInfo, OpInput, PlanNode, RegionInfo } from '@co-pronoia/shared';
 import { listRegions, type ServiceFor } from './canvasService.js';
 import type { ResolvedAgentToken } from './agentRoleService.js';
 

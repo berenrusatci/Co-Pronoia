@@ -2,7 +2,7 @@ import type { PrismaClient } from '@prisma/client';
 import {
   expandAll, OpError, ValidationError,
   type Graph, type OpInput, type PlanProposalInfo, type ProposalStatus,
-} from '@treemapper/shared';
+} from '@co-pronoia/shared';
 import { memberRole, type ServiceFor } from './canvasService.js';
 import { ConflictError, RegionError, type CommitOutcome } from './commitService.js';
 import type { ResolvedAgentToken } from './agentRoleService.js';

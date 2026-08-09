@@ -2,7 +2,7 @@ import type { PrismaClient } from '@prisma/client';
 import { nanoid } from 'nanoid';
 import type {
   CanvasAccess, GroupInfo, GroupMemberInfo, GroupRole, GroupRoleDefInfo, GroupMemberStatus, GroupType,
-} from '@treemapper/shared';
+} from '@co-pronoia/shared';
 
 export interface RoleDefInput {
   name: string;

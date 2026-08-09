@@ -4,7 +4,7 @@ import fastifyWebsocket from '@fastify/websocket';
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { randomUUID } from 'node:crypto';
-import type { CanvasRole, GroupRole, GroupMemberStatus, ServerMessage, SiteAppearance } from '@treemapper/shared';
+import type { CanvasRole, GroupRole, GroupMemberStatus, ServerMessage, SiteAppearance } from '@co-pronoia/shared';
 import { CommitService } from './commitService.js';
 import { memberRole } from './canvasService.js';
 import { groupRole } from './groupService.js';

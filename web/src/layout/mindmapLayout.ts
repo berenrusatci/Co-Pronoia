@@ -1,5 +1,5 @@
 import { hierarchy, tree } from 'd3-hierarchy';
-import type { PlanNode } from '@treemapper/shared';
+import type { PlanNode } from '@co-pronoia/shared';
 
 export interface LayoutResult {
   positions: Map<string, { x: number; y: number }>;

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { CanvasInfo, CanvasType } from '@treemapper/shared';
+import type { CanvasInfo, CanvasType } from '@co-pronoia/shared';
 import { ApiError, canvasApi, setActiveCanvasId } from '../api/client';
 
 interface CanvasStore {

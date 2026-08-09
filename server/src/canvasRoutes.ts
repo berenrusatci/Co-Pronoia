@@ -1,9 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import type { PrismaClient } from '@prisma/client';
-import type { ServerMessage } from '@treemapper/shared';
+import type { ServerMessage } from '@co-pronoia/shared';
 import { acceptInvite, createCanvas, inviteInfo, listCanvases, listMembers, type ServiceFor } from './canvasService.js';
 import { memberPermissions } from './groupService.js';
-import { parseCanvasBundle, BundleError } from '@treemapper/shared';
+import { parseCanvasBundle, BundleError } from '@co-pronoia/shared';
 import { importBundle } from './canvasImportService.js';
 
 /** Dashboard-level routes: canvas list/create + invite lookup/accept (not canvas-scoped). */

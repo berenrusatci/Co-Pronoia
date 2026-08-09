@@ -19,7 +19,7 @@ Tests get isolated DBs from `server/src/testDb.ts`: one `prisma db push` into a 
 
 ## Architecture
 
-TreeMapper is a collaborative development-planning app with an **in-app commit system** (not real git): every mutation is a numbered commit with an author; concurrent conflicting edits land on branches the user resolves.
+Co-Pronoia is a collaborative development-planning app with an **in-app commit system** (not real git): every mutation is a numbered commit with an author; concurrent conflicting edits land on branches the user resolves.
 
 npm-workspaces monorepo: `shared/` (types + op engine + WS message types), `server/` (Fastify + Prisma), `web/` (Vite + React + React Flow + zustand).
 

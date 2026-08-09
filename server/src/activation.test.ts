@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { parseCanvasBundle, type OpInput } from '@treemapper/shared';
+import { parseCanvasBundle, type OpInput } from '@co-pronoia/shared';
 import { buildApp } from './app.js';
 import { testDbFactory } from './testDb.js';
 import { captureEmails, createGroupCanvas, registerVerified } from './testAuth.js';

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { EdgeDirection, EdgeKind, PlanEdge } from '@treemapper/shared';
+import type { EdgeDirection, EdgeKind, PlanEdge } from '@co-pronoia/shared';
 import { useGraphStore, useDisplayedGraph } from '../store/graphStore';
 import { kindStyles } from './CurvedEdge';
 

@@ -1,6 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
-import type { CanvasType, GraphState, OpInput, RegionInfo } from '@treemapper/shared';
-import { buildFlowLayoutOps } from '@treemapper/shared';
+import type { CanvasType, GraphState, OpInput, RegionInfo } from '@co-pronoia/shared';
+import { buildFlowLayoutOps } from '@co-pronoia/shared';
 import {
   ConflictError, RegionError, ValidationError,
   type Actor, type CommitOutcome, type CommitService,
@@ -93,7 +93,7 @@ function buildSystemPrompt(
   canFillSubCanvases: boolean,
 ): string {
   return [
-    'Sen TreeMapper adlı iş birlikli planlama uygulaması için çalışan bir ajansın. Sana bir kanvasın güncel durumu (düğümler, kenarlar, bölgeler), kullanıcının yetkileri ve doğal dildeki isteği verilir.',
+    'Sen Co-Pronoia adlı iş birlikli planlama uygulaması için çalışan bir ajansın. Sana bir kanvasın güncel durumu (düğümler, kenarlar, bölgeler), kullanıcının yetkileri ve doğal dildeki isteği verilir.',
     '',
     'YALNIZCA geçerli bir JSON nesnesi döndür (markdown, kod bloğu, ek metin YOK). Üç mod var:',
     '1) Bilgi/özet isteği ("özetle", "anlat", "listele", "durum ne"): {"mode":"summary","reply":"<Türkçe yanıt>"}',

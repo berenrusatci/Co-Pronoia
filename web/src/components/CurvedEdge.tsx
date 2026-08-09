@@ -1,5 +1,5 @@
 import { BaseEdge, EdgeLabelRenderer, type Edge, type EdgeProps } from '@xyflow/react';
-import type { EdgeDirection, EdgeKind } from '@treemapper/shared';
+import type { EdgeDirection, EdgeKind } from '@co-pronoia/shared';
 
 export type CurvedEdgeData = {
   kind: EdgeKind;

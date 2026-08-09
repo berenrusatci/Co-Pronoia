@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { PrismaClient } from '@prisma/client';
 import { nanoid } from 'nanoid';
-import type { CanvasType, GroupType } from '@treemapper/shared';
+import type { CanvasType, GroupType } from '@co-pronoia/shared';
 import type { AuthUser } from './auth.js';
 import type { CloudClient } from './cloudClient.js';
 import { createGroup } from './groupService.js';

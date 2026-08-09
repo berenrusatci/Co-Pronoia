@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { Commit, Op } from '@treemapper/shared';
+import type { Commit, Op } from '@co-pronoia/shared';
 import { api } from '../api/client';
 import { useGraphStore } from '../store/graphStore';
 

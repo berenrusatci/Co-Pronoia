@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from './app.js';
 import { testDbFactory } from './testDb.js';
 import { captureEmails, createGroupCanvas, registerVerified } from './testAuth.js';
-import type { OpInput } from '@treemapper/shared';
+import type { OpInput } from '@co-pronoia/shared';
 
 let db: ReturnType<typeof testDbFactory>;
 beforeAll(() => {

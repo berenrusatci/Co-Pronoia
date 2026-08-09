@@ -4,7 +4,7 @@ import {
   OpError, regionViolation, summarizeOps, ValidationError,
   type CanvasRole, type Commit, type CommitSummary, type Graph, type GraphDelta, type GraphState, type Op,
   type OpInput, type PlanEdge, type PlanNode,
-} from '@treemapper/shared';
+} from '@co-pronoia/shared';
 import { listRegions } from './canvasService.js';
 
 export class ConflictError extends Error {}

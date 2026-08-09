@@ -1,4 +1,4 @@
-import { applyOp, expand, type Graph, type OpInput, type PlanEdge, type PlanNode } from '@treemapper/shared';
+import { applyOp, expand, type Graph, type OpInput, type PlanEdge, type PlanNode } from '@co-pronoia/shared';
 
 /** Client-side id for staged entities; the server keeps ids the client sends. */
 export const genId = (): string => 'c' + Math.random().toString(36).slice(2, 11);

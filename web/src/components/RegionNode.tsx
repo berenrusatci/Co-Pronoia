@@ -1,5 +1,5 @@
 import { NodeResizer, type Node, type NodeProps } from '@xyflow/react';
-import type { RegionInfo } from '@treemapper/shared';
+import type { RegionInfo } from '@co-pronoia/shared';
 import { useGraphStore } from '../store/graphStore';
 import { useCanvasStore } from '../store/canvasStore';
 

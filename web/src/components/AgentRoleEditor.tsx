@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { AgentRoleInfo } from '@treemapper/shared';
+import type { AgentRoleInfo } from '@co-pronoia/shared';
 import { ApiError, type AgentRoleApi, type AgentRoleInput } from '../api/client';
 
 /** Tek bir ajan rolü satırı: ad + persona metni + süpervizör bayrağı. */

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Handle, Position, type NodeProps, type Node } from '@xyflow/react';
-import type { CanvasPreview, NodeStatus, NodeType, PlanNode } from '@treemapper/shared';
+import type { CanvasPreview, NodeStatus, NodeType, PlanNode } from '@co-pronoia/shared';
 import { canvasApi } from '../api/client';
 import { useAuthStore } from '../store/authStore';
 import { isSafeUrl } from './NodeEditorPanel';

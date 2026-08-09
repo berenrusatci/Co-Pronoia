@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import type { CanvasAccess, CanvasInfo, CanvasType, GroupInfo, GroupMemberInfo, GroupRoleDefInfo, GroupType } from '@treemapper/shared';
+import type { CanvasAccess, CanvasInfo, CanvasType, GroupInfo, GroupMemberInfo, GroupRoleDefInfo, GroupType } from '@co-pronoia/shared';
 import { useCanvasStore } from '../store/canvasStore';
 import { useGroupStore } from '../store/groupStore';
 import { useAuthStore } from '../store/authStore';

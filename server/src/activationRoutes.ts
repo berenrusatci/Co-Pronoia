@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { PrismaClient } from '@prisma/client';
-import { serializeCanvas } from '@treemapper/shared';
+import { serializeCanvas } from '@co-pronoia/shared';
 import { resolveSession, sessionToken } from './auth.js';
 import {
   activationStatus, approveInstance, completeActivation, exchangeInstance,

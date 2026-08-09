@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import type {
   AdminCanvasInfo, AdminGroupInfo, AdminStats, AdminUserInfo, GroupMemberInfo, MemberInfo,
-} from '@treemapper/shared';
+} from '@co-pronoia/shared';
 import { adminApi, ApiError, siteApi } from '../api/client';
 import { useAdminStore } from '../store/adminStore';
 import { useAuthStore } from '../store/authStore';

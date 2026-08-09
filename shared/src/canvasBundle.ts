@@ -71,7 +71,7 @@ function asNumOrNull(v: unknown): number | null {
 export function parseCanvasBundle(raw: unknown): CanvasBundle {
   if (!raw || typeof raw !== 'object') throw new BundleError('geçersiz paket: nesne değil');
   const o = raw as Record<string, unknown>;
-  if (o.kind !== CANVAS_BUNDLE_KIND) throw new BundleError('geçersiz paket: TreeMapper kanvas paketi değil');
+  if (o.kind !== CANVAS_BUNDLE_KIND) throw new BundleError('geçersiz paket: Co-Pronoia kanvas paketi değil');
   if (o.version !== CANVAS_BUNDLE_VERSION) throw new BundleError(`desteklenmeyen paket sürümü: ${String(o.version)}`);
   if (!Array.isArray(o.nodes)) throw new BundleError('geçersiz paket: nodes dizisi yok');
   const edges = Array.isArray(o.edges) ? o.edges : [];

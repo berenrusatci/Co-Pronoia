@@ -1,4 +1,4 @@
-# n8n + Gemini TreeMapper Ajanı
+# n8n + Gemini Co-Pronoia Ajanı
 
 Webhook ile tetiklenen bir n8n workflow'u: doğal dildeki komutu Gemini'ye verir, gerekirse kanvasa **tek commit** olarak düğüm/kenar yazar.
 
@@ -44,7 +44,7 @@ Workflow tüm sırları `$env`'den okur; n8n'i şu değişkenlerle başlatın:
 
 | Değişken | Açıklama |
 |---|---|
-| `TM_BASE_URL` | TreeMapper sunucusu, ör. `http://localhost:3001` (sondaki `/` olmadan) |
+| `TM_BASE_URL` | Co-Pronoia sunucusu, ör. `http://localhost:3001` (sondaki `/` olmadan) |
 | `TM_BOT_USERNAME` | Bot kullanıcı adı, ör. `ajan` |
 | `TM_BOT_PASSWORD` | Bot şifresi |
 | `GEMINI_API_KEY` | Google AI Studio API anahtarı |
@@ -61,13 +61,13 @@ Not: kendi n8n kurulumunuzda Code node'larından `$env` erişimi kapalıysa `N8N
 
 ### 3. Workflow'u içe aktar
 
-n8n arayüzünde **Import from File** ile `treemapper-agent.workflow.json` dosyasını yükleyin ve workflow'u **Active** yapın. Webhook adresi:
+n8n arayüzünde **Import from File** ile `co-pronoia-agent.workflow.json` dosyasını yükleyin ve workflow'u **Active** yapın. Webhook adresi:
 
 ```
-POST http://<n8n-host>:5678/webhook/treemapper-agent
+POST http://<n8n-host>:5678/webhook/co-pronoia-agent
 ```
 
-(Test modunda çalıştırıyorsanız `/webhook-test/treemapper-agent`.)
+(Test modunda çalıştırıyorsanız `/webhook-test/co-pronoia-agent`.)
 
 ## Kullanım
 
@@ -76,7 +76,7 @@ POST http://<n8n-host>:5678/webhook/treemapper-agent
 Özet:
 
 ```bash
-curl -s -X POST http://localhost:5678/webhook/treemapper-agent \
+curl -s -X POST http://localhost:5678/webhook/co-pronoia-agent \
   -H 'Content-Type: application/json' \
   -d '{"canvas":"Projem","prompt":"backend bölgesindeki düğümleri ve durumlarını özetle"}'
 # → {"reply":"Backend bölgesinde 4 düğüm var: ...","committed":false}
@@ -85,7 +85,7 @@ curl -s -X POST http://localhost:5678/webhook/treemapper-agent \
 Diyagram:
 
 ```bash
-curl -s -X POST http://localhost:5678/webhook/treemapper-agent \
+curl -s -X POST http://localhost:5678/webhook/co-pronoia-agent \
   -H 'Content-Type: application/json' \
   -d '{"canvas":"Projem","prompt":"backend bölgesine kayıt-giriş-oturum yenileme adımlarından oluşan bir auth akış diyagramı çiz"}'
 # → {"reply":"3 düğüm ve 2 akış kenarı ekledim...","committed":true,"commitSeq":42,"opCount":5}

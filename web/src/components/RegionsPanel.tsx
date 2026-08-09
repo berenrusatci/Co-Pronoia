@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import type { GroupRoleDefInfo, RegionInfo } from '@treemapper/shared';
+import type { GroupRoleDefInfo, RegionInfo } from '@co-pronoia/shared';
 import { useGraphStore } from '../store/graphStore';
 import { useCanvasStore } from '../store/canvasStore';
 import { groupApi } from '../api/client';

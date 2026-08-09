@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from './app.js';
 import { testDbFactory } from './testDb.js';
 import { captureEmails, registerVerified } from './testAuth.js';
-import type { OpInput } from '@treemapper/shared';
+import type { OpInput } from '@co-pronoia/shared';
 
 let db: ReturnType<typeof testDbFactory>;
 beforeAll(() => {
@@ -111,7 +111,7 @@ describe('MCP ucu: kimlik ve araç görünürlüğü', () => {
 
     res = await rpc(app, agent.secret, 'initialize', initParams);
     expect(res.statusCode).toBe(200);
-    expect(res.json().result.serverInfo.name).toBe('treemapper-co-pronoia');
+    expect(res.json().result.serverInfo.name).toBe('co-pronoia');
 
     // iptal sonrası 401
     await app.inject({ method: 'DELETE', url: `/api/canvases/${canvasId}/agent-tokens/${agent.tokenId}`, cookies });

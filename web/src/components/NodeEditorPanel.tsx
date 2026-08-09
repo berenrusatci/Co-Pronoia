@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { CanvasInfo, NodeStatus, NodeType } from '@treemapper/shared';
+import type { CanvasInfo, NodeStatus, NodeType } from '@co-pronoia/shared';
 import { canvasApi } from '../api/client';
 import { useAuthStore } from '../store/authStore';
 import { useCanvasStore } from '../store/canvasStore';

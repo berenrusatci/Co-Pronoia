@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import type { PlanNode } from '@treemapper/shared';
+import type { PlanNode } from '@co-pronoia/shared';
 import type { AgentRoleDef, PrismaClient } from '@prisma/client';
-import type { ServerMessage } from '@treemapper/shared';
+import type { ServerMessage } from '@co-pronoia/shared';
 import { listRegions, createRegion, type ServiceFor } from '../canvasService.js';
 import type { CanvasEvents } from '../canvasEvents.js';
 import { listAgentTokens, type ResolvedAgentToken } from '../agentRoleService.js';
@@ -133,7 +133,7 @@ export function buildCoPronoiaServer(ctx: McpContext): McpServer {
   const canvasId = token.canvasId;
   const multiRole = token.roles.length > 1;
 
-  const server = new McpServer({ name: 'treemapper-co-pronoia', version: '0.1.0' });
+  const server = new McpServer({ name: 'co-pronoia', version: '0.1.0' });
 
   const refreshProposals = async () =>
     broadcast(canvasId, { type: 'proposals', proposals: await listProposals(prisma, canvasId) });
@@ -226,7 +226,7 @@ export function buildCoPronoiaServer(ctx: McpContext): McpServer {
         '## Kurallar',
         ...supervisorRules.map((r) => `- ${r}`),
         '- KANVAS NOTU yukarıda: kanvasın ortak çalışma anlaşmasıdır (hedefler, kararlar, kısıtlar). Plan üretmeden önce oku ve uy; önemli bir karar/kısıt değiştiğinde update_brief ile güncelle (mevcut içeriği koru, üstüne yaz değil düzenle).',
-        '- intents, TreeMapper intent sözlüğünü kullanır: add_node, update_node, delete_node, move_node, add_edge, delete_edge.',
+        '- intents, Co-Pronoia intent sözlüğünü kullanır: add_node, update_node, delete_node, move_node, add_edge, delete_edge.',
         '- Paralel çalışırken önce list_claims ile bak, üstleneceğin alanı claim_region {regionId} ile TTL boyunca üstlen (yumuşak lease — kilit değil, çakışan öneri üretmeyi azaltır); işin bitince release_claim ile bırak. claim_region conflict dönerse başka alana geç ya da süresinin dolmasını bekle.',
         '- Düğümlerde "notes" (uzun serbest markdown ayrıntı) ve "data" (anahtar-değer özel alanlar, ör. {"tahmin":"3g"}) alanları vardır: kısa title/description yetmediğinde ayrıntıyı bunlara yaz.',
         "- Yeni düğümlere kendi kısa id'lerini ver (ör. n1, n2) ki aynı öneri içindeki add_edge/parentId onlara bağlanabilsin.",

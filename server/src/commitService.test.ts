@@ -5,7 +5,7 @@ import { hashPassword, verifyPassword } from './auth.js';
 import { createCanvas } from './canvasService.js';
 import { captureEmails, createGroupCanvas, registerVerified } from './testAuth.js';
 import { CommitService, type CommitOutcome } from './commitService.js';
-import type { GraphState, OpInput } from '@treemapper/shared';
+import type { GraphState, OpInput } from '@co-pronoia/shared';
 
 let db: ReturnType<typeof testDbFactory>;
 beforeAll(() => {

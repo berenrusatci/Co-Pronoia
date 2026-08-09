@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { PDF_TEMPLATES, type PdfTemplateId } from '@treemapper/shared';
+import { PDF_TEMPLATES, type PdfTemplateId } from '@co-pronoia/shared';
 import { api, ApiError } from '../api/client';
 import { useCanvasStore } from '../store/canvasStore';
 

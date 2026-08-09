@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { PrismaClient } from '@prisma/client';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import type { ServerMessage } from '@treemapper/shared';
+import type { ServerMessage } from '@co-pronoia/shared';
 import type { ServiceFor } from '../canvasService.js';
 import type { CanvasEvents } from '../canvasEvents.js';
 import { resolveAgentToken } from '../agentRoleService.js';

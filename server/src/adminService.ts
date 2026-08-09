@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import type { AdminCanvasInfo, AdminGroupInfo, AdminStats, AdminUserInfo } from '@treemapper/shared';
+import type { AdminCanvasInfo, AdminGroupInfo, AdminStats, AdminUserInfo } from '@co-pronoia/shared';
 import { hashPassword } from './auth.js';
 import { deleteCanvas } from './canvasService.js';
 

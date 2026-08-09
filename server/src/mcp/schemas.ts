@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { OpInput } from '@treemapper/shared';
+import type { OpInput } from '@co-pronoia/shared';
 
 /**
  * MCP araçlarına gelen intent'lerin zod şeması. `satisfies` sayesinde shared `OpInput`

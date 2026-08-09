@@ -3,7 +3,7 @@ import type {
   BranchInfo, CanvasAccess, CanvasBriefInfo, CanvasBriefRevisionInfo, CanvasInfo, CanvasPreview, CanvasType, Commit, CommitSummary, EdgeDirection, EdgeKind,
   GraphState, GroupInfo, GroupMemberInfo, GroupRole, GroupRoleDefInfo, GroupType, MemberInfo, NodeFields, NodeType,
   NodeClaimInfo, OpInput, PlanProposalInfo, RegionInfo, SiteAppearance,
-} from '@treemapper/shared';
+} from '@co-pronoia/shared';
 
 export interface AgentRoleInput {
   name: string;

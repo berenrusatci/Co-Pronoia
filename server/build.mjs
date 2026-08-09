@@ -13,7 +13,7 @@
  *   node build.mjs --local    → yerel bundle'ı (kimlik/yönetim kodu elenmiş)
  *
  * npm bağımlılıkları external bırakılır (Prisma client'ın üretilmiş dosyaları ve motor
- * ikilisi bundle edilemez); yalnız kendi kodumuz ve `@treemapper/shared` içeri alınır.
+ * ikilisi bundle edilemez); yalnız kendi kodumuz ve `@co-pronoia/shared` içeri alınır.
  */
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -28,9 +28,9 @@ const local = process.argv.includes('--local');
 const outArg = process.argv.find((a) => a.startsWith('--outfile='));
 const outfile = outArg ? outArg.slice('--outfile='.length) : join(here, 'dist/server.mjs');
 
-// @treemapper/shared bir workspace paketi ve `main` alanı TypeScript kaynağını gösteriyor;
+// @co-pronoia/shared bir workspace paketi ve `main` alanı TypeScript kaynağını gösteriyor;
 // çalışma anında çözülemez, o yüzden bundle'a dahil edilir. Gerisi node_modules'ta kalır.
-const external = Object.keys(pkg.dependencies ?? {}).filter((d) => d !== '@treemapper/shared');
+const external = Object.keys(pkg.dependencies ?? {}).filter((d) => d !== '@co-pronoia/shared');
 
 const result = await esbuild.build({
   entryPoints: [join(here, 'src/index.ts')],

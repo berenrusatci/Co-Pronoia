@@ -1,6 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import { nanoid } from 'nanoid';
-import type { CanvasInfo, CanvasRole, CanvasType, MemberInfo, RegionInfo } from '@treemapper/shared';
+import type { CanvasInfo, CanvasRole, CanvasType, MemberInfo, RegionInfo } from '@co-pronoia/shared';
 import type { CommitService } from './commitService.js';
 
 export type ServiceFor = (canvasId: string) => CommitService;

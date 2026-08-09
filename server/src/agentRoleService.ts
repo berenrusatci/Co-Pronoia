@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { PrismaClient } from '@prisma/client';
 import { nanoid } from 'nanoid';
-import type { AgentRoleInfo, AgentTokenInfo } from '@treemapper/shared';
+import type { AgentRoleInfo, AgentTokenInfo } from '@co-pronoia/shared';
 
 // ---------- Ajan rol tanımları (groupId null → site şablonu, dolu → gruba özel) ----------
 

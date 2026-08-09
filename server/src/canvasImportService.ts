@@ -1,6 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
-import type { CanvasBundle, CanvasInfo, CanvasType } from '@treemapper/shared';
-import { bundleToIntents } from '@treemapper/shared';
+import type { CanvasBundle, CanvasInfo, CanvasType } from '@co-pronoia/shared';
+import { bundleToIntents } from '@co-pronoia/shared';
 import { createCanvas, createRegion, type ServiceFor } from './canvasService.js';
 
 /**

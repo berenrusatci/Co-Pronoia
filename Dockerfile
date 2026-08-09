@@ -42,7 +42,7 @@ COPY server/package.json server/package.json
 COPY web/package.json web/package.json
 COPY server/prisma server/prisma
 COPY server/prisma.config.ts server/prisma.config.ts
-RUN npm ci --omit=dev --workspace @treemapper/server --include-workspace-root
+RUN npm ci --omit=dev --workspace @co-pronoia/server --include-workspace-root
 
 FROM node:22-alpine
 WORKDIR /app

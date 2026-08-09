@@ -1,6 +1,6 @@
 import { MiniMap } from '@xyflow/react';
 import type { MiniMapNodeProps } from '@xyflow/react';
-import type { NodeStatus } from '@treemapper/shared';
+import type { NodeStatus } from '@co-pronoia/shared';
 import { useGraphStore } from '../store/graphStore';
 
 const REGION_PREFIX = 'region:';

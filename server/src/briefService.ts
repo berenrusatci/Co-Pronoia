@@ -1,6 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
-import { ValidationError } from '@treemapper/shared';
-import type { CanvasBriefInfo, CanvasBriefRevisionInfo } from '@treemapper/shared';
+import { ValidationError } from '@co-pronoia/shared';
+import type { CanvasBriefInfo, CanvasBriefRevisionInfo } from '@co-pronoia/shared';
 
 /** Brifing içeriği üst sınırı (~50 KB): kötüye kullanım/aşırı şişme freni. */
 export const MAX_BRIEF_LENGTH = 50_000;
