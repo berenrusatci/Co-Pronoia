@@ -304,4 +304,127 @@ describe('ajan anahtarları (mint/list/revoke)', () => {
     expect(res.statusCode).toBe(200);
     expect(await prisma.agentToken.count({ where: { canvasId } })).toBe(0);
   });
+
+  it('roleIds ile çoklu rol mint edilebilir; roles kümesi tüm rolleri taşır, isSupervisor herhangi biri süpervizörse true', async () => {
+    const { app, prisma, cookies, groupId, canvasId, roleId } = await cpSetup();
+    const supervisorRoleId = (await app.inject({
+      method: 'POST', url: `/api/groups/${groupId}/agent-roles`, cookies,
+      payload: { name: 'Süpervizör', isSupervisor: true },
+    })).json().role.id as string;
+
+    const res = await app.inject({
+      method: 'POST', url: `/api/canvases/${canvasId}/agent-tokens`, cookies,
+      payload: { roleIds: [roleId, supervisorRoleId], label: 'çoklu-1' },
+    });
+    expect(res.statusCode).toBe(200);
+    const { token } = res.json() as { token: { id: string; roles: { name: string; isSupervisor: boolean }[]; isSupervisor: boolean } };
+    expect(token.roles.map((r) => r.name).sort()).toEqual(['Mimar', 'Süpervizör']);
+    expect(token.isSupervisor).toBe(true);
+
+    const row = await prisma.agentTokenRole.findMany({ where: { tokenId: token.id } });
+    expect(row).toHaveLength(2);
+
+    // en az bir rol gerekli
+    const empty = await app.inject({
+      method: 'POST', url: `/api/canvases/${canvasId}/agent-tokens`, cookies,
+      payload: { roleIds: [], label: 'boş' },
+    });
+    expect(empty.statusCode).toBe(400);
+  });
+});
+
+describe('ajan anahtarı yenileme (rotate)', () => {
+  async function cpSetup() {
+    const ctx = await fresh();
+    const { cookies } = await registerVerified(ctx.app, ctx.sent, { username: 'ta', password: 'sifre1', email: 'ta@t.com' });
+    const groupId = (await createGroup(ctx.app, cookies, 'CP', 'co-pronoia')).json().group.id as string;
+    const canvasId = (await ctx.app.inject({
+      method: 'POST', url: '/api/canvases', cookies,
+      payload: { name: 'K', groupId, type: 'co-pronoia' },
+    })).json().canvas.id as string;
+    const roleId = (await ctx.app.inject({
+      method: 'POST', url: `/api/groups/${groupId}/agent-roles`, cookies,
+      payload: { name: 'Mimar', persona: 'Planla.' },
+    })).json().role.id as string;
+    return { ...ctx, cookies, groupId, canvasId, roleId };
+  }
+
+  it('owner-only; iptal edilmiş anahtar yenilenemez; yeni anahtar çalışır eski geçersizleşir; öneri/claim bağları korunur', async () => {
+    const { app, prisma, cookies, canvasId, roleId, sent } = await cpSetup();
+    const mint = await app.inject({
+      method: 'POST', url: `/api/canvases/${canvasId}/agent-tokens`, cookies,
+      payload: { roleId, label: 'ajan-1' },
+    });
+    const { token: minted, secret: oldSecret } = mint.json() as { token: { id: string }; secret: string };
+
+    // Eski anahtarla bir öneri oluştur — rotate sonrası bu satırın tokenId'si değişmemeli.
+    const stateRes = await app.inject({
+      method: 'POST', url: '/api/mcp', headers: { 'content-type': 'application/json', authorization: `Bearer ${oldSecret}`, accept: 'application/json, text/event-stream' },
+      payload: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_state', arguments: {} } },
+    });
+    expect(stateRes.statusCode).toBe(200);
+    const rootId = JSON.parse(stateRes.json().result.content[0].text).nodes[0].id as string;
+    const submitRes = await app.inject({
+      method: 'POST', url: '/api/mcp', headers: { 'content-type': 'application/json', authorization: `Bearer ${oldSecret}`, accept: 'application/json, text/event-stream' },
+      payload: {
+        jsonrpc: '2.0', id: 4, method: 'tools/call',
+        params: {
+          name: 'submit_proposal',
+          arguments: { title: 'Öneri', intents: [{ op: 'add_node', id: 'n1', parentId: rootId, title: 'T' }], baseSeq: 0 },
+        },
+      },
+    });
+    const proposalId = JSON.parse(submitRes.json().result.content[0].text).id as string;
+    expect((await prisma.planProposal.findUnique({ where: { id: proposalId } }))!.tokenId).toBe(minted.id);
+
+    // editör rotate edemez
+    const editor = await registerVerified(app, sent, { username: 'ed', password: 'sifre2', email: 'ed@t.com' });
+    await prisma.canvasMember.create({ data: { canvasId, userId: editor.res.json().user.id as string } });
+    let res = await app.inject({
+      method: 'POST', url: `/api/canvases/${canvasId}/agent-tokens/${minted.id}/rotate`, cookies: editor.cookies,
+    });
+    expect(res.statusCode).toBe(403);
+
+    // owner rotate eder → yeni secret döner, aynı satır (id, label, roller aynı kalır)
+    res = await app.inject({ method: 'POST', url: `/api/canvases/${canvasId}/agent-tokens/${minted.id}/rotate`, cookies });
+    expect(res.statusCode).toBe(200);
+    const { token: rotated, secret: newSecret } = res.json() as { token: { id: string; label: string; roleName: string }; secret: string };
+    expect(rotated.id).toBe(minted.id);
+    expect(rotated.label).toBe('ajan-1');
+    expect(rotated.roleName).toBe('Mimar');
+    expect(newSecret).not.toBe(oldSecret);
+    expect(newSecret.startsWith('tma_')).toBe(true);
+
+    // öneri hâlâ aynı token satırına bağlı (provenance korunur)
+    expect((await prisma.planProposal.findUnique({ where: { id: proposalId } }))!.tokenId).toBe(minted.id);
+
+    // eski anahtar artık 401
+    const oldCall = await app.inject({
+      method: 'POST', url: '/api/mcp', headers: { 'content-type': 'application/json', authorization: `Bearer ${oldSecret}`, accept: 'application/json, text/event-stream' },
+      payload: { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'get_state', arguments: {} } },
+    });
+    expect(oldCall.statusCode).toBe(401);
+
+    // yeni anahtar çalışır
+    const newCall = await app.inject({
+      method: 'POST', url: '/api/mcp', headers: { 'content-type': 'application/json', authorization: `Bearer ${newSecret}`, accept: 'application/json, text/event-stream' },
+      payload: { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'get_state', arguments: {} } },
+    });
+    expect(newCall.statusCode).toBe(200);
+
+    // rotate iki kez üst üste yapılabilir (satır hep aynı kalır)
+    res = await app.inject({ method: 'POST', url: `/api/canvases/${canvasId}/agent-tokens/${minted.id}/rotate`, cookies });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().token.id).toBe(minted.id);
+
+    // iptal edilmiş anahtar yenilenemez
+    await app.inject({ method: 'DELETE', url: `/api/canvases/${canvasId}/agent-tokens/${minted.id}`, cookies });
+    res = await app.inject({ method: 'POST', url: `/api/canvases/${canvasId}/agent-tokens/${minted.id}/rotate`, cookies });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toMatch(/iptal/);
+
+    // bulunamayan token 400
+    res = await app.inject({ method: 'POST', url: `/api/canvases/${canvasId}/agent-tokens/yok-boyle-id/rotate`, cookies });
+    expect(res.statusCode).toBe(400);
+  });
 });

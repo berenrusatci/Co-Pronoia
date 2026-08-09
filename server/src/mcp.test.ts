@@ -696,3 +696,99 @@ describe('MCP ucu: token verimliliği (get_state sinceSeq/compact/fields, get_br
     expect(future).toEqual([]);
   });
 });
+
+describe('MCP ucu: çoklu rollü bağlantı (tek anahtar, birden çok rol)', () => {
+  /** cpSetup'ın grubunda İKİ EK rol (biri normal, biri süpervizör) tanımlayıp ikisine bağlı TEK anahtar basar. */
+  async function multiRoleSetup() {
+    const ctx = await cpSetup();
+    const { app, cookies, groupId, canvasId } = ctx;
+    const mkRole = async (name: string, isSupervisor: boolean) =>
+      (await app.inject({
+        method: 'POST', url: `/api/groups/${groupId}/agent-roles`, cookies,
+        payload: { name, persona: `${name} personası.`, isSupervisor },
+      })).json().role.id as string;
+    const techRole = await mkRole('Teknik', false);
+    const chiefRole = await mkRole('Baş', true);
+    const mint = await app.inject({
+      method: 'POST', url: `/api/canvases/${canvasId}/agent-tokens`, cookies,
+      payload: { roleIds: [techRole, chiefRole], label: 'çoklu-1' },
+    });
+    const secret = mint.json().secret as string;
+    return { ...ctx, secret, canvasId };
+  }
+
+  it('tools/list süpervizör araçlarını gösterir (rollerden biri süpervizör olduğu için)', async () => {
+    const { app, secret } = await multiRoleSetup();
+    const res = await rpc(app, secret, 'tools/list');
+    const names = (res.json().result.tools as { name: string }[]).map((t) => t.name);
+    expect(names).toEqual(expect.arrayContaining(['approve_proposal', 'reject_proposal', 'request_changes', 'create_region']));
+  });
+
+  it('role verilmeden rol-bağımlı araç çağrısı Türkçe hata verir; bilinmeyen rol adı reddedilir; get_brief tüm rolleri listeler', async () => {
+    const { app, secret } = await multiRoleSetup();
+
+    const noRole = await callTool(app, secret, 'get_brief');
+    expect(noRole.isError).toBe(true);
+    expect(noRole.text).toMatch(/rol/i);
+    expect(noRole.text).toContain('Teknik');
+    expect(noRole.text).toContain('Baş');
+
+    const unknownRole = await callTool(app, secret, 'get_brief', { role: 'Yok Böyle Rol' });
+    expect(unknownRole.isError).toBe(true);
+    expect(unknownRole.text).toMatch(/bilinmeyen rol/i);
+
+    const withRole = await callTool(app, secret, 'get_brief', { role: 'Teknik' });
+    expect(withRole.isError).toBe(false);
+    expect(withRole.text).toContain('Teknik personası.');
+    expect(withRole.text).toContain('BİRDEN ÇOK role bağlı');
+  });
+
+  it('rol adıyla öneri gönderir (roleName doğru kaydedilir); teknik rolle onay denemesi reddedilir; süpervizör rolüyle onay çalışır', async () => {
+    const { app, secret } = await multiRoleSetup();
+    const head0 = JSON.parse((await callTool(app, secret, 'get_state')).text).headSeq as number;
+
+    // role verilmeden submit → hata
+    const noRole = await callTool(app, secret, 'submit_proposal', {
+      title: 'X', intents: [{ op: 'add_node', title: 'A' }], baseSeq: head0,
+    });
+    expect(noRole.isError).toBe(true);
+
+    // role: 'Teknik' ile öneri
+    const sub = await callTool(app, secret, 'submit_proposal', {
+      title: 'Teknik plan', intents: [{ op: 'add_node', title: 'A' }], baseSeq: head0, role: 'Teknik',
+    });
+    expect(sub.isError).toBe(false);
+    const proposalId = (JSON.parse(sub.text) as { id: string }).id;
+    const list = JSON.parse((await callTool(app, secret, 'list_proposals')).text) as
+      { id: string; roleName: string; agentLabel: string }[];
+    const prop = list.find((p) => p.id === proposalId)!;
+    expect(prop.roleName).toBe('Teknik');
+    expect(prop.agentLabel).toBe('çoklu-1');
+
+    // aynı bağlantı, teknik (süpervizör olmayan) rolle onay dener → reddedilir
+    const approveAsTech = await callTool(app, secret, 'approve_proposal', { id: proposalId, role: 'Teknik' });
+    expect(approveAsTech.isError).toBe(true);
+    expect(approveAsTech.text).toMatch(/süpervizör değil/);
+
+    // süpervizör (Baş) rolüyle onay çalışır
+    const approveAsChief = await callTool(app, secret, 'approve_proposal', { id: proposalId, role: 'Baş' });
+    expect(approveAsChief.isError).toBe(false);
+    expect(approveAsChief.text).toContain('uygulandı');
+  });
+
+  it('tek rollü token role parametresi verilmeden eskisi gibi çalışmaya devam eder', async () => {
+    const { app, agent, supervisor } = await cpSetup();
+    const brief = await callTool(app, agent.secret, 'get_brief');
+    expect(brief.isError).toBe(false);
+    expect(brief.text).toContain('Mimar personası.');
+
+    const head0 = JSON.parse((await callTool(app, agent.secret, 'get_state')).text).headSeq as number;
+    const sub = await callTool(app, agent.secret, 'submit_proposal', {
+      title: 'Tek rol', intents: [{ op: 'add_node', title: 'A' }], baseSeq: head0,
+    });
+    expect(sub.isError).toBe(false);
+    const proposalId = (JSON.parse(sub.text) as { id: string }).id;
+    const approved = await callTool(app, supervisor.secret, 'approve_proposal', { id: proposalId });
+    expect(approved.isError).toBe(false);
+  });
+});

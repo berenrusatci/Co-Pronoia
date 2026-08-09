@@ -246,17 +246,42 @@ export interface AgentRoleInfo {
   createdAt: string;
 }
 
-/** Kanvas + role bağlı MCP erişim anahtarı (ham değer yalnızca oluşturma yanıtında döner). */
+/**
+ * Kanvas + (bir ya da çok) role bağlı MCP erişim anahtarı — tek bağlantı üzerinden birden
+ * çok ajan rolü çalışabilir (ör. bir süpervizör + bir teknik ajan). Ham değer yalnızca
+ * oluşturma/yenileme yanıtında döner. `roleId`/`roleName` geriye dönük uyum için BİRİNCİL
+ * (varsayılan) rolü taşır; `roles` bağlantının davranabildiği TAM kümedir (en az 1 eleman).
+ * `isSupervisor` kümedeki HERHANGİ bir rol süpervizörse true'dur.
+ */
 export interface AgentTokenInfo {
   id: string;
   label: string;
   roleId: string;
   roleName: string;
   isSupervisor: boolean;
+  roles: { id: string; name: string; isSupervisor: boolean }[];
   createdBy: string;
   createdAt: string;
   lastUsedAt: string | null;
   revoked: boolean;
+}
+
+/**
+ * Yumuşak claim/lease kaydı (pl1): bir ajanın bir bölgeyi ya da düğüm kümesini TTL boyunca
+ * üstlendiği DANIŞMA bilgisidir — kilit değil. regionName, scope='region' ise çözülür (bölge
+ * silinmişse null); scope='nodes' ise null ve nodeIds doludur.
+ */
+export interface NodeClaimInfo {
+  id: string;
+  scope: 'region' | 'nodes';
+  regionId: string | null;
+  regionName: string | null;
+  nodeIds: string[];
+  tokenId: string;
+  agentLabel: string;
+  roleName: string;
+  expiresAt: string;
+  createdAt: string;
 }
 
 export type ProposalStatus = 'submitted' | 'changes_requested' | 'withdrawn' | 'rejected' | 'applied';

@@ -2,7 +2,7 @@ import type {
   AdminCanvasInfo, AdminGroupInfo, AdminStats, AdminUserInfo, AgentRoleInfo, AgentTokenInfo,
   BranchInfo, CanvasAccess, CanvasBriefInfo, CanvasBriefRevisionInfo, CanvasInfo, CanvasPreview, CanvasType, Commit, CommitSummary, EdgeDirection, EdgeKind,
   GraphState, GroupInfo, GroupMemberInfo, GroupRole, GroupRoleDefInfo, GroupType, MemberInfo, NodeFields, NodeType,
-  OpInput, PlanProposalInfo, RegionInfo, SiteAppearance,
+  NodeClaimInfo, OpInput, PlanProposalInfo, RegionInfo, SiteAppearance,
 } from '@treemapper/shared';
 
 export interface AgentRoleInput {
@@ -183,11 +183,19 @@ export const api = {
   getProposals: () => request<{ proposals: PlanProposalInfo[] }>(`${base()}/proposals`),
   rejectProposal: (id: string, note?: string) =>
     post<{ proposal: PlanProposalInfo }>(`${base()}/proposals/${id}/reject`, { note }),
+
+  getClaims: () => request<{ claims: NodeClaimInfo[] }>(`${base()}/claims`),
+  /** Sahip kaçış yolu: bir yumuşak claim'i zorla düşür. */
+  forceReleaseClaim: (id: string) => del<{ claims: NodeClaimInfo[] }>(`${base()}/claims/${id}`),
   getAgentRoles: () => request<{ roles: AgentRoleInfo[] }>(`${base()}/agent-roles`),
   getAgentTokens: () => request<{ tokens: AgentTokenInfo[] }>(`${base()}/agent-tokens`),
-  createAgentToken: (roleId: string, label: string) =>
-    post<{ token: AgentTokenInfo; secret: string }>(`${base()}/agent-tokens`, { roleId, label }),
+  /** Tek bağlantı birden çok role bağlanabilir: en az bir roleId gerekir. */
+  createAgentToken: (roleIds: string[], label: string) =>
+    post<{ token: AgentTokenInfo; secret: string }>(`${base()}/agent-tokens`, { roleIds, label }),
   revokeAgentToken: (id: string) => del<{ tokens: AgentTokenInfo[] }>(`${base()}/agent-tokens/${id}`),
+  /** Anahtarı yenile: aynı satır (etiket/roller/provenance korunur), yeni sır — eski anahtar anında geçersiz. */
+  rotateAgentToken: (id: string) =>
+    post<{ token: AgentTokenInfo; secret: string }>(`${base()}/agent-tokens/${id}/rotate`, {}),
 };
 
 /** Dashboard-level endpoints (not canvas-scoped). */
@@ -256,7 +264,12 @@ export const siteApi = {
 
 /** Yerel kurulum uçları (APP_MODE=local); bulutta kayıtlı değildir. */
 export const activationApi = {
-  pull: () => post<{ imported: number; skipped: number; names: string[] }>('/api/activation/pull'),
+  pull: () => post<{ imported: number; skipped: number; names: string[]; groups: string[] }>('/api/activation/pull'),
+  /**
+   * Yerel modun "çıkış yap"ı: bulut hesabıyla bağlantıyı koparır ve kurulum aktivasyon
+   * ekranına döner. `wipe` verilirse yerel veri (kullanıcı, gruplar, kanvaslar) da silinir.
+   */
+  reset: (wipe = false) => post<{ ok: boolean }>('/api/activation/reset', { wipe }),
 };
 
 export const adminApi = {

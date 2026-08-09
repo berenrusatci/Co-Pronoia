@@ -1,22 +1,14 @@
-import type { FastifyInstance, FastifyRequest } from 'fastify';
-import type { PrismaClient, User } from '@prisma/client';
+import type { FastifyInstance } from 'fastify';
+import type { PrismaClient } from '@prisma/client';
 import { createSession, generateCode, hashPassword, resolveSession, SESSION_COOKIE, sessionToken, verifyPassword, setSessionCookie } from './auth.js';
 import { defaultEmailSender, emailConfigured, isProd, type EmailSender } from './email.js';
-import { isLocal } from './mode.js';
-import { activatedUser } from './activationService.js';
+import { registerProfileRoute, toAuthUser } from './identityRoutes.js';
 
 interface Credentials {
   username?: string;
   password?: string;
   email?: string;
   displayName?: string;
-}
-
-function toAuthUser(user: User) {
-  return {
-    id: user.id, username: user.username, email: user.email,
-    displayName: user.displayName, avatarUrl: user.avatarUrl, isAdmin: user.isAdmin,
-  };
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -37,18 +29,10 @@ export function registerAuthRoutes(
   prisma: PrismaClient,
   emailSender: EmailSender = defaultEmailSender,
 ): void {
-  // Yerel modda hesap yönetimi yok: kimlik bir kerelik bulut aktivasyonundan gelir.
-  // Kayıt/doğrulama/giriş/çıkış/şifre uçları hiç oluşturulmaz (404), yalnızca
-  // "ben kimim" ve profil düzenleme kalır.
-  if (isLocal()) {
-    app.get('/api/auth/me', async (_req, reply) => {
-      const user = await activatedUser(prisma);
-      if (!user) return reply.code(401).send({ error: 'kurulum etkinleştirilmemiş' });
-      return { user };
-    });
-    registerProfileRoute(app, prisma, () => activatedUser(prisma));
-    return;
-  }
+  // Bu modül YALNIZ bulut modunda register edilir (app.ts'teki kapı). Yerel modun
+  // kimlik yüzeyi `identityRoutes.ts`teki registerLocalIdentityRoutes'tur ve bu dosya
+  // yerel imaj bundle'ına hiç girmez.
+  //
   // Kayıt: gerçek User oluşturmaz. Doğrulama kodunu e-postayla gönderir ve
   // bekleyen kaydı EmailVerification tablosuna yazar. Kullanıcı verify-email ile
   // kodu onaylayınca hesap oluşur (aşağıya bak).
@@ -191,34 +175,4 @@ export function registerAuthRoutes(
   });
 
   registerProfileRoute(app, prisma, (req) => resolveSession(prisma, sessionToken(req)));
-}
-
-/** Display name + avatar URL (dashboard user settings). Kimliği çözme yolu moda göre değişir. */
-function registerProfileRoute(
-  app: FastifyInstance,
-  prisma: PrismaClient,
-  currentUser: (req: FastifyRequest) => Promise<{ id: string } | null>,
-): void {
-  app.patch<{ Body: { displayName?: string | null; avatarUrl?: string | null } }>(
-    '/api/auth/profile',
-    async (req, reply) => {
-      const user = await currentUser(req);
-      if (!user) return reply.code(401).send({ error: 'oturum yok' });
-      const data: { displayName?: string | null; avatarUrl?: string | null } = {};
-      if (req.body?.displayName !== undefined) {
-        const displayName = (req.body.displayName ?? '').trim();
-        if (displayName.length > 60) return reply.code(400).send({ error: 'görünen ad en fazla 60 karakter olabilir' });
-        data.displayName = displayName || null;
-      }
-      if (req.body?.avatarUrl !== undefined) {
-        const avatarUrl = (req.body.avatarUrl ?? '').trim();
-        if (avatarUrl.length > 2000) return reply.code(400).send({ error: 'profil fotoğrafı URL\'si çok uzun' });
-        if (avatarUrl && !/^https?:\/\//.test(avatarUrl))
-          return reply.code(400).send({ error: 'profil fotoğrafı için geçerli bir http(s) URL girin' });
-        data.avatarUrl = avatarUrl || null;
-      }
-      const updated = await prisma.user.update({ where: { id: user.id }, data });
-      return { user: toAuthUser(updated) };
-    },
-  );
 }

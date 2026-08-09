@@ -182,6 +182,7 @@ export async function removeMember(
 /** Owner-only. Removes the canvas and everything scoped to it. */
 export async function deleteCanvas(prisma: PrismaClient, canvasId: string): Promise<void> {
   await prisma.$transaction([
+    prisma.nodeClaim.deleteMany({ where: { canvasId } }),
     prisma.planProposal.deleteMany({ where: { canvasId } }),
     prisma.agentToken.deleteMany({ where: { canvasId } }),
     prisma.canvasBriefRevision.deleteMany({ where: { canvasId } }),

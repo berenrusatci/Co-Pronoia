@@ -3,6 +3,7 @@ import type { GroupRoleDefInfo, RegionInfo } from '@treemapper/shared';
 import { useGraphStore } from '../store/graphStore';
 import { useCanvasStore } from '../store/canvasStore';
 import { groupApi } from '../api/client';
+import { useModeStore } from '../store/modeStore';
 
 const COLORS = ['#d97757', '#3b6fe0', '#7a4dc9', '#1e7a2e', '#b3261e', '#0e7f86'];
 
@@ -13,6 +14,9 @@ function RegionEntry({
   isOwner: boolean;
   groupRoles: GroupRoleDefInfo[];
 }) {
+  // Yerelde bölgeler KALIR (AI izni + açıklama MCP ajanları için işlevsel), ama kimin
+  // erişebileceğini seçmek tek kullanıcılı kurulumda anlamsız — üye/rol atama sunucuda da yok.
+  const isLocalMode = useModeStore((s) => s.mode) === 'local';
   const members = useGraphStore((s) => s.members);
   const setRegionMembers = useGraphStore((s) => s.setRegionMembers);
   const updateRegion = useGraphStore((s) => s.updateRegion);
@@ -76,7 +80,7 @@ function RegionEntry({
             maxLength={500}
             rows={2}
           />
-          {groupRoles.length > 0 && (
+          {!isLocalMode && groupRoles.length > 0 && (
             <>
               <div className="region-picker-label">Erişimli roller</div>
               <div className="region-member-picker">
@@ -93,19 +97,23 @@ function RegionEntry({
               </div>
             </>
           )}
-          <div className="region-picker-label">Erişimli kullanıcılar</div>
-          <div className="region-member-picker">
-            {members.map((m) => (
-              <label key={m.userId} className="region-member-check">
-                <input
-                  type="checkbox"
-                  checked={region.directMemberIds.includes(m.userId)}
-                  onChange={() => toggleUser(m.userId)}
-                />
-                {m.username}
-              </label>
-            ))}
-          </div>
+          {!isLocalMode && (
+            <>
+              <div className="region-picker-label">Erişimli kullanıcılar</div>
+              <div className="region-member-picker">
+                {members.map((m) => (
+                  <label key={m.userId} className="region-member-check">
+                    <input
+                      type="checkbox"
+                      checked={region.directMemberIds.includes(m.userId)}
+                      onChange={() => toggleUser(m.userId)}
+                    />
+                    {m.username}
+                  </label>
+                ))}
+              </div>
+            </>
+          )}
         </>
       ) : (
         <div className="region-entry-members">
@@ -119,6 +127,7 @@ function RegionEntry({
 }
 
 export function RegionsPanel() {
+  const isLocalMode = useModeStore((s) => s.mode) === 'local';
   const regions = useGraphStore((s) => s.regions);
   const createRegion = useGraphStore((s) => s.createRegion);
   const setView = useGraphStore((s) => s.setView);
@@ -128,12 +137,13 @@ export function RegionsPanel() {
   const [groupRoles, setGroupRoles] = useState<GroupRoleDefInfo[]>([]);
 
   useEffect(() => {
-    if (!active?.groupId || !isOwner) {
+    // Yerelde grup iş rolleri (GroupRoleDef) diye bir uç yok — hiç sorma.
+    if (!active?.groupId || !isOwner || isLocalMode) {
       setGroupRoles([]);
       return;
     }
     groupApi.roles(active.groupId).then(({ roles }) => setGroupRoles(roles)).catch(() => setGroupRoles([]));
-  }, [active?.groupId, isOwner]);
+  }, [active?.groupId, isOwner, isLocalMode]);
 
   const submit = (e: FormEvent) => {
     e.preventDefault();

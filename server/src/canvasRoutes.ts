@@ -12,6 +12,8 @@ export function registerCanvasRoutes(
   prisma: PrismaClient,
   serviceFor: ServiceFor,
   broadcast: (canvasId: string, msg: ServerMessage) => void,
+  /** Yerel mod: davet arama/kabul uçları hiç oluşturulmaz (aşağıdaki kapıya bak). */
+  localMode = false,
 ): void {
   app.get('/api/canvases', async (req) => ({ canvases: await listCanvases(prisma, req.user!.id) }));
 
@@ -58,6 +60,10 @@ export function registerCanvasRoutes(
 
     return { canvas: await importBundle(prisma, serviceFor, bundle, { name, ownerId: req.user!.id, groupId }) };
   });
+
+  // Davet linkleri yerel modda yok: tek kullanıcılık kurulumda katılacak kimse yok.
+  // Derleme anı kapısı sayesinde bu kod yerel imaj bundle'ına da girmez.
+  if (globalThis.__LOCAL_BUILD__ || localMode) return;
 
   app.get<{ Params: { token: string } }>('/api/invites/:token', async (req, reply) => {
     const invite = await inviteInfo(prisma, req.params.token);

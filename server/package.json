@@ -9,7 +9,10 @@
     "start": "prisma db push && tsx src/index.ts",
     "test": "vitest run",
     "prepare": "prisma generate",
-    "db:seed": "tsx prisma/seed.ts"
+    "db:seed": "tsx prisma/seed.ts",
+    "bundle": "node build.mjs",
+    "bundle:local": "node build.mjs --local",
+    "start:bundle": "prisma db push && node dist/server.mjs"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
@@ -36,6 +39,7 @@
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0",
-    "ws": "^8.21.0"
+    "ws": "^8.21.0",
+    "esbuild": "^0.28.1"
   }
 }

@@ -17,7 +17,6 @@ services:
       APP_MODE: local
       DATABASE_URL: postgresql://treemapper:${POSTGRES_PASSWORD:-treemapper}@postgres:5432/treemapper?schema=public
       CLOUD_URL: ${CLOUD_URL:-https://co-pronoia.onrender.com}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     env_file:
       - .env
     ports:

@@ -2,13 +2,14 @@ import { create } from 'zustand';
 import {
   expandAll, regionViolation, summarizeOps,
   type BranchInfo, type CanvasBriefInfo, type Commit, type CommitSummary, type EdgeDirection, type EdgeKind,
-  type GraphState, type MemberInfo, type NodeFields, type NodeType, type OpInput,
+  type GraphState, type MemberInfo, type NodeClaimInfo, type NodeFields, type NodeType, type OpInput,
   type PlanEdge, type PlanNode, type PlanProposalInfo, type RegionInfo, type ServerMessage,
 } from '@treemapper/shared';
 import { api, ApiError, type CommitOutcome } from '../api/client';
 import { applyIntents, genId, pushIntent, toGraph } from './applyIntents';
 import { useCanvasStore } from './canvasStore';
 import { useAuthStore } from './authStore';
+import { isLocalMode } from './modeStore';
 
 export type ViewMode = 'flow' | 'mindmap' | 'timeline';
 
@@ -37,6 +38,8 @@ interface GraphStore {
   regions: RegionInfo[];
   /** Co-Pronoia ajan önerileri (yalnızca co-pronoia kanvaslarında yüklenir; WS ile canlı). */
   proposals: PlanProposalInfo[];
+  /** Yumuşak claim/lease listesi (kim hangi bölgeyi/düğümü üstlenmiş; co-pronoia, WS ile canlı). */
+  claims: NodeClaimInfo[];
   /** Kanvas notu ("kanvasın CLAUDE.md'si") — her kanvasta yüklenir, Gemini ajanı da okur; WS ile canlı. */
   brief: CanvasBriefInfo | null;
   /** Usernames connected to this canvas right now (WS presence). */
@@ -93,6 +96,8 @@ interface GraphStore {
   togglePanel: (panel: 'history' | 'connections' | 'branches' | 'members' | 'regions' | 'agent' | 'copronoia' | 'brief') => void;
   /** Sahip temizliği: bekleyen bir öneriyi reddeder (onay yalnızca süpervizör ajanla olur). */
   rejectProposal: (id: string) => Promise<void>;
+  /** Sahip kaçış yolu: bir yumuşak claim'i zorla düşürür. */
+  forceReleaseClaim: (id: string) => Promise<void>;
   clearError: () => void;
   clearNotice: () => void;
 
@@ -246,6 +251,7 @@ export const useGraphStore = create<GraphStore>((set, get) => {
     members: [],
     regions: [],
     proposals: [],
+    claims: [],
     brief: null,
     activeUsers: [],
     loaded: false,
@@ -272,13 +278,15 @@ export const useGraphStore = create<GraphStore>((set, get) => {
       try {
         // Öneri listesi yalnızca co-pronoia kanvaslarında var (diğerlerinde uç boş liste döndürür ama hiç sormayalım).
         const isCoPronoia = useCanvasStore.getState().active?.type === 'co-pronoia';
-        const [state, { commits }, { branches }, { members }, { regions }, proposalsRes, { brief }] = await Promise.all([
+        const [state, { commits }, { branches }, { members }, { regions }, proposalsRes, claimsRes, { brief }] = await Promise.all([
           api.getState(),
           api.getCommits(),
           api.getBranches(),
-          api.getMembers(),
+          // Yerel kurulum tek kullanıcılı: üye uçları sunucuda yok, sormayalım.
+          isLocalMode() ? Promise.resolve({ members: [] }) : api.getMembers(),
           api.getRegions(),
           isCoPronoia ? api.getProposals() : Promise.resolve({ proposals: [] }),
+          isCoPronoia ? api.getClaims() : Promise.resolve({ claims: [] }),
           api.getBrief(),
         ]);
         set({
@@ -290,6 +298,7 @@ export const useGraphStore = create<GraphStore>((set, get) => {
           headSeq: state.headSeq,
           commits, branches, members, regions,
           proposals: proposalsRes.proposals,
+          claims: claimsRes.claims,
           brief,
           loaded: true,
         });
@@ -360,6 +369,9 @@ export const useGraphStore = create<GraphStore>((set, get) => {
             case 'proposals':
               set({ proposals: msg.proposals });
               break;
+            case 'claims':
+              set({ claims: msg.claims });
+              break;
             case 'brief':
               set({ brief: msg.brief });
               break;
@@ -388,7 +400,7 @@ export const useGraphStore = create<GraphStore>((set, get) => {
     reset: () =>
       set({
         serverNodes: [], serverEdges: [], nodes: [], edges: [], pending: [],
-        headSeq: 0, commits: [], branches: [], members: [], regions: [], proposals: [], brief: null, activeUsers: [],
+        headSeq: 0, commits: [], branches: [], members: [], regions: [], proposals: [], claims: [], brief: null, activeUsers: [],
         loaded: false, error: null, notice: null, selectedNodeId: null, selectedNodeIds: [], selectedRegionIds: [], sidePanel: 'none',
         viewingSeq: null, viewingBranchId: null, viewingState: null,
         agentLog: [], agentBusy: false, exporting: false, selectionInfoOpen: false,
@@ -587,6 +599,14 @@ export const useGraphStore = create<GraphStore>((set, get) => {
       try {
         const { proposal } = await api.rejectProposal(id);
         set((s) => ({ proposals: s.proposals.map((p) => (p.id === id ? proposal : p)) }));
+      } catch (err) {
+        set({ error: err instanceof ApiError ? err.message : String(err) });
+      }
+    },
+    forceReleaseClaim: async (id) => {
+      try {
+        const { claims } = await api.forceReleaseClaim(id);
+        set({ claims });
       } catch (err) {
         set({ error: err instanceof ApiError ? err.message : String(err) });
       }

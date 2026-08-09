@@ -60,6 +60,8 @@ function CanvasRoleAccessPanel({ canvas }: { canvas: CanvasInfo }) {
 }
 
 function CanvasCard({ canvas }: { canvas: CanvasInfo }) {
+  // Yerel kurulum tek kullanıcılı: davet ve rol-erişimi uçları sunucuda hiç yok.
+  const isLocalMode = useModeStore((s) => s.mode) === 'local';
   const open = useCanvasStore((s) => s.open);
   const inviteLink = useCanvasStore((s) => s.inviteLink);
   const deleteCanvas = useCanvasStore((s) => s.deleteCanvas);
@@ -100,10 +102,12 @@ function CanvasCard({ canvas }: { canvas: CanvasInfo }) {
       </div>
       <div className="canvas-card-actions">
         <button className="primary" onClick={() => open(canvas)}>Aç</button>
-        <button onClick={copyInvite} title="Bu kanvasa üye ekleme linki oluştur ve kopyala">
-          {copied ? 'Kopyalandı ✓' : '🔗 Davet linki'}
-        </button>
-        {canvas.role === 'owner' && canvas.groupId && (
+        {!isLocalMode && (
+          <button onClick={copyInvite} title="Bu kanvasa üye ekleme linki oluştur ve kopyala">
+            {copied ? 'Kopyalandı ✓' : '🔗 Davet linki'}
+          </button>
+        )}
+        {!isLocalMode && canvas.role === 'owner' && canvas.groupId && (
           <button onClick={() => setShowAccess(!showAccess)} title="Grup rollerinin bu kanvasa erişimini ayarla">
             🔐 Erişim
           </button>
@@ -359,6 +363,8 @@ function GroupMembersPanel({ groupId }: { groupId: string }) {
 }
 
 function GroupCard({ group }: { group: GroupInfo }) {
+  // Yerelde grup üyeliği/davet/iş rolleri yok; ajan rolleri KALIR (MCP anahtarı onlara bağlı).
+  const isLocalMode = useModeStore((s) => s.mode) === 'local';
   const inviteLink = useGroupStore((s) => s.inviteLink);
   const [expanded, setExpanded] = useState(false);
   const [showRoles, setShowRoles] = useState(false);
@@ -391,18 +397,18 @@ function GroupCard({ group }: { group: GroupInfo }) {
           {groupRoleLabels[group.myRole]}
         </span>
         <span className="group-card-meta">👥 {group.memberCount} · 🗂 {group.canvasCount} kanvas</span>
-        {isAdmin && group.pendingCount > 0 && (
+        {isAdmin && !isLocalMode && group.pendingCount > 0 && (
           <span className="role-badge role-owner">{group.pendingCount} onay bekliyor</span>
         )}
-        {isAdmin && (
+        {isAdmin && !isLocalMode && (
           <button onClick={copyInvite} title="Bu gruba üye ekleme linki oluştur ve kopyala">
             {copied ? 'Kopyalandı ✓' : '🔗 Davet'}
           </button>
         )}
-        {isAdmin && (
+        {isAdmin && !isLocalMode && (
           <button onClick={() => setExpanded(!expanded)}>{expanded ? 'Üyeleri gizle' : 'Üyeleri yönet'}</button>
         )}
-        {isAdmin && (
+        {isAdmin && !isLocalMode && (
           <button onClick={() => setShowRoles(!showRoles)}>{showRoles ? 'Rolleri gizle' : 'Rolleri yönet'}</button>
         )}
         {isAdmin && group.type === 'co-pronoia' && (
@@ -414,8 +420,8 @@ function GroupCard({ group }: { group: GroupInfo }) {
           </button>
         )}
       </div>
-      {isAdmin && expanded && <GroupMembersPanel groupId={group.id} />}
-      {isAdmin && showRoles && <GroupRolesPanel groupId={group.id} />}
+      {isAdmin && !isLocalMode && expanded && <GroupMembersPanel groupId={group.id} />}
+      {isAdmin && !isLocalMode && showRoles && <GroupRolesPanel groupId={group.id} />}
       {isAdmin && showAgentRoles && group.type === 'co-pronoia' && (
         <AgentRoleEditor api={groupApi.agentRoles(group.id)} title="Grup ajan rolleri" />
       )}
@@ -614,6 +620,33 @@ export function Dashboard() {
   const isLocalMode = useModeStore((s) => s.mode) === 'local';
   const [pullBusy, setPullBusy] = useState(false);
   const [pullMsg, setPullMsg] = useState<string | null>(null);
+  const [resetBusy, setResetBusy] = useState(false);
+
+  /**
+   * Yerel kurulumu bulut hesabından ayır. Veri öntanımlı olarak KALIR: aynı hesapla
+   * yeniden bağlanınca her şey yerinde olur. Farklı bir hesapla bağlanmak yeni bir yerel
+   * kullanıcı kurar ve eski veri o kullanıcının olmadığı için erişilemez hale gelir —
+   * o yüzden ikinci onayda veriyi silme seçeneği sunuluyor.
+   */
+  const disconnect = async () => {
+    if (!window.confirm(
+      'Bu kurulumun bulut hesabıyla bağlantısı kaldırılacak ve aktivasyon ekranına dönülecek.\n\n' +
+      'Yerel kanvaslarınız silinmez; aynı hesapla yeniden bağlandığınızda yerinde olurlar.',
+    )) return;
+    const wipe = window.confirm(
+      'Yerel veriler de silinsin mi?\n\n' +
+      'Tamam: kanvaslar, gruplar ve commitler dahil her şey silinir (başka bir hesapla temiz başlamak için).\n' +
+      'İptal: veriler kalsın (önerilen).',
+    );
+    setResetBusy(true);
+    try {
+      await activationApi.reset(wipe);
+      window.location.href = '/';
+    } catch (e) {
+      setPullMsg(e instanceof ApiError ? `Bağlantı kaldırılamadı: ${e.message}` : 'Bağlantı kaldırılamadı.');
+      setResetBusy(false);
+    }
+  };
 
   // Yerel kurulum: bulut kanvaslarını (daha önce alınmayanları) buraya kopyala.
   const pullFromCloud = async () => {
@@ -727,8 +760,13 @@ export function Dashboard() {
           >
             {theme === 'dark' ? '☀️' : '🌙'}
           </button>
-          {/* Yerel kurulumda oturum yok — çıkış yapılacak bir yer de yok. */}
           {!isLocalMode && <button onClick={logout} title="Oturumu kapat">Çıkış</button>}
+          {/* Yerelde oturum yok; "çıkış" bulut hesabıyla bağlantıyı koparmaktır. */}
+          {isLocalMode && (
+            <button onClick={disconnect} disabled={resetBusy} title="Bu kurulumun bulut hesabıyla bağlantısını kopar">
+              {resetBusy ? 'Kaldırılıyor…' : '🔌 Bağlantıyı kaldır'}
+            </button>
+          )}
         </div>
       </div>
       <div className="dashboard-body">

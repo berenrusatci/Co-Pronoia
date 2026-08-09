@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import type { CanvasBundle, CanvasInfo } from '@treemapper/shared';
+import type { CanvasBundle, CanvasInfo, CanvasType } from '@treemapper/shared';
 import { bundleToIntents } from '@treemapper/shared';
 import { createCanvas, createRegion, type ServiceFor } from './canvasService.js';
 
@@ -14,10 +14,11 @@ export async function importBundle(
   prisma: PrismaClient,
   serviceFor: ServiceFor,
   bundle: CanvasBundle,
-  opts: { name: string; ownerId: string; groupId?: string },
+  opts: { name: string; ownerId: string; groupId?: string; type?: CanvasType },
 ): Promise<CanvasInfo> {
   const canvas = await createCanvas(prisma, serviceFor, opts.name, opts.ownerId, {
     groupId: opts.groupId,
+    type: opts.type,
     seedRoot: false,
   });
   const intents = bundleToIntents(bundle);

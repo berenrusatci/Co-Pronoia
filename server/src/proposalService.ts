@@ -117,6 +117,8 @@ export async function submitProposal(opts: {
   summary?: string;
   intents: unknown;
   baseSeq: unknown;
+  /** Çok rollü token'da davranılan rolün adı (bkz. mcpServer resolveActingRole); tek rollüde birincil role düşer. */
+  roleName?: string;
 }): Promise<PlanProposalInfo | { error: string }> {
   const title = opts.title.trim().slice(0, MAX_TITLE);
   if (!title) return { error: 'öneri başlığı gerekli' };
@@ -128,7 +130,7 @@ export async function submitProposal(opts: {
       canvasId,
       tokenId: opts.token.id,
       agentLabel: opts.token.label,
-      roleName: opts.token.role.name,
+      roleName: opts.roleName ?? opts.token.role.name,
       title,
       summary: (opts.summary ?? '').slice(0, MAX_SUMMARY),
       intents: JSON.stringify(checked.intents),
@@ -148,6 +150,8 @@ export async function updateProposal(opts: {
   summary?: string;
   intents?: unknown;
   baseSeq?: unknown;
+  /** Çok rollü token'da davranılan rolün adı; verilirse önerinin roleName'i buna güncellenir. */
+  roleName?: string;
 }): Promise<PlanProposalInfo | { error: string }> {
   const existing = await opts.prisma.planProposal.findFirst({
     where: { id: opts.id, canvasId: opts.token.canvasId },
@@ -177,6 +181,7 @@ export async function updateProposal(opts: {
     data: {
       title,
       ...(opts.summary !== undefined ? { summary: opts.summary.slice(0, MAX_SUMMARY) } : {}),
+      ...(opts.roleName !== undefined ? { roleName: opts.roleName } : {}),
       intents: intentsJson,
       baseSeq,
       status: 'submitted',

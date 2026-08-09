@@ -797,6 +797,10 @@ button.primary:disabled { opacity: .5; cursor: default; }
 }
 .copronoia-panel .token-mint button { border-radius: 6px; border: 1px solid var(--border-strong); padding: 5px 10px; cursor: pointer; font-size: 12.5px; }
 .token-revoked .member-name { text-decoration: line-through; opacity: 0.6; }
+.role-checkbox-list { display: flex; flex-wrap: wrap; gap: 10px; }
+.role-checkbox-list fieldset { border: 1px solid var(--border-strong); border-radius: 6px; padding: 4px 8px; display: flex; flex-direction: column; gap: 3px; }
+.role-checkbox-list legend { font-size: 11px; color: var(--text-muted); padding: 0 4px; }
+.role-checkbox { display: flex; align-items: center; gap: 5px; font-size: 12.5px; cursor: pointer; }
 .secret-reveal { border: 1px solid var(--border-strong); border-radius: 8px; padding: 8px 10px; margin: 8px 0; background: var(--bg-elevated); }
 .secret-code { display: block; font-size: 11.5px; word-break: break-all; margin: 6px 0; user-select: all; }
 .secret-actions { display: flex; gap: 6px; flex-wrap: wrap; }

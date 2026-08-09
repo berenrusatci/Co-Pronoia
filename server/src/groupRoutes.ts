@@ -14,8 +14,17 @@ interface GroupParams {
   groupId: string;
 }
 
-/** Dashboard-level routes: group list/create + invite lookup/accept (not group-scoped). */
-export function registerGroupRoutes(app: FastifyInstance, prisma: PrismaClient): void {
+/**
+ * Dashboard-level routes: group list/create + invite lookup/accept (not group-scoped).
+ *
+ * `localMode`: yerel kurulum tek kullanıcılıdır, gruba katılacak kimse yok — davet
+ * uçları hiç oluşturulmaz ve derleme anı kapısı sayesinde yerel bundle'a girmez.
+ */
+export function registerGroupRoutes(
+  app: FastifyInstance,
+  prisma: PrismaClient,
+  localMode = false,
+): void {
   app.get('/api/groups', async (req) => ({ groups: await listGroups(prisma, req.user!.id) }));
 
   app.post<{ Body: { name?: string; roles?: RoleDefInput[]; type?: string } | null }>('/api/groups', async (req, reply) => {
@@ -27,6 +36,8 @@ export function registerGroupRoutes(app: FastifyInstance, prisma: PrismaClient):
     const roles = Array.isArray(req.body?.roles) ? req.body.roles.slice(0, 20) : [];
     return { group: await createGroup(prisma, name, req.user!.id, roles, type) };
   });
+
+  if (globalThis.__LOCAL_BUILD__ || localMode) return;
 
   app.get<{ Params: { token: string } }>('/api/group-invites/:token', async (req, reply) => {
     const invite = await groupInviteInfo(prisma, req.params.token);
@@ -45,13 +56,12 @@ export function registerGroupRoutes(app: FastifyInstance, prisma: PrismaClient):
   );
 }
 
-/**
- * Group-scoped member-management routes. Registered under `/api/groups/:groupId`;
- * a preHandler in app.ts has already resolved `req.groupRole`/`req.groupStatus`.
- */
-export function registerGroupMemberRoutes(app: FastifyInstance, prisma: PrismaClient): void {
-  /** admin ya da üye yönetme yetkili rol. */
-  const requireManageMembers = async (req: FastifyRequest, reply: FastifyReply): Promise<boolean> => {
+// Aşağıdaki iki route grubu da `/api/groups/:groupId` önekiyle register edilir;
+// app.ts'teki preHandler `req.groupRole`/`req.groupStatus`u çözmüş olur.
+
+/** admin ya da üye yönetme yetkili rol. */
+function manageMembersGuard(prisma: PrismaClient) {
+  return async (req: FastifyRequest, reply: FastifyReply): Promise<boolean> => {
     if (req.groupRole === 'admin' && req.groupStatus === 'approved') return true;
     const perms = await memberPermissions(prisma, (req.params as GroupParams).groupId, req.user!.id);
     if (!perms?.canManageMembers) {
@@ -60,8 +70,11 @@ export function registerGroupMemberRoutes(app: FastifyInstance, prisma: PrismaCl
     }
     return true;
   };
-  /** admin ya da rol yönetme yetkili rol. */
-  const requireManageRoles = async (req: FastifyRequest, reply: FastifyReply): Promise<boolean> => {
+}
+
+/** admin ya da rol yönetme yetkili rol. Hem grup rolleri hem ajan rolleri bunu kullanır. */
+function manageRolesGuard(prisma: PrismaClient) {
+  return async (req: FastifyRequest, reply: FastifyReply): Promise<boolean> => {
     if (req.groupRole === 'admin' && req.groupStatus === 'approved') return true;
     const perms = await memberPermissions(prisma, (req.params as GroupParams).groupId, req.user!.id);
     if (!perms?.canManageRoles) {
@@ -70,6 +83,16 @@ export function registerGroupMemberRoutes(app: FastifyInstance, prisma: PrismaCl
     }
     return true;
   };
+}
+
+/**
+ * Grup kapsamlı ÜYELİK yüzeyi: üye listesi/rolleri, davet linkleri, iş rolleri
+ * (`GroupRoleDef`). Yerel modda register EDİLMEZ — tek kullanıcılık kurulumda
+ * paylaşacak kimse yok — ve yerel imaj bundle'ına hiç girmez.
+ */
+export function registerGroupMemberRoutes(app: FastifyInstance, prisma: PrismaClient): void {
+  const requireManageMembers = manageMembersGuard(prisma);
+  const requireManageRoles = manageRolesGuard(prisma);
 
   app.get<{ Params: GroupParams }>('/members', async (req, reply) => {
     if (!(await requireManageMembers(req, reply))) return;
@@ -150,8 +173,15 @@ export function registerGroupMemberRoutes(app: FastifyInstance, prisma: PrismaCl
       return reply.code(404).send({ error: 'rol bulunamadı' });
     return { ok: true };
   });
+}
 
-  // ---------- Co-Pronoia ajan rolleri (gruba özel; site şablonları /api/admin altında) ----------
+/**
+ * Co-Pronoia ajan rolleri (gruba özel; site şablonları /api/admin altında). ÜYELİK
+ * yüzeyinden ayrı tutulur: yerel modda üyelik/davet kalkar ama bunlar KALMALI —
+ * yerelde MCP anahtarı ancak bir ajan rolüne bağlanarak üretilebilir.
+ */
+export function registerGroupAgentRoleRoutes(app: FastifyInstance, prisma: PrismaClient): void {
+  const requireManageRoles = manageRolesGuard(prisma);
 
   app.get<{ Params: GroupParams }>('/agent-roles', async (req) => ({
     roles: await listAgentRoles(prisma, req.params.groupId),

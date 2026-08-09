@@ -11,10 +11,11 @@ import { groupRole } from './groupService.js';
 import { resolveSession, sessionToken } from './auth.js';
 import { registerRoutes } from './routes.js';
 import { registerAuthRoutes } from './authRoutes.js';
+import { registerLocalIdentityRoutes } from './identityRoutes.js';
 import type { EmailSender } from './email.js';
 import { registerGoogleAuth } from './googleAuth.js';
 import { registerCanvasRoutes } from './canvasRoutes.js';
-import { registerGroupRoutes, registerGroupMemberRoutes } from './groupRoutes.js';
+import { registerGroupRoutes, registerGroupMemberRoutes, registerGroupAgentRoleRoutes } from './groupRoutes.js';
 import { registerAdminRoutes } from './adminRoutes.js';
 import { registerMcpRoutes } from './mcp/mcpRoutes.js';
 import { CanvasEvents } from './canvasEvents.js';
@@ -59,6 +60,12 @@ export async function buildApp(
 
   // Mod bir kez, kurulum anında sabitlenir: tek süreçte iki app (testlerde bulut + yerel)
   // ayağa kalkabilsin ve istek anında env değişse bile karışmasın.
+  //
+  // Aşağıdaki kapılar bilerek `!globalThis.__LOCAL_BUILD__ && !localMode` biçiminde:
+  // yerel imaj bundle'ında esbuild `define` ilk terime `true` yazar, ifade `false`a katlanır
+  // ve o modüller (kayıt/giriş, Google OAuth, admin paneli) bundle'a HİÇ girmez. Bundle
+  // dışında (test/dev/bulut) okuma `undefined`dır ve karar tümüyle runtime `localMode`a
+  // düşer. Gerekçesi ve neden sabit yerine dot-chain olduğu: `mode.ts`.
   const localMode = isLocal();
 
   // One CommitService per canvas: its promise-chain mutex serializes writes per canvas.
@@ -87,10 +94,12 @@ export async function buildApp(
     // /api/mcp: oturum çerezi yerine Bearer ajan anahtarıyla korunur (mcpRoutes.ts kendisi 401 verir).
     // /api/activation/* + /api/instance/*: aktivasyon el sıkışmasının kendisi (yerelde oturum
     // henüz yok, bulutta Bearer kurulum anahtarıyla korunur — activationRoutes.ts 401 verir).
-    // İstisnanın istisnası: /api/activation/pull el sıkışmanın parçası değil, aktive edilmiş
-    // kurulumun tetiklediği bir işlem — normal kimlik kontrolünden geçer.
+    // İstisnanın istisnaları: `pull` ve `reset` el sıkışmanın parçası değil, aktive
+    // edilmiş kurulumun tetiklediği işlemler — normal kimlik kontrolünden geçerler.
     const activationHandshake =
-      req.url.startsWith('/api/activation/') && !req.url.startsWith('/api/activation/pull');
+      req.url.startsWith('/api/activation/') &&
+      !req.url.startsWith('/api/activation/pull') &&
+      !req.url.startsWith('/api/activation/reset');
     if (
       req.url.startsWith('/api/auth/') || req.url.startsWith('/api/site/') ||
       req.url.startsWith('/api/mcp') || req.url === '/api/health' || req.url === '/api/mode' ||
@@ -232,14 +241,18 @@ export async function buildApp(
     });
   });
 
-  registerAuthRoutes(app, prisma, opts?.emailSender);
+  // Kimlik: bulut modunda tam hesap yönetimi, yerelde yalnız "ben kimim" + profil.
+  // Kapı derleme anında katlandığı için yerel imajda authRoutes.ts (scrypt, kayıt,
+  // e-posta doğrulama, giriş/çıkış, şifre) bundle'a hiç girmez.
+  if (!globalThis.__LOCAL_BUILD__ && !localMode) registerAuthRoutes(app, prisma, opts?.emailSender);
+  else registerLocalIdentityRoutes(app, prisma);
   registerActivationRoutes(app, prisma, serviceFor, opts?.cloudClient);
   // Google girişi yerel modda anlamsız (hesap yönetimi yok).
-  if (!localMode && process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+  if (!globalThis.__LOCAL_BUILD__ && !localMode && process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
     await registerGoogleAuth(app, prisma);
   }
-  registerCanvasRoutes(app, prisma, serviceFor, broadcast);
-  registerGroupRoutes(app, prisma);
+  registerCanvasRoutes(app, prisma, serviceFor, broadcast, localMode);
+  registerGroupRoutes(app, prisma, localMode);
   registerMcpRoutes(app, prisma, serviceFor, broadcast, canvasEvents);
 
   // All graph routes live under a canvas and require membership.
@@ -251,7 +264,7 @@ export async function buildApp(
         if (!role) return reply.code(404).send({ error: 'kanvas bulunamadı' });
         req.memberRole = role;
       });
-      registerRoutes(scope, prisma, serviceFor, broadcast, kick);
+      registerRoutes(scope, prisma, serviceFor, broadcast, kick, localMode);
     },
     { prefix: '/api/canvases/:canvasId' },
   );
@@ -266,14 +279,17 @@ export async function buildApp(
         req.groupRole = membership.role;
         req.groupStatus = membership.status;
       });
-      registerGroupMemberRoutes(scope, prisma);
+      // Üyelik/davet/iş rolleri yalnız bulutta; ajan rolleri (MCP anahtarının bağlandığı
+      // AgentRoleDef) her iki modda da gerekli.
+      if (!globalThis.__LOCAL_BUILD__ && !localMode) registerGroupMemberRoutes(scope, prisma);
+      registerGroupAgentRoleRoutes(scope, prisma);
     },
     { prefix: '/api/groups/:groupId' },
   );
 
   // Site yönetim paneli: yalnızca isAdmin kullanıcılar (401'i global hook verir).
   // Yerel modda site yönetimi diye bir şey yok — uçlar hiç oluşturulmaz (404).
-  if (!localMode) await app.register(
+  if (!globalThis.__LOCAL_BUILD__ && !localMode) await app.register(
     async (scope) => {
       scope.addHook('preHandler', async (req, reply) => {
         if (!req.user?.isAdmin) return reply.code(403).send({ error: 'yönetici yetkisi gerekli' });

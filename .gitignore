@@ -14,3 +14,6 @@ server/data/
 
 # Yerel MCP yapılandırması: canlı ajan token'larını (tma_) içerir — asla commitlenmez.
 .mcp.json
+
+# GPT Pro devir artefaktları (prompt, rapor, zip paketleri) — yerel kalır.
+gptpro/

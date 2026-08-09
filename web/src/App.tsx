@@ -174,7 +174,7 @@ export default function App() {
         {sidePanel === 'branches' && <BranchPanel />}
         {sidePanel === 'members' && <MembersPanel />}
         {sidePanel === 'regions' && <RegionsPanel />}
-        {sidePanel === 'agent' && <AgentPanel />}
+        {sidePanel === 'agent' && mode !== 'local' && <AgentPanel />}
         {sidePanel === 'copronoia' && <CoPronoiaPanel />}
         {sidePanel === 'brief' && <BriefPanel />}
       </div>

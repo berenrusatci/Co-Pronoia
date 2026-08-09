@@ -72,6 +72,7 @@ model Canvas {
   agentTokens AgentToken[]
   proposals PlanProposal[]
   briefRevisions CanvasBriefRevision[]
+  nodeClaims NodeClaim[]
 }
 
 /// Kanvasın serbest brifing dokümanı ("kanvasın CLAUDE.md'si"). Bölgeler gibi kanvas AYARIDIR,
@@ -302,13 +303,19 @@ model AgentRoleDef {
   isSupervisor Boolean  @default(false)
   createdAt    DateTime @default(now())
   tokens       AgentToken[]
+  tokenRoles   AgentTokenRole[]
 
   @@index([groupId])
 }
 
-/// Kanvas + role bağlı MCP ajan erişim anahtarı. Ham değer yalnızca oluşturma yanıtında
-/// döner; DB'de sha256 özeti durur (Session ham saklanır — burada bilinçli sapma: bu uzun
-/// ömürlü, bir kez gösterilen bir API anahtarı; sha256 deterministik olduğundan lookup çalışır).
+/// Kanvas + role bağlı MCP ajan erişim anahtarı. Ham değer yalnızca oluşturma/yenileme
+/// yanıtında döner; DB'de sha256 özeti durur (Session ham saklanır — burada bilinçli sapma: bu
+/// uzun ömürlü, bir kez gösterilen bir API anahtarı; sha256 deterministik olduğundan lookup çalışır).
+/// `roleId`/`role` VARSAYILAN (birincil) roldür — geriye dönük uyum ve tek-rollü token'ların
+/// hâlâ çalışması için korunur. Çoklu rol `AgentTokenRole` join tablosuyla eklenir: mint sırasında
+/// seçilen TÜM roller oraya da yazılır. Eski (bu özellikten önce basılmış) token'ların join
+/// tablosunda hiç satırı olmaz — rol çözümlemesi (agentRoleService.rolesOf) bu durumda tek elemanlı
+/// [role] listesine düşer, böylece elle bir taşıma betiği gerekmez (`prisma db push` yeterli).
 model AgentToken {
   id          String       @id @default(cuid())
   tokenHash   String       @unique
@@ -316,6 +323,7 @@ model AgentToken {
   canvas      Canvas       @relation(fields: [canvasId], references: [id], onDelete: Cascade)
   roleId      String
   role        AgentRoleDef @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  roles       AgentTokenRole[]
   label       String
   createdById String
   createdBy   User         @relation(fields: [createdById], references: [id], onDelete: Cascade)
@@ -323,8 +331,45 @@ model AgentToken {
   lastUsedAt  DateTime?
   revokedAt   DateTime?
   proposals   PlanProposal[]
+  claims      NodeClaim[]
 
   @@index([canvasId])
+}
+
+/// Bir ajan anahtarının (tek MCP bağlantı) davranabildiği EK roller. `AgentToken.roleId`
+/// birincil/varsayılan rolü tutar; bu tablo o kümeyi (birincil dahil) tam olarak yansıtır —
+/// mint anında seçilen tüm roller buraya yazılır. Böylece tek bağlantı üzerinden birden çok
+/// ajan rolü (ör. bir süpervizör + bir teknik ajan) çalışabilir.
+model AgentTokenRole {
+  tokenId String
+  token   AgentToken   @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+  roleId  String
+  role    AgentRoleDef @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([tokenId, roleId])
+}
+
+/// Yumuşak claim/lease (pl1): bir ajanın bir bölgeyi ya da düğüm kümesini TTL boyunca geçici
+/// olarak "üstlendiğini" ilan eden DANIŞMA kaydı. Kilit DEĞİL: commit yolu (opsConflict + branch)
+/// hâlâ tek otoritedir; claim yalnız paralel ajanların aynı alana boşuna öneri üretmesini azaltır.
+/// regionId'ye bilerek FK YOK (bölge silinse de kayıt sarkabilir, "silinmiş bölge" gösterilir);
+/// süresi (expiresAt) geçen claim okurken süzülür ve ilk fırsatta silinir.
+model NodeClaim {
+  id        String     @id @default(cuid())
+  canvasId  String
+  canvas    Canvas     @relation(fields: [canvasId], references: [id], onDelete: Cascade)
+  tokenId   String
+  token     AgentToken @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+  scope     String // 'region' | 'nodes'
+  regionId  String? // scope='region' iken bölge id'si (FK yok — danışma)
+  nodeIds   Json? // scope='nodes' iken string[] düğüm id'leri
+  /// Claim anında DAVRANILAN rol adı (çok rollü token'da `role` parametresiyle seçilen rol);
+  /// boş = bu alandan önce basılmış claim (okuma tarafı token'ın birincil rolüne düşer).
+  roleName  String     @default("")
+  expiresAt DateTime
+  createdAt DateTime   @default(now())
+
+  @@index([canvasId, expiresAt])
 }
 
 /// Ajan plan önerisi. intents: OpInput[] JSON'u (Commit.ops ile aynı desen: String alanda JSON).
@@ -390,6 +435,17 @@ model CloudImport {
   localCanvasId String
   name          String
   importedAt    DateTime @default(now())
+}
+
+/// YEREL tarafında: buluttaki bir grubun yerel karşılığı. `CloudImport`in grup eşi —
+/// tekrar çekmede aynı grup ikinci kez kurulmasın ve kanvaslar doğru gruba (özellikle
+/// co-pronoia gruplarına) insin diye. FK yok: kullanıcı yerel grubu silerse çekme
+/// yeniden kurar, bulut tarafına dokunmaz.
+model CloudGroupImport {
+  cloudGroupId String   @id
+  localGroupId String
+  name         String
+  importedAt   DateTime @default(now())
 }
 
 /// BULUT tarafında: bir yerel kurulumun aktivasyonu. Önce onay (state/codeHash/

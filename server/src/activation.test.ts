@@ -17,6 +17,7 @@ let cloud: Awaited<ReturnType<typeof buildApp>>;
 let local: Awaited<ReturnType<typeof buildApp>>;
 let cloudCookies: { tm_session: string };
 let cloudCanvasIds: string[] = [];
+let cpGroupId: string;
 
 const bearer = (token: string) => ({ authorization: `Bearer ${token}` });
 
@@ -29,6 +30,11 @@ const fakeCloudClient: CloudClient = {
     const res = await cloud.app.inject({ method: 'GET', url: '/api/instance/canvases', headers: bearer(token) });
     if (res.statusCode !== 200) throw new Error(`HTTP ${res.statusCode}`);
     return res.json().canvases;
+  },
+  listGroups: async (token) => {
+    const res = await cloud.app.inject({ method: 'GET', url: '/api/instance/groups', headers: bearer(token) });
+    if (res.statusCode !== 200) throw new Error(`HTTP ${res.statusCode}`);
+    return res.json().groups;
   },
   exportCanvas: async (token, id) => {
     const res = await cloud.app.inject({
@@ -52,7 +58,27 @@ beforeAll(async () => {
   // İki kanvas: biri düğüm+kenarlı, biri bölgeli — çekmenin ikisini de taşıdığını görelim.
   const a = await createGroupCanvas(cloud.app, cloudCookies, 'Plan A');
   const b = await createGroupCanvas(cloud.app, cloudCookies, 'Plan B', a.groupId);
-  cloudCanvasIds = [a.id, b.id];
+
+  // Üçüncüsü co-pronoia: grubu, türü ve ajan rolü de çekilmeli, yoksa yerelde MCP
+  // paneli hiç açılmaz (anahtar üretmek bir AgentRoleDef'e bağlı).
+  cpGroupId = (await cloud.app.inject({
+    method: 'POST', url: '/api/groups', cookies: cloudCookies,
+    payload: { name: 'Ajanlı grup', type: 'co-pronoia' },
+  })).json().group.id;
+  await cloud.app.inject({
+    method: 'POST', url: `/api/groups/${cpGroupId}/agent-roles`, cookies: cloudCookies,
+    payload: { name: 'Mimar', persona: 'Sen mimarsın.', isSupervisor: false },
+  });
+  await cloud.app.inject({
+    method: 'POST', url: `/api/groups/${cpGroupId}/agent-roles`, cookies: cloudCookies,
+    payload: { name: 'Şef', persona: 'Onaylarsın.', isSupervisor: true },
+  });
+  const cp = (await cloud.app.inject({
+    method: 'POST', url: '/api/canvases', cookies: cloudCookies,
+    payload: { name: 'CP Plan', groupId: cpGroupId, type: 'co-pronoia' },
+  })).json().canvas;
+
+  cloudCanvasIds = [a.id, b.id, cp.id];
 
   const state = await cloud.app.inject({ method: 'GET', url: `/api/canvases/${a.id}/state`, cookies: cloudCookies });
   const root = state.json().nodes[0].id as string;
@@ -168,7 +194,7 @@ describe('aktivasyon el sıkışması', () => {
       url: `/api/activation/callback${callback.search}`,
     });
     expect(done.statusCode).toBe(302);
-    expect(done.headers.location).toBe('/?etkin=1&alinan=2');
+    expect(done.headers.location).toBe('/?etkin=1&alinan=3');
 
     // Çerezsiz kimlik: yerelde istek atan herkes aktive edilmiş kullanıcıdır.
     const me = await local.app.inject({ method: 'GET', url: '/api/auth/me' });
@@ -183,7 +209,7 @@ describe('aktivasyon el sıkışması', () => {
     expect(groups.json().groups.map((g: { name: string }) => g.name)).toContain('Yerel çalışma alanı');
 
     const canvases = (await local.app.inject({ method: 'GET', url: '/api/canvases' })).json().canvases;
-    expect(canvases.map((c: { name: string }) => c.name).sort()).toEqual(['Plan A', 'Plan B']);
+    expect(canvases.map((c: { name: string }) => c.name).sort()).toEqual(['CP Plan', 'Plan A', 'Plan B']);
 
     // İçerik gerçekten taşındı mı: A'da kök + n1 + kenar, B'de bölge.
     const planA = canvases.find((c: { name: string }) => c.name === 'Plan A')!;
@@ -215,9 +241,83 @@ describe('aktivasyon el sıkışması', () => {
   it('tekrar çekmede yeni kanvas gelmez', async () => {
     const res = await local.app.inject({ method: 'POST', url: '/api/activation/pull' });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ imported: 0, skipped: 2 });
+    expect(res.json()).toMatchObject({ imported: 0, skipped: 3 });
     const canvases = (await local.app.inject({ method: 'GET', url: '/api/canvases' })).json().canvases;
-    expect(canvases).toHaveLength(2);
+    expect(canvases).toHaveLength(3);
+    // Gruplar da ikinci kez kurulmaz (CloudGroupImport eşlemesi).
+    expect(res.json().groups).toEqual([]);
+  });
+
+  it('gruplar, kanvas türleri ve ajan rolleri de çekilir — yerelde MCP anahtarı üretilebilir', async () => {
+    const groups = (await local.app.inject({ method: 'GET', url: '/api/groups' })).json().groups;
+    const byName = Object.fromEntries(groups.map((g: { name: string; type: string; id: string }) => [g.name, g]));
+
+    // Bulut grupları adıyla ve TÜRÜYLE yansıtıldı; hepsi tek çalışma alanına yığılmadı.
+    expect(byName['Ajanlı grup']?.type).toBe('co-pronoia');
+    expect(byName['Plan A grubu']?.type).toBe('plan');
+
+    const canvases = (await local.app.inject({ method: 'GET', url: '/api/canvases' })).json().canvases;
+    const cp = canvases.find((c: { name: string }) => c.name === 'CP Plan')!;
+    const planA = canvases.find((c: { name: string }) => c.name === 'Plan A')!;
+    // Kanvas türü korundu ve kanvas kendi grubuna indi.
+    expect(cp.type).toBe('co-pronoia');
+    expect(cp.groupId).toBe(byName['Ajanlı grup'].id);
+    expect(planA.type).toBe('plan');
+    expect(planA.groupId).toBe(byName['Plan A grubu'].id);
+
+    // Grup kapsamlı ajan rolleri de geldi (süpervizör bayrağı dahil).
+    const roles = (await local.app.inject({
+      method: 'GET', url: `/api/groups/${byName['Ajanlı grup'].id}/agent-roles`,
+    })).json().roles;
+    expect(roles.map((r: { name: string }) => r.name).sort()).toEqual(['Mimar', 'Şef']);
+    expect(roles.find((r: { name: string }) => r.name === 'Şef').isSupervisor).toBe(true);
+
+    // Asıl kazanım: çekilen kanvasta yerelde MCP anahtarı üretilebiliyor. Rol ya da tür
+    // taşınmasaydı bu istek 400 dönerdi ve yerel kurulumda MCP hiç kullanılamazdı.
+    const mint = await local.app.inject({
+      method: 'POST', url: `/api/canvases/${cp.id}/agent-tokens`,
+      payload: { roleIds: roles.map((r: { id: string }) => r.id), label: 'yerel-ajan' },
+    });
+    expect(mint.statusCode).toBe(200);
+    expect(mint.json().secret).toMatch(/^tma_/);
+    expect(mint.json().token.roles.map((r: { name: string }) => r.name).sort()).toEqual(['Mimar', 'Şef']);
+  });
+
+  it('davet ve üyelik yüzeyi yerel modda hiç yok; bölgeler ve MCP çalışmaya devam eder', async () => {
+    const canvases = (await local.app.inject({ method: 'GET', url: '/api/canvases' })).json().canvases;
+    const planA = canvases.find((c: { name: string }) => c.name === 'Plan A')!;
+    const groups = (await local.app.inject({ method: 'GET', url: '/api/groups' })).json().groups;
+    const g = groups.find((x: { name: string }) => x.name === 'Plan A grubu')!;
+
+    const gone: [string, string][] = [
+      ['POST', `/api/canvases/${planA.id}/invites`],
+      ['GET', `/api/canvases/${planA.id}/members`],
+      ['GET', `/api/canvases/${planA.id}/role-access`],
+      ['GET', '/api/invites/herhangi-bir-token'],
+      ['GET', '/api/group-invites/herhangi-bir-token'],
+      ['GET', `/api/groups/${g.id}/members`],
+      ['POST', `/api/groups/${g.id}/invites`],
+      ['GET', `/api/groups/${g.id}/roles`],
+    ];
+    for (const [method, url] of gone) {
+      const res = await local.app.inject({ method: method as 'GET' | 'POST', url, payload: {} });
+      expect(`${method} ${url} → ${res.statusCode}`).toBe(`${method} ${url} → 404`);
+    }
+
+    // Bölgeler ve ajan rolleri KALIR: MCP için işlevseller.
+    expect((await local.app.inject({ method: 'GET', url: `/api/canvases/${planA.id}/regions` })).statusCode).toBe(200);
+    expect((await local.app.inject({ method: 'GET', url: `/api/groups/${g.id}/agent-roles` })).statusCode).toBe(200);
+  });
+
+  it('yerleşik Gemini ajan ucu yerel modda hiç register edilmez (404), diğer uçlar çalışmaya devam eder', async () => {
+    const canvases = (await local.app.inject({ method: 'GET', url: '/api/canvases' })).json().canvases;
+    const planA = canvases.find((c: { name: string }) => c.name === 'Plan A')!;
+    const agentRes = await local.app.inject({
+      method: 'POST', url: `/api/canvases/${planA.id}/agent`, payload: { prompt: 'merhaba' },
+    });
+    expect(agentRes.statusCode).toBe(404);
+    // Aynı kanvasta normal uçlar üye kontrolünden geçip çalışıyor olmalı (route grubu bozulmadı).
+    expect((await local.app.inject({ method: 'GET', url: `/api/canvases/${planA.id}/state` })).statusCode).toBe(200);
   });
 });
 
@@ -251,5 +351,55 @@ describe('bulut tarafı kurulum uçları', () => {
     });
     expect(res.statusCode).toBe(400);
     expect(res.json().error).toMatch(/süre/i);
+  });
+});
+
+/**
+ * EN SONDA olmalı: aktivasyonu geri alır, yani yukarıdaki testlerin dayandığı
+ * "yerel kurulum aktive" durumunu bozar.
+ */
+describe('bağlantıyı kaldırma (yerel modun çıkışı)', () => {
+  it('reset kurulumu aktivasyon ekranına döndürür; veri kalır ve aynı hesapla geri gelinir', async () => {
+    const before = (await local.app.inject({ method: 'GET', url: '/api/canvases' })).json().canvases.length;
+    expect(before).toBeGreaterThan(0);
+
+    const res = await local.app.inject({ method: 'POST', url: '/api/activation/reset', payload: {} });
+    expect(res.statusCode).toBe(200);
+
+    // Artık etkin değil: kimlik yok, her /api 401 ve mod ucu bunu söylüyor.
+    expect((await local.app.inject({ method: 'GET', url: '/api/mode' })).json().activated).toBe(false);
+    expect((await local.app.inject({ method: 'GET', url: '/api/auth/me' })).statusCode).toBe(401);
+    expect((await local.app.inject({ method: 'GET', url: '/api/canvases' })).statusCode).toBe(401);
+    // İkinci reset route'a hiç ulaşmaz: aktive olmayan kurulumda global hook 401 verir.
+    expect((await local.app.inject({ method: 'POST', url: '/api/activation/reset', payload: {} })).statusCode).toBe(401);
+
+    // Aynı bulut hesabıyla yeniden bağlan: veri yerinde, kanvaslar tekrar alınmaz.
+    const { state, proof } = await startActivation();
+    const approved = await approve(state, proof);
+    const callback = new URL(approved.json().redirectTo);
+    const done = await local.app.inject({ method: 'GET', url: `/api/activation/callback${callback.search}` });
+    expect(done.statusCode).toBe(302);
+    expect((await local.app.inject({ method: 'GET', url: '/api/mode' })).json().activated).toBe(true);
+    const after = (await local.app.inject({ method: 'GET', url: '/api/canvases' })).json().canvases;
+    expect(after).toHaveLength(before);
+  });
+
+  it('wipe:true yerel veriyi de siler; yeniden bağlanınca kanvaslar sıfırdan çekilir', async () => {
+    const res = await local.app.inject({
+      method: 'POST', url: '/api/activation/reset', payload: { wipe: true },
+    });
+    expect(res.statusCode).toBe(200);
+    // Kullanıcı gitti → kanvaslar/gruplar cascade ile gitti, eşleme tabloları boşaldı.
+    expect(await local.prisma.canvas.count()).toBe(0);
+    expect(await local.prisma.cloudImport.count()).toBe(0);
+    expect(await local.prisma.cloudGroupImport.count()).toBe(0);
+
+    const { state, proof } = await startActivation();
+    const approved = await approve(state, proof);
+    const callback = new URL(approved.json().redirectTo);
+    const done = await local.app.inject({ method: 'GET', url: `/api/activation/callback${callback.search}` });
+    // Eşleme boşaldığı için üç kanvas da yeniden alınır.
+    expect(done.headers.location).toBe('/?etkin=1&alinan=3');
+    expect((await local.app.inject({ method: 'GET', url: '/api/canvases' })).json().canvases).toHaveLength(3);
   });
 });

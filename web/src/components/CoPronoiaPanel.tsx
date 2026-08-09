@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { AgentRoleInfo, AgentTokenInfo, PlanProposalInfo, ProposalStatus } from '@treemapper/shared';
+import type { AgentRoleInfo, AgentTokenInfo, NodeClaimInfo, PlanProposalInfo, ProposalStatus } from '@treemapper/shared';
 import { api, ApiError } from '../api/client';
 import { useGraphStore } from '../store/graphStore';
 import { useCanvasStore } from '../store/canvasStore';
@@ -111,9 +111,12 @@ function SecretReveal({ secret, onClose }: { secret: string; onClose: () => void
 function TokenSection() {
   const [roles, setRoles] = useState<AgentRoleInfo[]>([]);
   const [tokens, setTokens] = useState<AgentTokenInfo[]>([]);
-  const [roleId, setRoleId] = useState('');
+  const [roleIds, setRoleIds] = useState<string[]>([]);
   const [label, setLabel] = useState('');
   const [secret, setSecret] = useState<string | null>(null);
+  // Yenilenen anahtarın sırrı token id'sine göre (mint'in "secret" alanından ayrı — birden
+  // fazla kartın sırrı aynı anda görünebilir).
+  const [rotatedSecrets, setRotatedSecrets] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
 
   const refresh = async () => {
@@ -133,17 +136,33 @@ function TokenSection() {
 
   const siteRoles = roles.filter((r) => r.scope === 'site');
   const groupRoles = roles.filter((r) => r.scope === 'group');
-  const roleOption = (r: AgentRoleInfo) => (
-    <option key={r.id} value={r.id}>
+  const toggleRole = (id: string) =>
+    setRoleIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
+  const roleCheckbox = (r: AgentRoleInfo) => (
+    <label key={r.id} className="role-checkbox">
+      <input type="checkbox" checked={roleIds.includes(r.id)} onChange={() => toggleRole(r.id)} />
       {r.name}{r.isSupervisor ? ' ★ süpervizör' : ''}
-    </option>
+    </label>
   );
 
   const mint = async () => {
     try {
-      const res = await api.createAgentToken(roleId, label.trim());
+      const res = await api.createAgentToken(roleIds, label.trim());
       setSecret(res.secret);
       setLabel('');
+      setRoleIds([]);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err));
+    }
+  };
+
+  const rotate = async (t: AgentTokenInfo) => {
+    if (!window.confirm(`"${t.label}" anahtarı yenilensin mi? Eski anahtar anında geçersiz olur — bağlı ajanın .mcp.json'ını güncellemen gerekir.`))
+      return;
+    try {
+      const res = await api.rotateAgentToken(t.id);
+      setRotatedSecrets((s) => ({ ...s, [t.id]: res.secret }));
       await refresh();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
@@ -160,18 +179,31 @@ function TokenSection() {
         </p>
       ) : (
         <div className="token-mint">
-          <select value={roleId} onChange={(e) => setRoleId(e.target.value)}>
-            <option value="">rol seçin…</option>
-            {groupRoles.length > 0 && <optgroup label="Grup rolleri">{groupRoles.map(roleOption)}</optgroup>}
-            {siteRoles.length > 0 && <optgroup label="Site şablonları">{siteRoles.map(roleOption)}</optgroup>}
-          </select>
+          <p className="empty-note">
+            Bir anahtar birden çok role bağlanabilir — tek MCP bağlantısıyla birden çok ajan rolü (ör. bir
+            süpervizör + bir teknik ajan) çalışabilir. En az bir rol seçin.
+          </p>
+          <div className="role-checkbox-list">
+            {groupRoles.length > 0 && (
+              <fieldset>
+                <legend>Grup rolleri</legend>
+                {groupRoles.map(roleCheckbox)}
+              </fieldset>
+            )}
+            {siteRoles.length > 0 && (
+              <fieldset>
+                <legend>Site şablonları</legend>
+                {siteRoles.map(roleCheckbox)}
+              </fieldset>
+            )}
+          </div>
           <input
             placeholder="Anahtar etiketi (ör. ajan-1)"
             value={label}
             maxLength={60}
             onChange={(e) => setLabel(e.target.value)}
           />
-          <button className="primary" disabled={!roleId || !label.trim()} onClick={mint}>
+          <button className="primary" disabled={roleIds.length === 0 || !label.trim()} onClick={mint}>
             + Anahtar bas
           </button>
         </div>
@@ -183,12 +215,26 @@ function TokenSection() {
             <span className={`member-dot ${isFresh(t.lastUsedAt) && !t.revoked ? 'on' : 'off'}`}
               title={t.revoked ? 'iptal edildi' : isFresh(t.lastUsedAt) ? 'az önce bağlandı' : 'bağlı değil'} />
             <span className="member-name">
-              {t.label} <em>— {t.roleName}{t.isSupervisor ? ' ★' : ''}</em>
+              {t.label}{' '}
+              <em>
+                —{' '}
+                {t.roles.map((r, i) => (
+                  <span key={r.id}>
+                    {i > 0 ? ' + ' : ''}
+                    <span className={`role-badge${r.isSupervisor ? ' role-owner' : ''}`}>
+                      {r.name}{r.isSupervisor ? ' ★' : ''}
+                    </span>
+                  </span>
+                ))}
+              </em>
             </span>
             {t.revoked ? (
               <span className="role-badge role-viewer">iptal</span>
             ) : (
               <span className="member-actions">
+                <button onClick={() => rotate(t)} title="Aynı etiket/rollerle yeni bir sır üret; eski anahtar anında geçersiz olur">
+                  🔄 Anahtarı yenile
+                </button>
                 <button
                   onClick={async () => {
                     if (!window.confirm(`"${t.label}" anahtarı iptal edilsin mi? Bağlı ajan erişimini kaybeder.`)) return;
@@ -203,10 +249,80 @@ function TokenSection() {
                 </button>
               </span>
             )}
+            {rotatedSecrets[t.id] && (
+              <SecretReveal
+                secret={rotatedSecrets[t.id]}
+                onClose={() => setRotatedSecrets((s) => { const next = { ...s }; delete next[t.id]; return next; })}
+              />
+            )}
           </li>
         ))}
       </ul>
       {error && <div className="login-error" onClick={() => setError(null)}>{error}</div>}
+    </>
+  );
+}
+
+/** Bir claim'in ne kadar süre sonra düşeceğini kısa Türkçe metne çevirir. */
+function ttlLabel(expiresAt: string): string {
+  const ms = new Date(expiresAt).getTime() - Date.now();
+  if (ms <= 0) return 'düşüyor';
+  const min = Math.floor(ms / 60_000);
+  const sec = Math.round((ms % 60_000) / 1000);
+  return min > 0 ? `${min} dk ${sec} sn` : `${sec} sn`;
+}
+
+/**
+ * Yumuşak claim/lease listesi: hangi ajan hangi bölgeyi/düğümleri üstlenmiş. Bu bir KİLİT değil,
+ * danışmadır (commit yolu hâlâ tek otorite); paralel ajanların aynı alana çakışmasını azaltır.
+ * Sahip takılı/yabancı bir claim'i buradan zorla düşürebilir.
+ */
+function ClaimsSection({ isOwner }: { isOwner: boolean }) {
+  const claims = useGraphStore((s) => s.claims);
+  const forceReleaseClaim = useGraphStore((s) => s.forceReleaseClaim);
+  // Süre etiketini akıcı tutmak için 10 sn'de bir yeniden çiz (TTL geri sayımı).
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => tick((n) => n + 1), 10_000);
+    return () => clearInterval(t);
+  }, []);
+
+  return (
+    <>
+      <h4>Üstlenilen alanlar ({claims.length})</h4>
+      {claims.length === 0 ? (
+        <p className="empty-note">
+          Şu an aktif claim yok. Ajanlar <code>claim_region</code> ile bir bölgeyi geçici üstlendiğinde
+          burada canlı görünür. Claim bir kilit değil, koordinasyon danışmasıdır.
+        </p>
+      ) : (
+        <ul className="member-list">
+          {claims.map((c: NodeClaimInfo) => (
+            <li key={c.id} className="member-item">
+              <span className="member-dot on" title="aktif claim" />
+              <span className="member-name">
+                {c.scope === 'region'
+                  ? c.regionName ?? '(silinmiş bölge)'
+                  : `${c.nodeIds.length} düğüm`}{' '}
+                <em>— {c.agentLabel} ({c.roleName}) · {ttlLabel(c.expiresAt)}</em>
+              </span>
+              {isOwner && (
+                <span className="member-actions">
+                  <button
+                    title="Bu claim'i zorla düşür"
+                    onClick={() => {
+                      if (window.confirm(`${c.agentLabel} ajanının "${c.regionName ?? 'düğüm'}" claim'i düşürülsün mü?`))
+                        forceReleaseClaim(c.id);
+                    }}
+                  >
+                    Düşür
+                  </button>
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
     </>
   );
 }
@@ -271,6 +387,7 @@ export function CoPronoiaPanel() {
       </p>
       <ConnectSection />
       {isOwner && <TokenSection />}
+      <ClaimsSection isOwner={isOwner} />
       <h4>Öneriler ({openCount} açık / {proposals.length})</h4>
       {proposals.length === 0 ? (
         <p className="empty-note">

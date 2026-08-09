@@ -36,3 +36,10 @@ export const useModeStore = create<ModeStore>((set) => ({
     set({ checked: true });
   },
 }));
+
+/**
+ * React dışından (store'lar) mod sorgusu. Yerel kurulumda üyelik/davet/rol uçları
+ * sunucuda HİÇ register edilmez (bkz. `server/src/mode.ts`), o yüzden web de onlara
+ * istek atmamalı — yoksa her kanvas açılışında boşuna bir 404 üretilir.
+ */
+export const isLocalMode = (): boolean => useModeStore.getState().mode === 'local';

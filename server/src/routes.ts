@@ -11,8 +11,9 @@ import {
 import { memberPermissions } from './groupService.js';
 import { getBrief, listBriefRevisions, updateBrief } from './briefService.js';
 import { geminiConfigured, runAgent } from './agent.js';
-import { availableAgentRoles, listAgentTokens, mintAgentToken, revokeAgentToken } from './agentRoleService.js';
+import { availableAgentRoles, listAgentTokens, mintAgentToken, revokeAgentToken, rotateAgentToken } from './agentRoleService.js';
 import { decideProposal, listProposals } from './proposalService.js';
+import { forceReleaseClaim, listClaims } from './claimService.js';
 
 type Broadcast = (canvasId: string, msg: ServerMessage) => void;
 type Kick = (canvasId: string, reason: 'deleted' | 'removed', userId?: string) => void;
@@ -39,6 +40,8 @@ export function registerRoutes(
   serviceFor: ServiceFor,
   broadcast: Broadcast,
   kick: Kick,
+  /** Yerel mod: yerleşik Gemini ajanı hiç register edilmez (bkz. `/agent` bloğu aşağıda). */
+  localMode = false,
 ): void {
   const scoped = (req: FastifyRequest) => {
     const canvasId = (req.params as CanvasParams).canvasId;
@@ -183,8 +186,16 @@ export function registerRoutes(
    * Yerleşik Gemini ajanı: doğal dil komutunu yorumlar, gerekiyorsa tek commit atar.
    * Üyelik preHandler'dan geçen herkes her kanvasta anında kullanabilir; actor istek sahibi
    * olduğundan rol/bölge kuralları normal commit'lerle aynıdır.
+   *
+   * Yerel modda (APP_MODE=local) bu uç hiç register edilmez: yerel kurulumdan GEMINI_API_KEY
+   * istemek anlamsız (tek kullanıcılık, internet-sonrası kurulum) — kullanıcı 404 alır, web
+   * de zaten toolbar düğmesini/paneli o modda çizmez. MCP ajanları (co-pronoia) bundan
+   * etkilenmez, ayrı bir uçtur.
+   *
+   * `globalThis.__LOCAL_BUILD__` kapısı sayesinde yerel imaj bundle'ında bu dal ölü koddur:
+   * `agent.ts` (prompt kurgusu, Gemini istemcisi) imajın içine hiç girmez (bkz. `mode.ts`).
    */
-  app.post<{ Params: CanvasParams; Body: { prompt?: string; detail?: string; stepwise?: boolean; selectedIds?: string[]; selectedRegionIds?: string[] } }>('/agent', async (req, reply) => {
+  if (!globalThis.__LOCAL_BUILD__ && !localMode) app.post<{ Params: CanvasParams; Body: { prompt?: string; detail?: string; stepwise?: boolean; selectedIds?: string[]; selectedRegionIds?: string[] } }>('/agent', async (req, reply) => {
     const { canvasId, service } = scoped(req);
     const prompt = (req.body?.prompt ?? '').trim();
     if (!prompt) return reply.code(400).send({ error: 'prompt gerekli' });
@@ -294,19 +305,27 @@ export function registerRoutes(
     }
   });
 
-  /** Editors and the owner can mint invite links. */
-  app.post<{ Params: CanvasParams }>('/invites', async (req, reply) => {
+  /**
+   * Editors and the owner can mint invite links.
+   *
+   * Buradan aşağıdaki üyelik/davet/rol-erişimi yüzeyi yerel modda hiç register EDİLMEZ:
+   * yerel kurulum tek kullanıcılıdır (paylaşacak kimse yok) ve derleme anı kapısı
+   * sayesinde bu kod yerel imaj bundle'ına girmez. Bölgelerin kendisi kalır — MCP
+   * ajanlarını sınırlamak ve `aiAllowed` için işlevseldir; kalkan yalnız bölgelerin
+   * ÜYE atamasıdır.
+   */
+  if (!globalThis.__LOCAL_BUILD__ && !localMode) app.post<{ Params: CanvasParams }>('/invites', async (req, reply) => {
     if (!requireEditor(req, reply)) return;
     return { token: await createInvite(prisma, scoped(req).canvasId, req.user!.id) };
   });
 
   // ---------- Members & roles (owner-managed) ----------
 
-  app.get<{ Params: CanvasParams }>('/members', async (req) => ({
+  if (!globalThis.__LOCAL_BUILD__ && !localMode) app.get<{ Params: CanvasParams }>('/members', async (req) => ({
     members: await listMembers(prisma, scoped(req).canvasId),
   }));
 
-  app.patch<{ Params: CanvasParams & { userId: string }; Body: { role?: string } }>(
+  if (!globalThis.__LOCAL_BUILD__ && !localMode) app.patch<{ Params: CanvasParams & { userId: string }; Body: { role?: string } }>(
     '/members/:userId',
     async (req, reply) => {
       if (!requireOwner(req, reply)) return;
@@ -321,7 +340,7 @@ export function registerRoutes(
     },
   );
 
-  app.delete<{ Params: CanvasParams & { userId: string } }>('/members/:userId', async (req, reply) => {
+  if (!globalThis.__LOCAL_BUILD__ && !localMode) app.delete<{ Params: CanvasParams & { userId: string } }>('/members/:userId', async (req, reply) => {
     if (!requireOwner(req, reply)) return;
     const { canvasId } = scoped(req);
     const result = await removeMember(prisma, canvasId, req.params.userId);
@@ -433,7 +452,7 @@ export function registerRoutes(
     return { ok: true };
   });
 
-  app.put<{ Params: CanvasParams & { id: string }; Body: { userIds?: string[]; roleIds?: string[] } }>(
+  if (!globalThis.__LOCAL_BUILD__ && !localMode) app.put<{ Params: CanvasParams & { id: string }; Body: { userIds?: string[]; roleIds?: string[] } }>(
     '/regions/:id/members',
     async (req, reply) => {
       if (!requireOwner(req, reply)) return;
@@ -449,14 +468,14 @@ export function registerRoutes(
 
   // ---------- Rol bazlı kanvas erişimi (grup kanvasları) ----------
 
-  app.get<{ Params: CanvasParams }>('/role-access', async (req) => {
+  if (!globalThis.__LOCAL_BUILD__ && !localMode) app.get<{ Params: CanvasParams }>('/role-access', async (req) => {
     const { canvasId } = scoped(req);
     const rows = await prisma.canvasRoleAccess.findMany({ where: { canvasId } });
     return { access: rows.map((r) => ({ roleId: r.roleId, access: r.access })) };
   });
 
   /** Kanvas sahibi ya da grupta rol yönetme yetkisi olanlar ayarlayabilir. */
-  app.put<{ Params: CanvasParams; Body: { roleId?: string; access?: string | null } }>(
+  if (!globalThis.__LOCAL_BUILD__ && !localMode) app.put<{ Params: CanvasParams; Body: { roleId?: string; access?: string | null } }>(
     '/role-access',
     async (req, reply) => {
       const { canvasId } = scoped(req);
@@ -491,14 +510,20 @@ export function registerRoutes(
     return { tokens: await listAgentTokens(prisma, scoped(req).canvasId) };
   });
 
-  /** Ham anahtar yalnızca bu yanıtta döner; DB'de sha256 özeti durur. */
-  app.post<{ Params: CanvasParams; Body: { roleId?: string; label?: string } | null }>(
+  /**
+   * Ham anahtar yalnızca bu yanıtta döner; DB'de sha256 özeti durur. `roleIds` (çoklu rol,
+   * tek bağlantı) tercih edilir; eski istemcilerin gönderdiği tekil `roleId` de kabul edilir.
+   */
+  app.post<{ Params: CanvasParams; Body: { roleIds?: string[]; roleId?: string; label?: string } | null }>(
     '/agent-tokens',
     async (req, reply) => {
       if (!requireOwner(req, reply)) return;
-      const result = await mintAgentToken(
-        prisma, scoped(req).canvasId, req.body?.roleId ?? '', req.body?.label ?? '', req.user!.id,
-      );
+      const roleIds = Array.isArray(req.body?.roleIds)
+        ? req.body.roleIds.filter((x): x is string => typeof x === 'string')
+        : req.body?.roleId
+          ? [req.body.roleId]
+          : [];
+      const result = await mintAgentToken(prisma, scoped(req).canvasId, roleIds, req.body?.label ?? '', req.user!.id);
       if ('error' in result) return reply.code(400).send(result);
       return { token: result.info, secret: result.secret };
     },
@@ -510,6 +535,14 @@ export function registerRoutes(
     if (!(await revokeAgentToken(prisma, canvasId, req.params.id)))
       return reply.code(404).send({ error: 'anahtar bulunamadı' });
     return { tokens: await listAgentTokens(prisma, canvasId) };
+  });
+
+  /** Anahtarı yenile: aynı satır (etiket/roller/provenance korunur), yeni sır — eski anahtar anında geçersiz. */
+  app.post<{ Params: CanvasParams & { id: string } }>('/agent-tokens/:id/rotate', async (req, reply) => {
+    if (!requireOwner(req, reply)) return;
+    const result = await rotateAgentToken(prisma, scoped(req).canvasId, req.params.id);
+    if ('error' in result) return reply.code(400).send(result);
+    return { token: result.info, secret: result.secret };
   });
 
   // ---------- Co-Pronoia önerileri (insan yüzü: izleme + sahip temizliği) ----------
@@ -536,6 +569,22 @@ export function registerRoutes(
       return { proposal: result };
     },
   );
+
+  // ---------- Yumuşak claim/lease (pl1) insan yüzü: kim neyi üstlenmiş + sahip zorla bırakma ----------
+
+  app.get<{ Params: CanvasParams }>('/claims', async (req) => ({
+    claims: await listClaims(prisma, scoped(req).canvasId),
+  }));
+
+  /** Sahip kaçış yolu: takılı/yabancı bir claim'i zorla düşürür (claim danışmadır; sahip her zaman temizleyebilir). */
+  app.delete<{ Params: CanvasParams & { id: string } }>('/claims/:id', async (req, reply) => {
+    if (!requireOwner(req, reply)) return;
+    const { canvasId } = scoped(req);
+    if (!(await forceReleaseClaim(prisma, canvasId, req.params.id)))
+      return reply.code(404).send({ error: 'claim bulunamadı' });
+    broadcast(canvasId, { type: 'claims', claims: await listClaims(prisma, canvasId) });
+    return { claims: await listClaims(prisma, canvasId) };
+  });
 }
 
 function sendError(reply: FastifyReply, err: unknown) {

@@ -4,7 +4,7 @@ import { serializeCanvas } from '@treemapper/shared';
 import { resolveSession, sessionToken } from './auth.js';
 import {
   activationStatus, approveInstance, completeActivation, exchangeInstance,
-  pullCloudCanvases, resolveInstanceToken, startActivation,
+  pullCloudCanvases, resetActivation, resolveInstanceToken, startActivation,
 } from './activationService.js';
 import { listCanvases, listRegions, memberRole, type ServiceFor } from './canvasService.js';
 import { defaultCloudClient, type CloudClient } from './cloudClient.js';
@@ -63,6 +63,17 @@ export function registerActivationRoutes(
       if ('error' in result) return reply.code(400).send(result);
       return result;
     });
+
+    /**
+     * Yerel modun "çıkış yap"ı: bağlantıyı koparır, kurulum aktivasyon ekranına döner.
+     * `pull` gibi el sıkışmanın parçası DEĞİLDİR — app.ts'teki global hook bunu normal
+     * kimlik kontrolünden geçirir, yani yalnız aktive edilmiş kurulum çağırabilir.
+     */
+    app.post<{ Body: { wipe?: boolean } | null }>('/api/activation/reset', async (req, reply) => {
+      const result = await resetActivation(prisma, { wipe: req.body?.wipe === true });
+      if ('error' in result) return reply.code(400).send(result);
+      return result;
+    });
     return;
   }
 
@@ -109,9 +120,52 @@ export function registerActivationRoutes(
       };
     });
 
+    /**
+     * Çekilecek kanvasların künyesi. Grup kimliği ve **tür** de döner: bunlar olmadan
+     * yerel taraf her kanvası tek bir "Yerel çalışma alanı" grubuna ve `plan` türüne
+     * indiriyordu — co-pronoia kanvasları yerelde co-pronoia olarak açılamıyor,
+     * dolayısıyla MCP paneli hiç görünmüyordu.
+     */
     scope.get('/api/instance/canvases', async (req) => {
       const canvases = await listCanvases(prisma, req.user!.id);
-      return { canvases: canvases.map((c) => ({ id: c.id, name: c.name })) };
+      return {
+        canvases: canvases.map((c) => ({
+          id: c.id,
+          name: c.name,
+          type: c.type,
+          groupId: c.groupId ?? null,
+        })),
+      };
+    });
+
+    /**
+     * Kanvasların bağlı olduğu gruplar + o grupların ajan rolleri. Roller de gelmeli:
+     * yerelde MCP anahtarı ancak bir AgentRoleDef'e bağlanarak üretilebilir, rol yoksa
+     * çekilen co-pronoia kanvası kullanılamaz. Ajan ANAHTARLARI bilerek gönderilmez —
+     * DB'de yalnızca sha256'ları var ve yerel kurulum kendi anahtarını üretmelidir.
+     */
+    scope.get('/api/instance/groups', async (req) => {
+      const memberships = await prisma.groupMember.findMany({
+        where: { userId: req.user!.id, status: 'approved' },
+        select: { group: { select: { id: true, name: true, type: true } } },
+      });
+      const groups = memberships.map((m) => m.group);
+      const roles = groups.length
+        ? await prisma.agentRoleDef.findMany({
+            where: { groupId: { in: groups.map((g) => g.id) } },
+            select: { groupId: true, name: true, persona: true, isSupervisor: true },
+          })
+        : [];
+      return {
+        groups: groups.map((g) => ({
+          id: g.id,
+          name: g.name,
+          type: g.type,
+          agentRoles: roles
+            .filter((r) => r.groupId === g.id)
+            .map((r) => ({ name: r.name, persona: r.persona, isSupervisor: r.isSupervisor })),
+        })),
+      };
     });
 
     scope.get<{ Params: { canvasId: string } }>(

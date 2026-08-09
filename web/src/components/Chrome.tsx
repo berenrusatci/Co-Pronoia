@@ -3,6 +3,7 @@ import { useGraphStore, useReadOnly, type ViewMode } from '../store/graphStore';
 import { useAuthStore } from '../store/authStore';
 import { useCanvasStore } from '../store/canvasStore';
 import { useThemeStore } from '../store/themeStore';
+import { useModeStore } from '../store/modeStore';
 import { Brand } from './Logo';
 import { ServerPdfButton } from './ServerPdfButton';
 
@@ -53,6 +54,7 @@ export function Toolbar() {
   const [copied, setCopied] = useState(false);
   const theme = useThemeStore((s) => s.theme);
   const toggleTheme = useThemeStore((s) => s.toggle);
+  const isLocalMode = useModeStore((s) => s.mode) === 'local';
 
   const leaveCanvas = () => {
     if (pendingCount > 0 && !window.confirm(`${pendingCount} push edilmemiş değişiklik var — panoya dönersen kaybolur. Devam?`))
@@ -117,9 +119,11 @@ export function Toolbar() {
         {!readOnly && view !== 'timeline' && (
           <button onClick={() => addNode({ title: 'Yeni düğüm' })}>+ Düğüm</button>
         )}
-        <button className={sidePanel === 'agent' ? 'active' : ''} onClick={() => togglePanel('agent')} title="Gemini ajanı: kanvasla doğal dilde konuş">
-          ✨ Ajan
-        </button>
+        {!isLocalMode && (
+          <button className={sidePanel === 'agent' ? 'active' : ''} onClick={() => togglePanel('agent')} title="Gemini ajanı: kanvasla doğal dilde konuş">
+            ✨ Ajan
+          </button>
+        )}
         {activeCanvas?.type === 'co-pronoia' && (
           <button
             className={`${sidePanel === 'copronoia' ? 'active' : ''}${openProposalCount > 0 ? ' attention' : ''}`}
@@ -145,9 +149,12 @@ export function Toolbar() {
         >
           ⑂ Dallar{branchCount > 0 ? ` (${branchCount})` : ''}
         </button>
-        <button className={sidePanel === 'members' ? 'active' : ''} onClick={() => togglePanel('members')}>
-          Üyeler
-        </button>
+        {/* Yerel kurulum tek kullanıcılı: üyelik ve davet yüzeyi sunucuda hiç yok. */}
+        {!isLocalMode && (
+          <button className={sidePanel === 'members' ? 'active' : ''} onClick={() => togglePanel('members')}>
+            Üyeler
+          </button>
+        )}
         <button className={sidePanel === 'regions' ? 'active' : ''} onClick={() => togglePanel('regions')}>
           Bölgeler
         </button>
@@ -155,9 +162,11 @@ export function Toolbar() {
           Geçmiş (#{headSeq})
         </button>
         <ServerPdfButton />
-        <button onClick={copyInvite} title="Bu kanvasa üye ekleme linki oluştur ve kopyala">
-          {copied ? 'Kopyalandı ✓' : '🔗 Davet'}
-        </button>
+        {!isLocalMode && (
+          <button onClick={copyInvite} title="Bu kanvasa üye ekleme linki oluştur ve kopyala">
+            {copied ? 'Kopyalandı ✓' : '🔗 Davet'}
+          </button>
+        )}
         <span className={`ws-dot ${wsConnected ? 'on' : 'off'}`} title={wsConnected ? 'Canlı bağlantı aktif' : 'Canlı bağlantı kopuk'} />
         <span className="presence-chips" title={`Şu an aktif: ${activeUsers.join(', ') || '—'}`}>
           {activeUsers.map((u) => (
