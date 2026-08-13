@@ -158,7 +158,7 @@ export function LoginView() {
                 <label htmlFor="cp-username">Kullanıcı adı</label>
                 <input
                   id="cp-username" value={username} onChange={(e) => setUsername(e.target.value)}
-                  placeholder="adayazar" autoFocus autoComplete="username"
+                  placeholder="kullaniciadi" autoFocus autoComplete="username"
                 />
               </div>
               {mode === 'register' && (
