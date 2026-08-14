@@ -152,6 +152,39 @@ describe('agent', () => {
     }
   });
 
+  /**
+   * Maliyet/DoS kapısı: uç kanvas üyesi olan herkese açık ve her istek bir ya da daha
+   * çok Gemini çağrısı doğuruyor. Uzunluk sınırı ve oran sınırı model çağrısından ÖNCE
+   * çalışmalı — 503 (anahtar yok) kontrolüne bile gelmeden reddedilmeli.
+   */
+  it('ajan ucu prompt uzunluğunu ve çağrı oranını sınırlar', async () => {
+    const { sender, sent } = captureEmails();
+    const built = await buildApp(await db.fresh(), { emailSender: sender });
+    opened.push(built);
+    const { app } = built;
+    const { cookies } = await registerVerified(app, sent, { username: 'kotaci', password: 'sifre1', email: 'k@test.com' });
+    const canvasId = (await createGroupCanvas(app, cookies, 'Plan')).id as string;
+    const call = (prompt: string) =>
+      app.inject({ method: 'POST', url: `/api/canvases/${canvasId}/agent`, cookies, payload: { prompt } });
+
+    const uzun = await call('a'.repeat(8_001));
+    expect(uzun.statusCode).toBe(400);
+    expect(uzun.json().error).toMatch(/çok uzun/i);
+
+    // GEMINI_API_KEY yokken bile oran sınırı önce devreye girer: ilk 8 istek 503'e
+    // (yapılandırma) düşer, 9.'su 429 olur — yani model çağrısına hiç gelinmez.
+    const saved = process.env.GEMINI_API_KEY;
+    delete process.env.GEMINI_API_KEY;
+    try {
+      const kodlar: number[] = [];
+      for (let i = 0; i < 9; i++) kodlar.push((await call('özetle')).statusCode);
+      expect(kodlar.slice(0, 8)).toEqual(Array(8).fill(503));
+      expect(kodlar[8]).toBe(429);
+    } finally {
+      if (saved !== undefined) process.env.GEMINI_API_KEY = saved;
+    }
+  });
+
   it('threads detail level and the caller permissions into the prompts', async () => {
     const { prisma, canvas, run } = await freshCanvas();
     const editor = await prisma.user.create({ data: { username: 'derya', passwordHash: 'x' } });

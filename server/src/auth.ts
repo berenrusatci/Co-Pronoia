@@ -65,11 +65,25 @@ export async function resolveSession(prisma: PrismaClient, token: string | undef
   };
 }
 
+/**
+ * Üretimde oturum çerezi yalnız HTTPS üzerinde gitmelidir. Bulut dağıtımı (Render) HTTPS
+ * zorluyor; geliştirmede `http://localhost` kullanıldığı için `secure` orada kapalı olmalı,
+ * yoksa tarayıcı çerezi hiç saklamaz. `SESSION_COOKIE_SECURE=0|1` bu kararı ezer (HTTPS
+ * sonlandırmayan bir vekilin arkasında çalışan kurulum için kaçış kapağı).
+ */
+function cookieSecure(): boolean {
+  const override = process.env.SESSION_COOKIE_SECURE;
+  if (override === '1' || override === 'true') return true;
+  if (override === '0' || override === 'false') return false;
+  return process.env.NODE_ENV === 'production';
+}
+
 export function setSessionCookie(reply: FastifyReply, token: string): void {
   reply.setCookie(SESSION_COOKIE, token, {
     path: '/',
     httpOnly: true,
     sameSite: 'lax',
+    secure: cookieSecure(),
     maxAge: SESSION_DAYS * 86400,
   });
 }

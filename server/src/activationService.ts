@@ -321,6 +321,63 @@ export async function pullCloudCanvases(
 // ---------- Bulut taraf ----------
 
 /**
+ * Onay ekranının kabul ettiği dönüş adresleri: **yalnızca yerel ağ**. Yerel kurulum
+ * tanımı gereği kullanıcının kendi makinesinde (ya da ev ağındaki bir sunucuda) çalışır;
+ * internetteki bir host asla meşru bir hedef değildir.
+ *
+ * Bu bir "open redirect sertleştirmesi" değil, **hesap ele geçirmeye karşı kapıdır**:
+ * `kanit` (PKCE proof) el sıkışmayı başlatan tarafça üretildiği için saldırganın kendi
+ * başlattığı bir akışta verifier'ı da saldırgan bilir. Serbest bir `donus` ile kurban
+ * gerçek bulut domaininde tek tık onay verdiğinde tek kullanımlık kod saldırgana gider,
+ * saldırgan onu herkese açık `/api/activation/exchange`te kalıcı `tmi_` anahtarına
+ * çevirir ve `/api/instance/*` üzerinden kurbanın bütün kanvaslarını dışa aktarabilir.
+ * Host'u yerel ağa kilitlemek bu zinciri kökten keser.
+ *
+ * `CLOUD_ALLOWED_LOCAL_HOSTS` (virgülle ayrılmış hostname listesi) ek istisna tanımlar —
+ * kendi alan adı üzerinden eriştiği bir kurulumu olan operatör için kaçış kapağı.
+ */
+function isLocalNetworkHost(hostname: string): boolean {
+  const host = hostname.replace(/^\[|\]$/g, '').toLowerCase();
+
+  const extra = (process.env.CLOUD_ALLOWED_LOCAL_HOSTS ?? '')
+    .split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);
+  if (extra.includes(host)) return true;
+
+  if (host === 'localhost' || host.endsWith('.localhost')) return true;
+  if (host.endsWith('.local')) return true;
+  // IPv6 loopback ve IPv4-mapped loopback/özel adresler.
+  if (host === '::1' || host === '0:0:0:0:0:0:0:1') return true;
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(host);
+  const ipv4 = mapped ? mapped[1] : host;
+
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ipv4);
+  if (!m) return false;
+  const [a, b] = [Number(m[1]), Number(m[2])];
+  if (m.slice(1).some((p) => Number(p) > 255)) return false;
+  if (a === 127) return true;                    // loopback
+  if (a === 10) return true;                     // RFC1918
+  if (a === 192 && b === 168) return true;       // RFC1918
+  if (a === 172 && b >= 16 && b <= 31) return true; // RFC1918
+  if (a === 169 && b === 254) return true;       // link-local
+  return false;
+}
+
+/** Onay ekranının kabul ettiği dönüş adresi mi? http(s) + yerel ağ hostu şartı. */
+export function isAllowedActivationRedirect(redirect: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(redirect);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+  // Kullanıcı adı/şifre gömülü adresler ("https://yerel.test@attacker.example") host'u
+  // gizlemenin klasik yoludur; el sıkışmada hiçbir meşru kullanımı yok.
+  if (url.username || url.password) return false;
+  return isLocalNetworkHost(url.hostname);
+}
+
+/**
  * Onay: oturum açmış kullanıcı yerel kuruluma kimliğini verir. Tek kullanımlık kod
  * döner; kod yalnızca `verifier`ı bilen yerel kurulum tarafından takas edilebilir.
  */
@@ -333,8 +390,10 @@ export async function approveInstance(
   const proof = (input.proof ?? '').trim();
   const redirect = (input.redirect ?? '').trim();
   if (!state || !proof) return { error: 'aktivasyon isteği eksik' };
-  // Yerel kurulumlar localhost'ta çalışır; yine de yalnızca http(s) adreslerine dönülür.
-  if (!/^https?:\/\//.test(redirect)) return { error: 'geçersiz dönüş adresi' };
+  // Yerel kurulumlar yerel ağda çalışır: dönüş adresi loopback/özel ağ olmak ZORUNDA
+  // (bkz. `isAllowedActivationRedirect` — dışarı açık bir host tek tıkla hesap devri demek).
+  if (!isAllowedActivationRedirect(redirect))
+    return { error: 'geçersiz dönüş adresi: yalnızca yerel ağdaki kurulumlar etkinleştirilebilir' };
   if (await prisma.instance.findUnique({ where: { state } }))
     return { error: 'bu aktivasyon isteği zaten kullanılmış' };
 

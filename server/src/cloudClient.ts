@@ -52,8 +52,16 @@ export interface CloudClient {
   exportCanvas(instanceToken: string, cloudCanvasId: string): Promise<CanvasBundle>;
 }
 
-async function cloudFetch(path: string, init: RequestInit): Promise<Response> {
-  return fetch(`${cloudUrl()}${path}`, init);
+/**
+ * Bulut çağrılarının üst süre sınırı. Aktivasyon callback'i ve "buluttan çek" akışı bir
+ * HTTP isteğinin içinde bekler; bulut yavaşladığında bunlar timeout olmadan süresiz
+ * açık kalıyordu. Kanvas dışa aktarımı büyük gövde taşıdığı için ona daha geniş süre.
+ */
+const CLOUD_TIMEOUT_MS = Number(process.env.CLOUD_TIMEOUT_MS) || 20_000;
+const CLOUD_EXPORT_TIMEOUT_MS = Number(process.env.CLOUD_EXPORT_TIMEOUT_MS) || 60_000;
+
+async function cloudFetch(path: string, init: RequestInit, timeoutMs = CLOUD_TIMEOUT_MS): Promise<Response> {
+  return fetch(`${cloudUrl()}${path}`, { ...init, signal: AbortSignal.timeout(timeoutMs) });
 }
 
 export const defaultCloudClient: CloudClient = {
@@ -92,7 +100,7 @@ export const defaultCloudClient: CloudClient = {
   async exportCanvas(instanceToken, cloudCanvasId) {
     const res = await cloudFetch(`/api/instance/canvases/${cloudCanvasId}/export`, {
       headers: { Authorization: `Bearer ${instanceToken}` },
-    });
+    }, CLOUD_EXPORT_TIMEOUT_MS);
     if (!res.ok) throw new Error(`kanvas paketi alınamadı (HTTP ${res.status})`);
     return parseCanvasBundle(await res.json());
   },

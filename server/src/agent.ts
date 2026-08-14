@@ -57,6 +57,12 @@ function modelsFor(detail: AgentDetail): string[] {
   return [...new Set(detail === 'proto' ? [lite, full] : [full, lite])];
 }
 
+/**
+ * Tek bir Gemini çağrısının üst süre sınırı. Bu olmadan yavaşlayan bir upstream, isteği
+ * (ve `CommitService` mutex'i beklemeye giren commit yolunu) süresiz açık tutabiliyordu.
+ */
+const GEMINI_TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS) || 60_000;
+
 async function geminiGenerate(system: string, user: string, models: string[]): Promise<string> {
   let lastErr = 'model listesi boş';
   for (const model of models) {
@@ -70,6 +76,12 @@ async function geminiGenerate(system: string, user: string, models: string[]): P
           contents: [{ role: 'user', parts: [{ text: user }] }],
           generationConfig: { temperature: 0.2, responseMimeType: 'application/json' },
         }),
+        signal: AbortSignal.timeout(GEMINI_TIMEOUT_MS),
+      }).catch((err: unknown) => {
+        // TimeoutError/AbortError: sıradaki denemeye/modele geç, isteği burada kilitleme.
+        throw new Error(
+          `Gemini isteği başarısız (${model}): ${err instanceof Error ? err.name : 'ağ hatası'}`,
+        );
       });
       if (res.ok) {
         const data = (await res.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };

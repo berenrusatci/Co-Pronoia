@@ -146,7 +146,7 @@ export function registerAuthRoutes(
   app.post('/api/auth/logout', async (req, reply) => {
     const token = sessionToken(req);
     if (token) await prisma.session.deleteMany({ where: { id: token } });
-    reply.clearCookie(SESSION_COOKIE, { path: '/' });
+    reply.clearCookie(SESSION_COOKIE, { path: '/', httpOnly: true, sameSite: 'lax' });
     return { ok: true };
   });
 

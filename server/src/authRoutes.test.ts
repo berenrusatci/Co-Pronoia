@@ -55,6 +55,35 @@ describe('kayıt e-posta doğrulama', () => {
     expect(await prisma.emailVerification.count()).toBe(0);
   });
 
+  /**
+   * Oturum çerezi HttpOnly + SameSite=Lax olmalı; `Secure` üretimde açılır (geliştirmede
+   * `http://localhost` kullanıldığı için kapalı, yoksa tarayıcı çerezi hiç saklamaz).
+   */
+  it('oturum çerezi HttpOnly/SameSite taşır, Secure üretimde açılır', async () => {
+    const { app, sent } = await freshApp();
+    await register(app, { username: 'cem', password: 'sifre123', email: 'cem@x.com' });
+    const login = async () => (await app.inject({
+      method: 'POST', url: '/api/auth/verify-email',
+      payload: { email: 'cem@x.com', code: codeOf(sent[0]) },
+    })).headers['set-cookie'];
+
+    const dev = String(await login());
+    expect(dev).toMatch(/HttpOnly/i);
+    expect(dev).toMatch(/SameSite=Lax/i);
+    expect(dev).not.toMatch(/Secure/i);
+
+    // Kullanıcı artık var; ikinci çerezi giriş ucundan alalım.
+    process.env.SESSION_COOKIE_SECURE = '1';
+    try {
+      const res = await app.inject({
+        method: 'POST', url: '/api/auth/login', payload: { username: 'cem', password: 'sifre123' },
+      });
+      expect(String(res.headers['set-cookie'])).toMatch(/Secure/i);
+    } finally {
+      delete process.env.SESSION_COOKIE_SECURE;
+    }
+  });
+
   it('yanlış kod 400 döner ve hesap oluşmaz', async () => {
     const { app, prisma } = await freshApp();
     await register(app, { username: 'cem', password: 'sifre123', email: 'cem@x.com' });

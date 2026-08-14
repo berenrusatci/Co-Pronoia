@@ -6,5 +6,7 @@ export default defineConfig({
     // test dosyaları paralel koşunca Postgres max_connections (100) aşılıp rastgele
     // 500'ler üretiyor. Dosyaları sırayla çalıştır.
     fileParallelism: false,
+    // MCP uçlarına dokunan dosyalarda `app.inject` mock socket'ini yamalar (bkz. testSetup.ts).
+    setupFiles: ['./src/testSetup.ts'],
   },
 });

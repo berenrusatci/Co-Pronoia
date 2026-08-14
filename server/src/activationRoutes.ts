@@ -10,8 +10,16 @@ import { listCanvases, listRegions, memberRole, type ServiceFor } from './canvas
 import { defaultCloudClient, type CloudClient } from './cloudClient.js';
 import { isLocal } from './mode.js';
 
-/** İsteğin geldiği yerel adres (bulut, callback için buraya geri yönlendirir). */
+/**
+ * İsteğin geldiği yerel adres (bulut, callback için buraya geri yönlendirir).
+ *
+ * `Host`/`x-forwarded-proto` istemci girdisidir; vekil arkasında ya da güvenilmeyen bir
+ * ağda çalışan kurulum `LOCAL_PUBLIC_ORIGIN` ile bunu sabitleyebilir. Bulut tarafı zaten
+ * dönüş adresini yerel ağa kilitliyor (`isAllowedActivationRedirect`), bu ikinci kat.
+ */
 function originOf(req: FastifyRequest): string {
+  const fixed = (process.env.LOCAL_PUBLIC_ORIGIN ?? '').trim();
+  if (fixed) return fixed.replace(/\/+$/, '');
   const host = req.headers.host ?? '127.0.0.1:3001';
   const proto = (req.headers['x-forwarded-proto'] as string | undefined)?.split(',')[0] ?? req.protocol ?? 'http';
   return `${proto}://${host}`;

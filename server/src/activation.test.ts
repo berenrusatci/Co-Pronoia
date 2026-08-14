@@ -123,7 +123,7 @@ function manualHandshake() {
 }
 
 /** Bulutta onayla → yerel callback URL'i (state + tek kullanımlık kod). */
-async function approve(state: string, proof: string, redirect = 'http://yerel.test:3001') {
+async function approve(state: string, proof: string, redirect = 'http://127.0.0.1:3001') {
   const res = await cloud.app.inject({
     method: 'POST', url: '/api/activation/approve', cookies: cloudCookies,
     payload: { state, redirect, proof },
@@ -176,11 +176,61 @@ describe('aktivasyon el sıkışması', () => {
   it('onay oturum ister, dönüş adresi http(s) olmalı', async () => {
     const { state, proof } = await startActivation();
     const anon = await cloud.app.inject({
-      method: 'POST', url: '/api/activation/approve', payload: { state, redirect: 'http://yerel.test', proof },
+      method: 'POST', url: '/api/activation/approve', payload: { state, redirect: 'http://127.0.0.1:3001', proof },
     });
     expect(anon.statusCode).toBe(401);
     const badRedirect = await approve(state, proof, 'file:///etc/passwd');
     expect(badRedirect.statusCode).toBe(400);
+  });
+
+  /**
+   * Kritik: `kanit` el sıkışmayı başlatan tarafça üretilir, yani saldırgan kendi
+   * başlattığı akışta verifier'ı da bilir. Serbest bir `donus` ile kurbanın tek tıkla
+   * verdiği onay, saldırganın kalıcı `tmi_` anahtarı alıp bütün kanvasları dışa
+   * aktarmasına yeter. Dönüş adresi bu yüzden yerel ağa kilitlidir.
+   */
+  it('dönüş adresi yerel ağ dışına çıkamaz (hesap devri zinciri)', async () => {
+    const dis = [
+      'https://attacker.example/api/activation/callback',
+      'http://8.8.8.8:3001',
+      'https://yerel.test@attacker.example',   // gömülü kullanıcı adıyla host gizleme
+      'http://localhost.attacker.example',
+      'http://[2606:4700:4700::1111]:3001',
+    ];
+    for (const redirect of dis) {
+      const { state, proof } = manualHandshake();
+      const res = await approve(state, proof, redirect);
+      expect(res.statusCode, redirect).toBe(400);
+      expect(res.json().error, redirect).toMatch(/dönüş adresi/i);
+      // Reddedilen istek hiçbir Instance satırı bırakmamalı.
+      expect(await cloud.prisma.instance.findUnique({ where: { state } })).toBeNull();
+    }
+  });
+
+  it('yerel ağ adresleri kabul edilir (loopback, RFC1918, .local, IPv6 loopback)', async () => {
+    const izinli = [
+      'http://127.0.0.1:3001', 'http://localhost:3001', 'http://192.168.1.5:3001',
+      'http://10.0.0.4:8080', 'http://172.16.3.9:3001', 'http://nas.local:3001',
+      'http://[::1]:3001',
+    ];
+    for (const redirect of izinli) {
+      const { state, proof } = manualHandshake();
+      const res = await approve(state, proof, redirect);
+      expect(res.statusCode, redirect).toBe(200);
+      expect(new URL(res.json().redirectTo).pathname, redirect).toBe('/api/activation/callback');
+    }
+  });
+
+  it('CLOUD_ALLOWED_LOCAL_HOSTS ek host tanımlar', async () => {
+    const { state, proof } = manualHandshake();
+    expect((await approve(state, proof, 'https://kurulum.ornek.com')).statusCode).toBe(400);
+    process.env.CLOUD_ALLOWED_LOCAL_HOSTS = 'kurulum.ornek.com';
+    try {
+      const ikinci = manualHandshake();
+      expect((await approve(ikinci.state, ikinci.proof, 'https://kurulum.ornek.com')).statusCode).toBe(200);
+    } finally {
+      delete process.env.CLOUD_ALLOWED_LOCAL_HOSTS;
+    }
   });
 
   it('başarılı el sıkışma: yerel kullanıcı + çalışma alanı + bulut kanvasları', async () => {

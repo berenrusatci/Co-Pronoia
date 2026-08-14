@@ -31,6 +31,33 @@ function slugify(name: string | null | undefined): string {
 }
 
 /**
+ * Yerleşik Gemini ajanının maliyet/DoS koruması. Uç, kanvas üyesi olan herkese (viewer
+ * dahil — viewer yazamaz ama özet alabilir) açık ve her istek bir ya da daha çok harici
+ * LLM çağrısı doğuruyor (`stepwise` ile parça başına bir tane). Sınırsız bırakıldığında
+ * tek bir üye, uygulama sahibinin Gemini kotasını ve sunucu bağlantılarını tüketebilir.
+ */
+const AGENT_PROMPT_MAX = 8_000;
+const AGENT_RATE_WINDOW_MS = 60_000;
+/** Kullanıcı+kanvas başına dakikada en çok bu kadar ajan çağrısı. */
+const AGENT_RATE_MAX = 8;
+/** Kullanıcı başına (bütün kanvaslar) dakikada en çok bu kadar ajan çağrısı. */
+const AGENT_RATE_MAX_USER = 20;
+const agentCalls = new Map<string, number[]>();
+
+/** True dönerse çağrı reddedilmeli. `claimService.rateLimited` deseninin eşi. */
+function agentRateLimited(key: string, max: number): boolean {
+  const now = Date.now();
+  const recent = (agentCalls.get(key) ?? []).filter((t) => now - t < AGENT_RATE_WINDOW_MS);
+  recent.push(now);
+  agentCalls.set(key, recent);
+  // Harita süreç ömrü boyunca yaşar; boşalan anahtarları temizle ki sızıntı olmasın.
+  if (agentCalls.size > 5_000) {
+    for (const [k, v] of agentCalls) if (v.every((t) => now - t >= AGENT_RATE_WINDOW_MS)) agentCalls.delete(k);
+  }
+  return recent.length > max;
+}
+
+/**
  * Canvas-scoped routes. Registered under the `/api/canvases/:canvasId` prefix;
  * a preHandler in app.ts has already verified membership and set `req.memberRole`.
  */
@@ -199,6 +226,12 @@ export function registerRoutes(
     const { canvasId, service } = scoped(req);
     const prompt = (req.body?.prompt ?? '').trim();
     if (!prompt) return reply.code(400).send({ error: 'prompt gerekli' });
+    if (prompt.length > AGENT_PROMPT_MAX)
+      return reply.code(400).send({ error: `istek çok uzun (en fazla ${AGENT_PROMPT_MAX} karakter)` });
+    // Oran sınırı kimlik doğrulandıktan sonra, model çağrısından önce: kotayı koruyan kapı bu.
+    const userId = req.user!.id;
+    if (agentRateLimited(`${userId}:${canvasId}`, AGENT_RATE_MAX) || agentRateLimited(userId, AGENT_RATE_MAX_USER))
+      return reply.code(429).send({ error: 'çok fazla ajan isteği; biraz bekleyip tekrar deneyin' });
     if (!geminiConfigured())
       return reply.code(503).send({ error: 'ajan yapılandırılmamış: sunucuda GEMINI_API_KEY tanımlı değil' });
     const canvas = await prisma.canvas.findUnique({ where: { id: canvasId }, select: { name: true } });
