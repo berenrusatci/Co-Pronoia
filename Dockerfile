@@ -6,7 +6,18 @@
 # kapatılmakla kalmaz — `server/build.mjs --local` bunları derleme anında eleyip bundle'a
 # hiç almaz (bkz. `server/src/mode.ts`, ölçen test: `server/src/localBundle.test.ts`).
 # Çalışma katmanında kaynak dosya, test ve geliştirme bağımlılığı da bulunmaz.
+#
+# Aynı Dockerfile bulut imajını da üretir. Hangi bundle'ın derleneceğini `APP_MODE` build
+# argümanı seçer (öntanımlı `local`) — `cloud` verildiğinde eleme yapılmaz ve kimlik/yönetim
+# kodu bundle'da kalır. Render bir Docker servisinin env değişkenlerini derleme anında build
+# argümanı olarak da geçtiği için `render.yaml`'daki `APP_MODE=cloud` buraya kendiliğinden
+# düşer. Bu kapı ŞART: `bundle:local` ile derlenmiş bir imajda `APP_MODE=cloud` vermek işe
+# yaramaz — `isLocal()` (mode.ts) `LOCAL_BUILD || appMode()==='local'` olduğu için derleme
+# anındaki eleme çalışma anındaki env'i daima yener, elenen kod da geri gelmez.
+ARG APP_MODE=local
+
 FROM node:22-alpine AS build
+ARG APP_MODE
 WORKDIR /app
 
 # `prisma generate` prisma.config.ts üzerinden DATABASE_URL'i derleme anında çözmek ister
@@ -28,7 +39,8 @@ COPY . .
 RUN npm run build -w web
 RUN npm exec -w server -- prisma generate
 # Yerel bundle: mod kapıları derleme anında katlanır, elenen dallar bundle'a girmez.
-RUN npm run bundle:local -w server
+# Bulut bundle'ında (`APP_MODE=cloud`) eleme yapılmaz, her şey içeride kalır.
+RUN if [ "$APP_MODE" = "cloud" ]; then npm run bundle -w server; else npm run bundle:local -w server; fi
 
 # Çalışma katmanının node_modules'ü: yalnız üretim bağımlılıkları. Ayrı bir dizinde
 # kurulur ki derleme katmanındaki devDependency'ler (vite, vitest, esbuild, typescript)
@@ -45,14 +57,16 @@ COPY server/prisma.config.ts server/prisma.config.ts
 RUN npm ci --omit=dev --workspace @co-pronoia/server --include-workspace-root
 
 FROM node:22-alpine
+ARG APP_MODE
 WORKDIR /app
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
 ENV PORT=3001
-# İmaj yerel dağıtım içindir: kayıt/giriş/admin/davet kodu bundle'da yoktur, kimlik bir
-# kerelik bulut aktivasyonuyla gelir. Barındırılan kurulumlar (Render) APP_MODE=cloud verir
-# ve kaynaktan çalışır — bu imaj onlar için değildir.
-ENV APP_MODE=local
+# Öntanımlı imaj yerel dağıtım içindir: kayıt/giriş/admin/davet kodu bundle'da yoktur, kimlik
+# bir kerelik bulut aktivasyonuyla gelir. Barındırılan kurulumlar (Render) build argümanı
+# olarak APP_MODE=cloud verir; o zaman hem bundle elenmemiş olur hem de bu değer `cloud`a
+# döner. İkisi tek argümandan geldiği için ayrışamazlar.
+ENV APP_MODE=${APP_MODE}
 
 # Yalnız çalışması gerekenler: üretim bağımlılıkları + üretilmiş Prisma client,
 # sunucu bundle'ı, derlenmiş web ve `prisma db push` için şema/konfig.

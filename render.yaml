@@ -6,6 +6,10 @@ services:
     healthCheckPath: /api/health
     envVars:
       # İmajın öntanımlısı yerel dağıtım (APP_MODE=local); barındırılan kurulum bulut modudur.
+      # Bu değişken İKİ iş görür: Render onu derleme anında Docker build argümanı olarak da
+      # geçtiği için Dockerfile bulut bundle'ını (eleme yapılmamış) derler, çalışma anında da
+      # `isLocal()` false olur. Buradan silinirse Render yerel bundle'ı derler ve kurulumda
+      # giriş/kayıt/admin uçları HİÇ bulunmaz (her /api 401 döner) — bkz. DOCKER-DENETIM.md.
       - key: APP_MODE
         value: cloud
       - key: DATABASE_URL
