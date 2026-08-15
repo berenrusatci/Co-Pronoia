@@ -102,6 +102,27 @@ describe('kayıt e-posta doğrulama', () => {
     expect(await prisma.emailVerification.count()).toBe(0);
   });
 
+  it('login kaba kuvvet kapısı: başarısızlıklar sayılır, başarı sıfırlar, sınır aşılınca 429', async () => {
+    const { app, sent } = await freshApp();
+    await register(app, { username: 'kilit', password: 'dogrusifre', email: 'kilit@x.com' });
+    await app.inject({
+      method: 'POST', url: '/api/auth/verify-email',
+      payload: { email: 'kilit@x.com', code: codeOf(sent[sent.length - 1]) },
+    });
+    const dene = (password: string) =>
+      app.inject({ method: 'POST', url: '/api/auth/login', payload: { username: 'kilit', password } });
+
+    // Birkaç hatalı deneme kilitlemez ve doğru şifre sayacı sıfırlar.
+    for (let i = 0; i < 3; i++) expect((await dene('yanlis')).statusCode).toBe(401);
+    expect((await dene('dogrusifre')).statusCode).toBe(200);
+
+    // Sıfırlandığı için yeniden tam sınır kadar hakkımız var; sonrasında 429.
+    for (let i = 0; i < 10; i++) expect((await dene('yanlis')).statusCode).toBe(401);
+    expect((await dene('yanlis')).statusCode).toBe(429);
+    // Kapı parola doğrulamasından önce: doğru şifre bile bu pencerede reddedilir.
+    expect((await dene('dogrusifre')).statusCode).toBe(429);
+  });
+
   it('süresi dolmuş kod reddedilir', async () => {
     const { app, prisma, sent } = await freshApp();
     await register(app, { username: 'efe', password: 'sifre123', email: 'efe@x.com' });

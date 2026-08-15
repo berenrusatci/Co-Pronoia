@@ -261,7 +261,13 @@ export async function approveProposal(opts: {
       message: `ajan önerisi: ${existing.title} (${existing.agentLabel}/${existing.roleName}, onay: ${opts.supervisorLabel})`,
       baseSeq: existing.baseSeq,
       authorId: creatorId,
-      actor: { userId: creatorId, role },
+      // ai: true — öneri bir MCP ajanından geliyor, insan yazmadı. Bu olmadan `aiAllowed: false`
+      // bölgeler yalnız yerleşik ajanda korunuyordu; öneri onayı doğrudan commit()'e gidip
+      // bayrağı tamamen görmezden geliyordu.
+      // ai: true — öneri bir MCP ajanından geliyor, insan yazmadı. Bu olmadan `aiAllowed: false`
+      // bölgeler yalnız yerleşik ajanda korunuyordu; öneri onayı doğrudan commit()'e gidip
+      // bayrağı tamamen görmezden geliyordu.
+      actor: { userId: creatorId, role, ai: true },
     });
   } catch (err) {
     if (err instanceof RegionError || err instanceof ValidationError || err instanceof ConflictError || err instanceof OpError)

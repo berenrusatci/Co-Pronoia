@@ -221,6 +221,50 @@ describe('MCP ucu: öneri yaşam döngüsü ve süpervizör zorlaması', () => {
     expect(prop.appliedCommitSeq).toBe(head0 + 1);
   });
 
+  it("aiAllowed:false bölgeye yazan öneri onaylanamaz; bölge dışı öneri normal iner", async () => {
+    const { app, serviceFor, canvasId, agent, supervisor, state } = await cpSetup();
+    const head0 = (await state()).headSeq;
+
+    // Süpervizör AI'ya kapalı bir bölge çizer (sahibin kanvas ayarı, commit üretmez).
+    const region = await callTool(app, supervisor.secret, 'create_region', {
+      name: 'İnsan Alanı', x: 0, y: 0, width: 500, height: 500,
+      description: 'burada yalnız insanlar çalışır', aiAllowed: false,
+    });
+    expect(region.isError).toBe(false);
+
+    // Bölgenin İÇİNE düğüm koyan öneri: submit geçer (kayıt), onay REDDEDİLİR.
+    const inside = await callTool(app, agent.secret, 'submit_proposal', {
+      title: 'Kapalı bölgeye yaz',
+      intents: [{ op: 'add_node', id: 'kapali', title: 'İzinsiz', x: 250, y: 250 }],
+      baseSeq: head0,
+    });
+    expect(inside.isError).toBe(false);
+    const insideId = (JSON.parse(inside.text) as { id: string }).id;
+
+    const reddedildi = await callTool(app, supervisor.secret, 'approve_proposal', { id: insideId });
+    expect(reddedildi.isError).toBe(true);
+    expect(reddedildi.text).toContain('yapay zekâya kapalı');
+    // Reddedilen öneri hiçbir şey yazmamalı ve durumu değişmemeli.
+    expect((await state()).headSeq).toBe(head0);
+    const liste = await callTool(app, agent.secret, 'list_proposals');
+    const kayit = (JSON.parse(liste.text) as { id: string; status: string }[]).find((p) => p.id === insideId)!;
+    expect(kayit.status).toBe('submitted');
+
+    // Bölge DIŞINDAKİ aynı iş sorunsuz inmeli — kalkan geniş değil, hedefli.
+    const outside = await callTool(app, agent.secret, 'submit_proposal', {
+      title: 'Bölge dışına yaz',
+      intents: [{ op: 'add_node', id: 'serbest', title: 'İzinli', x: 900, y: 900 }],
+      baseSeq: head0,
+    });
+    const onaylandi = await callTool(app, supervisor.secret, 'approve_proposal', {
+      id: (JSON.parse(outside.text) as { id: string }).id,
+    });
+    expect(onaylandi.isError).toBe(false);
+    expect((await state()).headSeq).toBe(head0 + 1);
+    expect((await state()).nodes.map((n) => n.title)).toContain('İzinli');
+    await serviceFor(canvasId).rebuildCheck();
+  });
+
   it('araya giren çakışan commit: onay dala iner, main temiz kalır', async () => {
     const { app, prisma, serviceFor, cookies, canvasId, agent, supervisor, state } = await cpSetup();
     const s0 = await state();

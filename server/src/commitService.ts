@@ -1,7 +1,7 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import {
   applyOp, autoMessage, dataEqual, depthOf, emptyGraph, expandAll, invertOps, normalizeData,
-  OpError, regionViolation, summarizeOps, ValidationError,
+  aiClosedViolation, OpError, regionViolation, summarizeOps, ValidationError,
   type CanvasRole, type Commit, type CommitSummary, type Graph, type GraphDelta, type GraphState, type Op,
   type OpInput, type PlanEdge, type PlanNode,
 } from '@co-pronoia/shared';
@@ -16,6 +16,12 @@ export { ValidationError };
 export interface Actor {
   userId: string;
   role: CanvasRole;
+  /**
+   * The write is driven by an AI (built-in agent or an approved MCP proposal), not typed by a
+   * human. Enables the `aiAllowed: false` region fence, which — unlike the membership rule —
+   * the canvas owner does NOT bypass: an agent acting for the owner is still an agent.
+   */
+  ai?: boolean;
 }
 
 export interface BranchSummary {
@@ -207,8 +213,12 @@ export class CommitService {
         await this.prisma.branch.update({ where: { id: branchId }, data: { status: 'merged' } });
         return { commit: (await this.getCommit(current.headSeq))!, state: current };
       }
-      commit = (await this.applyCommit(ops, `Merge branch '${branch.name}'`, authorId ?? null, actor)).commit;
-      await this.prisma.branch.update({ where: { id: branchId }, data: { status: 'merged' } });
+      // Branch kapanışı commit ile AYNI transaction'da: ikisi ayrıyken araya düşen bir çökme
+      // içeriği main'e indirip branch'i "açık" bırakıyordu.
+      commit = (await this.applyCommit(
+        ops, `Merge branch '${branch.name}'`, authorId ?? null, actor,
+        (tx) => tx.branch.update({ where: { id: branchId }, data: { status: 'merged' } }).then(() => undefined),
+      )).commit;
       return { commit, state: await this.getState() };
     });
   }
@@ -436,19 +446,44 @@ export class CommitService {
   private async assertRegions(
     graph: Graph, ops: Op[], actor?: Actor, regions?: Awaited<ReturnType<typeof listRegions>>,
   ): Promise<void> {
-    if (!actor || actor.role === 'owner') return;
+    if (!actor) return;
+    // İnsan owner'ın denetlenecek bir şeyi yok: ne üyelik kuralı (bypass) ne AI kalkanı.
+    // Bu erken çıkış load-bearing — kaldırılırsa her owner commit'i transaction içinde
+    // fazladan bir listRegions sorgusu atar (fuzz testi bunu zaman aşımıyla yakaladı).
+    if (!actor.ai && actor.role === 'owner') return;
     const list = regions ?? (await listRegions(this.prisma, this.canvasId));
+    // AI fence first, and WITHOUT the owner bypass — `aiAllowed: false` exists to fence agents
+    // out, so an agent running as the owner must still be stopped. agent.ts already drops these
+    // ops with a friendly note; this is the choke point that also covers MCP proposal approval,
+    // which reaches commit() directly and would otherwise ignore the flag entirely.
+    if (actor.ai) {
+      const aiViolation = aiClosedViolation(graph, list, ops);
+      if (aiViolation) throw new RegionError(aiViolation);
+    }
+    if (actor.role === 'owner') return;
     const violation = regionViolation(graph, list, actor.userId, ops);
     if (violation) throw new RegionError(violation);
   }
 
-  private async applyCommit(ops: Op[], message: string, authorId: string | null, actor?: Actor): Promise<{ commit: Commit; state: GraphState }> {
+  /**
+   * `alsoInTx` runs inside the same transaction as the commit write. Used by mergeBranch to
+   * close the branch atomically: as two writes, a crash in between left the branch's content on
+   * main while the branch still read "open" (no data loss — a second merge diffs to nothing —
+   * but the UI showed an unmerged branch forever).
+   */
+  private async applyCommit(
+    ops: Op[], message: string, authorId: string | null, actor?: Actor,
+    alsoInTx?: (tx: Tx) => Promise<void>,
+  ): Promise<{ commit: Commit; state: GraphState }> {
     // Seq assignment, trial replay and write share one transaction: after the row lock in
     // nextSeq the state can no longer move under us, so the trial validates exactly what
     // the tables will hold when the commit lands (a validation error rolls everything back).
     // Regions are config, preloaded here so the transaction holds a single pool connection.
+    // AI actors need the region list even when they act as owner (the AI fence has no owner bypass).
     const regions =
-      actor && actor.role !== 'owner' ? await listRegions(this.prisma, this.canvasId) : undefined;
+      actor && (actor.role !== 'owner' || actor.ai)
+        ? await listRegions(this.prisma, this.canvasId)
+        : undefined;
     const seq = await this.prisma.$transaction(async (tx) => {
       const seq = await this.nextSeq(tx);
       const trial = await this.loadGraph(tx);
@@ -456,6 +491,7 @@ export class CommitService {
       for (const op of ops) applyOp(trial, op, seq); // throws OpError on any invalid op
       for (const op of ops) await this.applyToTables(tx, op, seq);
       await tx.commit.create({ data: { canvasId: this.canvasId, seq, message, ops: JSON.stringify(ops), authorId } });
+      if (alsoInTx) await alsoInTx(tx);
       return seq;
     });
     const commit = (await this.getCommit(seq))!;

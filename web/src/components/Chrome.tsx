@@ -8,8 +8,10 @@ import { Brand } from './Logo';
 import { ServerPdfButton } from './ServerPdfButton';
 
 const views: { key: ViewMode; label: string }[] = [
-  { key: 'flow', label: 'Zihin Haritası' },
-  { key: 'mindmap', label: 'Akış Diyagramı' },
+  // Etiketler view'ların gerçekte çizdiği şeye göre: 'flow' kalıcı x/y ile serbest yerleşimli
+  // akış diyagramı, 'mindmap' parentId hiyerarşisinin d3 ile dizilmiş zihin haritası.
+  { key: 'flow', label: 'Akış Diyagramı' },
+  { key: 'mindmap', label: 'Zihin Haritası' },
   { key: 'timeline', label: 'Zaman Çizelgesi' },
 ];
 

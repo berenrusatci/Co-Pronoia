@@ -729,7 +729,7 @@ export async function runAgent(opts: {
       message,
       baseSeq: subState.headSeq,
       authorId: actor.userId,
-      actor: subActor,
+      actor: { ...subActor, ai: true },
     });
     opts.onSubCommit?.(subCanvasId, outcome);
     return true;
@@ -865,7 +865,9 @@ export async function runAgent(opts: {
         message: `ajan: ${roundMessage}`,
         baseSeq,
         authorId: actor.userId,
-        actor,
+        // ai: true — filterAiClosedRegions ops'ları zaten ayıklıyor; bu, aynı kuralın commit
+        // choke point'inde de geçerli olduğunu garantiler (derinlemesine savunma).
+        actor: { ...actor, ai: true },
       });
       onOutcome?.(outcome);
       if (outcome.result === 'committed') return { kind: 'committed', seq: outcome.commit.seq };

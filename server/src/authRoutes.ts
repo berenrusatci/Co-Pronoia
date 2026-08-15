@@ -17,6 +17,41 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const CODE_TTL_MS = 10 * 60_000;
 const MAX_ATTEMPTS = 5;
 
+/**
+ * Login kaba kuvvet kapısı (`routes.ts`teki `agentRateLimited` deseninin eşi; süreç ömürlü,
+ * DB'ye hiçbir şey yazılmaz — projenin "kullanıcı davranışına dair kalıcı veri tutmuyoruz"
+ * duruşu korunur). E-posta kodunda zaten 5 deneme sınırı vardı ama giriş sınırsızdı: tek uç
+ * üzerinden sözlük saldırısı hiçbir dirençle karşılaşmıyordu.
+ *
+ * YALNIZ BAŞARISIZ denemeler sayılır ve başarılı girişte sayaç sıfırlanır; şifresini yanlış
+ * yazan gerçek kullanıcı kilitlenmez. Pencere 15 dk: 60 sn'lik bir pencere kaba kuvvete
+ * anlamlı bir maliyet yüklemez.
+ */
+const LOGIN_WINDOW_MS = 15 * 60_000;
+/** Kullanıcı adı başına 15 dakikada en çok bu kadar BAŞARISIZ giriş. */
+const LOGIN_MAX_USER = 10;
+/** Kaynak adres başına 15 dakikada en çok bu kadar başarısız giriş (kullanıcı adı taraması). */
+const LOGIN_MAX_IP = 30;
+const loginFails = new Map<string, number[]>();
+
+/** Pencere içindeki başarısız deneme sayısı (eskiyenleri budar). */
+function loginFailCount(key: string): number {
+  const now = Date.now();
+  const recent = (loginFails.get(key) ?? []).filter((t) => now - t < LOGIN_WINDOW_MS);
+  if (recent.length === 0) loginFails.delete(key);
+  else loginFails.set(key, recent);
+  return recent.length;
+}
+
+function recordLoginFail(key: string): void {
+  const now = Date.now();
+  loginFails.set(key, [...(loginFails.get(key) ?? []).filter((t) => now - t < LOGIN_WINDOW_MS), now]);
+  // Harita süreç ömrü boyunca yaşar; boşalan anahtarları temizle ki sızıntı olmasın.
+  if (loginFails.size > 5_000) {
+    for (const [k, v] of loginFails) if (v.every((t) => now - t >= LOGIN_WINDOW_MS)) loginFails.delete(k);
+  }
+}
+
 function verificationEmail(code: string): { subject: string; text: string } {
   return {
     subject: 'Co-pronoia doğrulama kodunuz',
@@ -136,9 +171,19 @@ export function registerAuthRoutes(
   app.post<{ Body: Credentials }>('/api/auth/login', async (req, reply) => {
     const username = (req.body.username ?? '').trim();
     const password = req.body.password ?? '';
+    // Kapı, parola doğrulamasından ÖNCE: reddedilen istek scrypt'e hiç ulaşmaz (ajan oran
+    // sınırındaki "önce kapı, sonra pahalı iş" sırasının eşi; scrypt bilerek yavaştır ve
+    // sınırsız denemede kendisi bir CPU tüketim yüzeyine dönüşür).
+    if (loginFailCount(`u:${username}`) >= LOGIN_MAX_USER || loginFailCount(`i:${req.ip}`) >= LOGIN_MAX_IP)
+      return reply.code(429).send({ error: 'çok fazla başarısız giriş denemesi — birkaç dakika sonra tekrar deneyin' });
+
     const user = await prisma.user.findUnique({ where: { username } });
-    if (!user || !(await verifyPassword(password, user.passwordHash)))
+    if (!user || !(await verifyPassword(password, user.passwordHash))) {
+      recordLoginFail(`u:${username}`);
+      recordLoginFail(`i:${req.ip}`);
       return reply.code(401).send({ error: 'kullanıcı adı veya şifre hatalı' });
+    }
+    loginFails.delete(`u:${username}`); // başarılı giriş sayacı sıfırlar
     setSessionCookie(reply, await createSession(prisma, user.id));
     return { user: toAuthUser(user) };
   });
