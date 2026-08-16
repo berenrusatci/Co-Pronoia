@@ -35,7 +35,7 @@ const rootIdOf = async (app: App, cookies: Cookies, canvasId: string): Promise<s
 describe('GET /api/canvases/:id/pdf', () => {
   it('üyeye application/pdf döner ve gövde %PDF ile başlar', async () => {
     const { app, sent } = await fresh();
-    const { cookies } = await registerVerified(app, sent, { username: 'p1', password: 'sifre1', email: 'p1@t.com' });
+    const { cookies } = await registerVerified(app, sent, { username: 'p1', password: 'sifre1guclu', email: 'p1@t.com' });
     const canvas = await createGroupCanvas(app, cookies, 'PDF Kanvas');
     const root = await rootIdOf(app, cookies as Cookies, canvas.id);
     const ops: OpInput[] = [
@@ -55,8 +55,8 @@ describe('GET /api/canvases/:id/pdf', () => {
 
   it('üye olmayan 404 alır', async () => {
     const { app, sent } = await fresh();
-    const { cookies: owner } = await registerVerified(app, sent, { username: 'o1', password: 'sifre1', email: 'o1@t.com' });
-    const { cookies: outsider } = await registerVerified(app, sent, { username: 'x1', password: 'sifre1', email: 'x1@t.com' });
+    const { cookies: owner } = await registerVerified(app, sent, { username: 'o1', password: 'sifre1guclu', email: 'o1@t.com' });
+    const { cookies: outsider } = await registerVerified(app, sent, { username: 'x1', password: 'sifre1guclu', email: 'x1@t.com' });
     const canvas = await createGroupCanvas(app, owner, 'Gizli');
     const res = await app.inject({ method: 'GET', url: `/api/canvases/${canvas.id}/pdf`, cookies: outsider });
     expect(res.statusCode).toBe(404);

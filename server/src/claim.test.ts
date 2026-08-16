@@ -55,7 +55,7 @@ async function callTool(app: App, secret: string, name: string, args?: unknown) 
 async function setup() {
   const ctx = await fresh();
   const { app, sent } = ctx;
-  const { cookies } = await registerVerified(app, sent, { username: 'sahip', password: 'sifre1', email: 's@t.com' });
+  const { cookies } = await registerVerified(app, sent, { username: 'sahip', password: 'sifre1guclu', email: 's@t.com' });
   const groupId = (await app.inject({
     method: 'POST', url: '/api/groups', cookies, payload: { name: 'CP', type: 'co-pronoia' },
   })).json().group.id as string;

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { MIN_PASSWORD_LENGTH } from '@co-pronoia/shared';
 import { siteApi } from '../api/client';
 import { useAuthStore } from '../store/authStore';
 import { useThemeStore } from '../store/themeStore';
@@ -183,7 +184,7 @@ export function LoginView() {
                 <label htmlFor="cp-password">Şifre</label>
                 <input
                   id="cp-password" type="password" value={password} onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
+                  placeholder={mode === 'login' ? '••••••••' : `En az ${MIN_PASSWORD_LENGTH} karakter`}
                   autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
                 />
               </div>
@@ -205,7 +206,7 @@ export function LoginView() {
               {error && <div className="login-error">{error}</div>}
               <button
                 type="submit" className="login-btn"
-                disabled={busy || !username || !password || (mode === 'register' && !email)}
+                disabled={busy || !username || !password || (mode === 'register' && (!email || password.length < MIN_PASSWORD_LENGTH))}
               >
                 {mode === 'login' ? 'Giriş Yap' : 'Hesap Oluştur'}
               </button>

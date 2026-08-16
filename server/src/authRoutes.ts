@@ -1,7 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import type { PrismaClient } from '@prisma/client';
 import { createSession, generateCode, hashPassword, resolveSession, SESSION_COOKIE, sessionToken, verifyPassword, setSessionCookie } from './auth.js';
+import { MIN_PASSWORD_LENGTH } from '@co-pronoia/shared';
 import { defaultEmailSender, emailConfigured, isProd, type EmailSender } from './email.js';
+import { trustProxy } from './mode.js';
 import { registerProfileRoute, toAuthUser } from './identityRoutes.js';
 
 interface Credentials {
@@ -32,25 +34,18 @@ const LOGIN_WINDOW_MS = 15 * 60_000;
 const LOGIN_MAX_USER = 10;
 /** Kaynak adres başına 15 dakikada en çok bu kadar başarısız giriş (kullanıcı adı taraması). */
 const LOGIN_MAX_IP = 30;
-const loginFails = new Map<string, number[]>();
 
-/** Pencere içindeki başarısız deneme sayısı (eskiyenleri budar). */
-function loginFailCount(key: string): number {
-  const now = Date.now();
-  const recent = (loginFails.get(key) ?? []).filter((t) => now - t < LOGIN_WINDOW_MS);
-  if (recent.length === 0) loginFails.delete(key);
-  else loginFails.set(key, recent);
-  return recent.length;
-}
-
-function recordLoginFail(key: string): void {
-  const now = Date.now();
-  loginFails.set(key, [...(loginFails.get(key) ?? []).filter((t) => now - t < LOGIN_WINDOW_MS), now]);
-  // Harita süreç ömrü boyunca yaşar; boşalan anahtarları temizle ki sızıntı olmasın.
-  if (loginFails.size > 5_000) {
-    for (const [k, v] of loginFails) if (v.every((t) => now - t >= LOGIN_WINDOW_MS)) loginFails.delete(k);
-  }
-}
+/**
+ * E-posta gönderen uçlar (kayıt, kodu tekrar gönder) için ayrı kapı. Login kovasından farklı
+ * olarak BAŞARILI istekleri de sayar: burada pahalı olan şey zaten başarının kendisi — her
+ * istek bir e-posta (SMTP maliyeti + alıcının gelen kutusu) ve kayıtta bir de scrypt hash'i
+ * doğuruyor. Anahtar e-posta adresi; `trustProxy` açıksa ayrıca kaynak adres.
+ */
+const MAIL_WINDOW_MS = 60 * 60_000;
+/** E-posta adresi başına saatte en çok bu kadar doğrulama postası. */
+const MAIL_MAX_ADDRESS = 5;
+/** Kaynak adres başına saatte en çok bu kadar (yalnız `trustProxy` açıkken uygulanır). */
+const MAIL_MAX_IP = 20;
 
 function verificationEmail(code: string): { subject: string; text: string } {
   return {
@@ -64,6 +59,65 @@ export function registerAuthRoutes(
   prisma: PrismaClient,
   emailSender: EmailSender = defaultEmailSender,
 ): void {
+  /**
+   * Oran sınırı sayaçları app örneğine BAĞLI (modül düzeyinde değil): tek süreçte birden çok
+   * app ayağa kalkabiliyor (testler her senaryo için taze bir buildApp kurar) ve paylaşılan
+   * bir sayaç, ayrı kurulumların kotasını birbirine karıştırırdı. Üretimde süreç başına tek
+   * app olduğu için davranış aynı: süreç ömürlü, DB'ye hiçbir şey yazılmıyor.
+   */
+  const loginFails = new Map<string, number[]>();
+
+  /** Pencere içindeki başarısız deneme sayısı (eskiyenleri budar). */
+  function loginFailCount(key: string): number {
+    const now = Date.now();
+    const recent = (loginFails.get(key) ?? []).filter((t) => now - t < LOGIN_WINDOW_MS);
+    if (recent.length === 0) loginFails.delete(key);
+    else loginFails.set(key, recent);
+    return recent.length;
+  }
+  function recordLoginFail(key: string): void {
+    const now = Date.now();
+    loginFails.set(key, [...(loginFails.get(key) ?? []).filter((t) => now - t < LOGIN_WINDOW_MS), now]);
+    // Harita süreç ömrü boyunca yaşar; boşalan anahtarları temizle ki sızıntı olmasın.
+    if (loginFails.size > 5_000) {
+      for (const [k, v] of loginFails) if (v.every((t) => now - t >= LOGIN_WINDOW_MS)) loginFails.delete(k);
+    }
+  }
+  /**
+   * İstek sahibinin adresi — YALNIZ `trustProxy` açıkken anlamlı.
+   *
+   * Ters proxy arkasında (Render) `trustProxy` kapalıyken `req.ip` her kullanıcı için aynı
+   * değeri (proxy'nin adresini) döndürür; o adrese kova açmak "bir saldırganın 30 hatalı
+   * denemesi bütün siteyi 15 dakika kilitler" demektir. Proxy yokken `trustProxy` açmak ise
+   * tersine `X-Forwarded-For`u istemciye bırakır ve kovayı atlatılabilir kılar. İki halde de
+   * doğru cevap kovayı hiç açmamak: `null` dönüşü çağıranlara "IP ile sınırlama" der.
+   */
+  function clientIp(req: { ip: string }): string | null {
+    return trustProxy() ? req.ip : null;
+  }
+
+  const mailSends = new Map<string, number[]>();
+
+  /** Kotayı tüketir ve aşıldıysa false döner (sayaç yalnız izin verilen istekte artar). */
+  function claimMailSend(keys: [key: string, max: number][]): boolean {
+    const now = Date.now();
+    const recent = keys.map(([key, max]) => {
+      const list = (mailSends.get(key) ?? []).filter((t) => now - t < MAIL_WINDOW_MS);
+      return { key, max, list };
+    });
+    if (recent.some(({ list, max }) => list.length >= max)) return false;
+    for (const { key, list } of recent) mailSends.set(key, [...list, now]);
+    if (mailSends.size > 5_000) {
+      for (const [k, v] of mailSends) if (v.every((t) => now - t >= MAIL_WINDOW_MS)) mailSends.delete(k);
+    }
+    return true;
+  }
+  function mailKeys(email: string, ip: string | null): [string, number][] {
+    const keys: [string, number][] = [[`e:${email}`, MAIL_MAX_ADDRESS]];
+    if (ip) keys.push([`i:${ip}`, MAIL_MAX_IP]);
+    return keys;
+  }
+
   // Bu modül YALNIZ bulut modunda register edilir (app.ts'teki kapı). Yerel modun
   // kimlik yüzeyi `identityRoutes.ts`teki registerLocalIdentityRoutes'tur ve bu dosya
   // yerel imaj bundle'ına hiç girmez.
@@ -78,10 +132,14 @@ export function registerAuthRoutes(
     const displayName = (req.body.displayName ?? '').trim();
     if (username.length < 2 || username.startsWith('__'))
       return reply.code(400).send({ error: 'kullanıcı adı en az 2 karakter olmalı' });
-    if (password.length < 4) return reply.code(400).send({ error: 'şifre en az 4 karakter olmalı' });
+    if (password.length < MIN_PASSWORD_LENGTH)
+      return reply.code(400).send({ error: `şifre en az ${MIN_PASSWORD_LENGTH} karakter olmalı` });
     if (!EMAIL_RE.test(email)) return reply.code(400).send({ error: 'geçerli bir e-posta adresi girin' });
     if (!emailConfigured() && isProd())
       return reply.code(503).send({ error: 'e-posta doğrulama yapılandırılmamış' });
+    // Kapı pahalı işten (scrypt + SMTP) ÖNCE — login kapısındaki sıranın eşi.
+    if (!claimMailSend(mailKeys(email, clientIp(req))))
+      return reply.code(429).send({ error: 'çok fazla doğrulama isteği — bir süre sonra tekrar deneyin' });
     const existingUsername = await prisma.user.findUnique({ where: { username } });
     if (existingUsername) return reply.code(409).send({ error: 'bu kullanıcı adı alınmış' });
     const existingEmail = await prisma.user.findUnique({ where: { email } });
@@ -151,6 +209,10 @@ export function registerAuthRoutes(
   // olmasa da { ok: true } döner.
   app.post<{ Body: { email?: string } }>('/api/auth/resend-code', async (req, reply) => {
     const email = (req.body.email ?? '').trim().toLowerCase();
+    // Kota, bekleyen kayıt olup olmadığına BAKMADAN tüketilir: aksi halde 429'un kendisi
+    // "bu adres bekliyor" sinyali olur ve enumeration sözleşmesi kapıdan sızar.
+    if (!claimMailSend(mailKeys(email, clientIp(req))))
+      return reply.code(429).send({ error: 'çok fazla doğrulama isteği — bir süre sonra tekrar deneyin' });
     const pending = await prisma.emailVerification.findUnique({ where: { email } });
     if (pending) {
       const code = generateCode();
@@ -174,13 +236,16 @@ export function registerAuthRoutes(
     // Kapı, parola doğrulamasından ÖNCE: reddedilen istek scrypt'e hiç ulaşmaz (ajan oran
     // sınırındaki "önce kapı, sonra pahalı iş" sırasının eşi; scrypt bilerek yavaştır ve
     // sınırsız denemede kendisi bir CPU tüketim yüzeyine dönüşür).
-    if (loginFailCount(`u:${username}`) >= LOGIN_MAX_USER || loginFailCount(`i:${req.ip}`) >= LOGIN_MAX_IP)
+    // IP kovası yalnız `trustProxy` açıkken; kapalıyken `req.ip` ters proxy arkasında herkes
+    // için aynı değeri döndürür ve tek saldırgan bütün siteyi kilitler (bkz. `clientIp`).
+    const ip = clientIp(req);
+    if (loginFailCount(`u:${username}`) >= LOGIN_MAX_USER || (ip && loginFailCount(`i:${ip}`) >= LOGIN_MAX_IP))
       return reply.code(429).send({ error: 'çok fazla başarısız giriş denemesi — birkaç dakika sonra tekrar deneyin' });
 
     const user = await prisma.user.findUnique({ where: { username } });
     if (!user || !(await verifyPassword(password, user.passwordHash))) {
       recordLoginFail(`u:${username}`);
-      recordLoginFail(`i:${req.ip}`);
+      if (ip) recordLoginFail(`i:${ip}`);
       return reply.code(401).send({ error: 'kullanıcı adı veya şifre hatalı' });
     }
     loginFails.delete(`u:${username}`); // başarılı giriş sayacı sıfırlar
@@ -206,7 +271,8 @@ export function registerAuthRoutes(
     const user = await resolveSession(prisma, sessionToken(req));
     if (!user) return reply.code(401).send({ error: 'oturum yok' });
     const next = req.body?.next ?? '';
-    if (next.length < 4) return reply.code(400).send({ error: 'yeni şifre en az 4 karakter olmalı' });
+    if (next.length < MIN_PASSWORD_LENGTH)
+      return reply.code(400).send({ error: `yeni şifre en az ${MIN_PASSWORD_LENGTH} karakter olmalı` });
     const row = await prisma.user.findUnique({ where: { id: user.id } });
     if (!row) return reply.code(401).send({ error: 'oturum yok' });
     if (!row.passwordHash)

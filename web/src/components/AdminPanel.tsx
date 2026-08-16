@@ -1,6 +1,8 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import type {
-  AdminCanvasInfo, AdminGroupInfo, AdminStats, AdminUserInfo, GroupMemberInfo, MemberInfo,
+import {
+  MIN_PASSWORD_LENGTH,
+  type AdminCanvasInfo, type AdminGroupInfo, type AdminStats, type AdminUserInfo,
+  type GroupMemberInfo, type MemberInfo,
 } from '@co-pronoia/shared';
 import { adminApi, ApiError, siteApi } from '../api/client';
 import { useAdminStore } from '../store/adminStore';
@@ -82,7 +84,7 @@ function UserRow({
 
   const submitPassword = (e: FormEvent) => {
     e.preventDefault();
-    if (pw.length < 4) return;
+    if (pw.length < MIN_PASSWORD_LENGTH) return;
     run(async () => {
       await adminApi.setUserPassword(user.id, pw);
       setPw('');
@@ -156,12 +158,12 @@ function UserRow({
         <form className="admin-inline-form" onSubmit={submitPassword}>
           <input
             type="password"
-            placeholder="Yeni şifre (en az 4 karakter)"
+            placeholder={`Yeni şifre (en az ${MIN_PASSWORD_LENGTH} karakter)`}
             value={pw}
             autoComplete="new-password"
             onChange={(e) => setPw(e.target.value)}
           />
-          <button type="submit" className="primary" disabled={pw.length < 4}>Kaydet</button>
+          <button type="submit" className="primary" disabled={pw.length < MIN_PASSWORD_LENGTH}>Kaydet</button>
           <button type="button" onClick={() => { setPwOpen(false); setPw(''); }}>Vazgeç</button>
         </form>
       )}

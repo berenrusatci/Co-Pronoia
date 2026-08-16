@@ -145,7 +145,7 @@ describe('yerel mod: aktivasyon öncesi', () => {
     expect(
       (await local.app.inject({
         method: 'POST', url: '/api/auth/register',
-        payload: { username: 'x', password: 'sifre1', email: 'x@t.com' },
+        payload: { username: 'x', password: 'sifre1guclu', email: 'x@t.com' },
       })).statusCode,
     ).toBe(404);
     expect((await local.app.inject({ method: 'POST', url: '/api/auth/login', payload: {} })).statusCode).toBe(404);

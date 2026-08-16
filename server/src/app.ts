@@ -20,7 +20,7 @@ import { registerAdminRoutes } from './adminRoutes.js';
 import { registerMcpRoutes } from './mcp/mcpRoutes.js';
 import { CanvasEvents } from './canvasEvents.js';
 import { getSiteAsset, LOGIN_PREVIEW } from './siteAssetService.js';
-import { cloudUrl, isLocal } from './mode.js';
+import { cloudUrl, isLocal, trustProxy } from './mode.js';
 import { registerActivationRoutes } from './activationRoutes.js';
 import { activatedUser, activationStatus } from './activationService.js';
 import type { CloudClient } from './cloudClient.js';
@@ -79,7 +79,8 @@ export async function buildApp(
     return service;
   };
 
-  const app = Fastify({ logger: false });
+  // `trustProxy`: bkz. `mode.ts`. Kurulum anında sabitlenir — `localMode` gibi, aynı gerekçeyle.
+  const app = Fastify({ logger: false, trustProxy: trustProxy() });
   await app.register(fastifyCookie);
   await app.register(fastifyWebsocket);
 

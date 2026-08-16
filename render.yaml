@@ -12,6 +12,12 @@ services:
       # giriş/kayıt/admin uçları HİÇ bulunmaz (her /api 401 döner) — bkz. DOCKER-DENETIM.md.
       - key: APP_MODE
         value: cloud
+      # Render bütün trafiği kendi ters proxy'sinden geçirir: bu olmadan `req.ip` her kullanıcı
+      # için proxy'nin adresidir, IP başına giriş sınırı tek bir ortak kovaya düşer ve bir
+      # saldırganın 30 başarısız denemesi bütün siteyi 15 dakika kilitler. Yalnız gerçekten
+      # proxy arkasındayken açılmalı — proxy yokken açmak `X-Forwarded-For`u istemciye bırakır.
+      - key: TRUST_PROXY
+        value: true
       - key: DATABASE_URL
         sync: false
       - key: GOOGLE_CLIENT_ID

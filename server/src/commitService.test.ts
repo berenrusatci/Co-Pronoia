@@ -416,7 +416,7 @@ describe('auth', () => {
     expect(res.statusCode).toBe(401);
 
     // register no longer logs in: it emails a code and returns pending
-    res = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'beren', password: 'sifre1', email: 'beren@test.com' } });
+    res = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'beren', password: 'sifre1guclu', email: 'beren@test.com' } });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ pending: true, email: 'beren@test.com' });
     expect(res.cookies.find((c) => c.name === 'tm_session')).toBeUndefined();
@@ -457,7 +457,7 @@ describe('auth', () => {
     expect(res.json().commit.author).toBe('beren');
 
     // duplicate username
-    res = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'beren', password: 'baska', email: 'beren2@test.com' } });
+    res = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { username: 'beren', password: 'baskasifre', email: 'beren2@test.com' } });
     expect(res.statusCode).toBe(409);
 
     // wrong password
@@ -474,8 +474,8 @@ describe('auth', () => {
 describe('canvases & invites', () => {
   async function twoUsers() {
     const built = await fresh();
-    const r1 = await registerVerified(built.app, built.sent, { username: 'u1', password: 'pass1', email: 'u1@test.com' });
-    const r2 = await registerVerified(built.app, built.sent, { username: 'u2', password: 'pass2', email: 'u2@test.com' });
+    const r1 = await registerVerified(built.app, built.sent, { username: 'u1', password: 'pass1guclu', email: 'u1@test.com' });
+    const r2 = await registerVerified(built.app, built.sent, { username: 'u2', password: 'pass2guclu', email: 'u2@test.com' });
     return { ...built, c1: r1.cookies, c2: r2.cookies };
   }
 
@@ -536,8 +536,8 @@ describe('canvases & invites', () => {
 describe('roles, regions & owner tools', () => {
   async function canvasWithTwo() {
     const built = await fresh();
-    const r1 = await registerVerified(built.app, built.sent, { username: 'sahip', password: 'pass1', email: 'sahip@test.com' });
-    const r2 = await registerVerified(built.app, built.sent, { username: 'uye', password: 'pass2', email: 'uye@test.com' });
+    const r1 = await registerVerified(built.app, built.sent, { username: 'sahip', password: 'pass1guclu', email: 'sahip@test.com' });
+    const r2 = await registerVerified(built.app, built.sent, { username: 'uye', password: 'pass2guclu', email: 'uye@test.com' });
     const c1 = r1.cookies;
     const c2 = r2.cookies;
     const u2Id = r2.res.json().user.id as string;
@@ -761,16 +761,16 @@ describe('roles, regions & owner tools', () => {
 
   it('password change verifies the current password and rotates sessions', async () => {
     const { app, sent } = await fresh();
-    const { cookies } = await registerVerified(app, sent, { username: 'ayar', password: 'eski1', email: 'ayar@test.com' });
+    const { cookies } = await registerVerified(app, sent, { username: 'ayar', password: 'eski1guclu', email: 'ayar@test.com' });
 
-    let res = await app.inject({ method: 'POST', url: '/api/auth/password', cookies, payload: { current: 'yanlis', next: 'yeni1' } });
+    let res = await app.inject({ method: 'POST', url: '/api/auth/password', cookies, payload: { current: 'yanlis', next: 'yeni1guclu' } });
     expect(res.statusCode).toBe(401);
-    res = await app.inject({ method: 'POST', url: '/api/auth/password', cookies, payload: { current: 'eski1', next: 'yeni1' } });
+    res = await app.inject({ method: 'POST', url: '/api/auth/password', cookies, payload: { current: 'eski1guclu', next: 'yeni1guclu' } });
     expect(res.statusCode).toBe(200);
 
-    res = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { username: 'ayar', password: 'eski1' } });
+    res = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { username: 'ayar', password: 'eski1guclu' } });
     expect(res.statusCode).toBe(401);
-    res = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { username: 'ayar', password: 'yeni1' } });
+    res = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { username: 'ayar', password: 'yeni1guclu' } });
     expect(res.statusCode).toBe(200);
     // the session used for the change stays valid
     res = await app.inject({ method: 'GET', url: '/api/canvases', cookies });
@@ -781,8 +781,8 @@ describe('roles, regions & owner tools', () => {
 describe('API integration', () => {
   it('full loop incl. invite + branches over HTTP', async () => {
     const { app, sent } = await fresh();
-    const { cookies } = await registerVerified(app, sent, { username: 'u1', password: 'pass1', email: 'u1@test.com' });
-    const { cookies: cookies2 } = await registerVerified(app, sent, { username: 'u2', password: 'pass2', email: 'u2@test.com' });
+    const { cookies } = await registerVerified(app, sent, { username: 'u1', password: 'pass1guclu', email: 'u1@test.com' });
+    const { cookies: cookies2 } = await registerVerified(app, sent, { username: 'u2', password: 'pass2guclu', email: 'u2@test.com' });
 
     const post = (url: string, body?: unknown, c = cookies) =>
       app.inject({ method: 'POST', url, payload: body ?? {}, cookies: c }).then((r) => ({ code: r.statusCode, body: r.json() }));

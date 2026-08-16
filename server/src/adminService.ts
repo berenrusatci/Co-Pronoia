@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import type { AdminCanvasInfo, AdminGroupInfo, AdminStats, AdminUserInfo } from '@co-pronoia/shared';
+import { MIN_PASSWORD_LENGTH, type AdminCanvasInfo, type AdminGroupInfo, type AdminStats, type AdminUserInfo } from '@co-pronoia/shared';
 import { hashPassword } from './auth.js';
 import { deleteCanvas } from './canvasService.js';
 
@@ -83,7 +83,8 @@ export async function adminSetPassword(
   targetUserId: string,
   password: string,
 ): Promise<{ error: string } | null> {
-  if (password.length < 4) return { error: 'şifre en az 4 karakter olmalı' };
+  if (password.length < MIN_PASSWORD_LENGTH)
+    return { error: `şifre en az ${MIN_PASSWORD_LENGTH} karakter olmalı` };
   const target = await prisma.user.findUnique({ where: { id: targetUserId } });
   if (!target) return { error: 'kullanıcı bulunamadı' };
   if (target.isAdmin) return { error: 'yönetici hesabının şifresi panelden değiştirilemez' };

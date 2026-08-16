@@ -38,7 +38,7 @@ const createGroup = async (app: App, cookies: Cookies, name: string, type?: stri
 describe('co-pronoia tür kapılaması (grup + kanvas)', () => {
   it('grup türü round-trip eder; varsayılan plan; geçersiz tür 400', async () => {
     const { app, sent } = await fresh();
-    const { cookies } = await registerVerified(app, sent, { username: 'g1', password: 'sifre1', email: 'g1@t.com' });
+    const { cookies } = await registerVerified(app, sent, { username: 'g1', password: 'sifre1guclu', email: 'g1@t.com' });
 
     let res = await createGroup(app, cookies, 'Normal');
     expect(res.statusCode).toBe(200);
@@ -59,7 +59,7 @@ describe('co-pronoia tür kapılaması (grup + kanvas)', () => {
 
   it('co-pronoia kanvası yalnızca co-pronoia grubunda; tür CanvasInfo ile döner', async () => {
     const { app, sent } = await fresh();
-    const { cookies } = await registerVerified(app, sent, { username: 'k1', password: 'sifre1', email: 'k1@t.com' });
+    const { cookies } = await registerVerified(app, sent, { username: 'k1', password: 'sifre1guclu', email: 'k1@t.com' });
     const planGroup = (await createGroup(app, cookies, 'Plan Grubu')).json().group.id as string;
     const cpGroup = (await createGroup(app, cookies, 'CP Grubu', 'co-pronoia')).json().group.id as string;
 
@@ -104,8 +104,8 @@ describe('co-pronoia tür kapılaması (grup + kanvas)', () => {
 describe('ajan rol tanımları (grup + site şablonları)', () => {
   it('grup rol CRUD yetki matrisi: üye 403, admin ve canManageRoles 200', async () => {
     const { app, prisma, sent } = await fresh();
-    const { cookies: admin } = await registerVerified(app, sent, { username: 'ra', password: 'sifre1', email: 'ra@t.com' });
-    const r2 = await registerVerified(app, sent, { username: 'ru', password: 'sifre2', email: 'ru@t.com' });
+    const { cookies: admin } = await registerVerified(app, sent, { username: 'ra', password: 'sifre1guclu', email: 'ra@t.com' });
+    const r2 = await registerVerified(app, sent, { username: 'ru', password: 'sifre2guclu', email: 'ru@t.com' });
     const member = r2.cookies;
     const memberId = r2.res.json().user.id as string;
     const groupId = (await createGroup(app, admin, 'CP', 'co-pronoia')).json().group.id as string;
@@ -162,10 +162,10 @@ describe('ajan rol tanımları (grup + site şablonları)', () => {
 
   it('site şablonları admin uçlarından yönetilir; kapsamlar birbirine karışmaz', async () => {
     const { app, prisma, sent } = await fresh();
-    const r1 = await registerVerified(app, sent, { username: 'sa', password: 'sifre1', email: 'sa@t.com' });
+    const r1 = await registerVerified(app, sent, { username: 'sa', password: 'sifre1guclu', email: 'sa@t.com' });
     const siteAdmin = r1.cookies;
     const siteAdminId = r1.res.json().user.id as string;
-    const { cookies: pleb } = await registerVerified(app, sent, { username: 'sp', password: 'sifre2', email: 'sp@t.com' });
+    const { cookies: pleb } = await registerVerified(app, sent, { username: 'sp', password: 'sifre2guclu', email: 'sp@t.com' });
 
     // isAdmin olmayan → 403
     let res = await app.inject({ method: 'GET', url: '/api/admin/agent-roles', cookies: pleb });
@@ -205,7 +205,7 @@ describe('ajan anahtarları (mint/list/revoke)', () => {
   /** co-pronoia grup + kanvas + bir rol kurar; owner çerezleri ve id'leri döndürür. */
   async function cpSetup() {
     const ctx = await fresh();
-    const { cookies } = await registerVerified(ctx.app, ctx.sent, { username: 'ta', password: 'sifre1', email: 'ta@t.com' });
+    const { cookies } = await registerVerified(ctx.app, ctx.sent, { username: 'ta', password: 'sifre1guclu', email: 'ta@t.com' });
     const groupId = (await createGroup(ctx.app, cookies, 'CP', 'co-pronoia')).json().group.id as string;
     const canvasId = (await ctx.app.inject({
       method: 'POST', url: '/api/canvases', cookies,
@@ -255,7 +255,7 @@ describe('ajan anahtarları (mint/list/revoke)', () => {
     expect(row!.tokenHash).not.toBe(secret);
 
     // site şablonu rolüyle de basılabilir
-    const adminUser = await registerVerified(app, sent, { username: 'adm', password: 'sifre2', email: 'adm@t.com' });
+    const adminUser = await registerVerified(app, sent, { username: 'adm', password: 'sifre2guclu', email: 'adm@t.com' });
     await prisma.user.update({ where: { id: adminUser.res.json().user.id as string }, data: { isAdmin: true } });
     const siteRole = (await app.inject({
       method: 'POST', url: '/api/admin/agent-roles', cookies: adminUser.cookies,
@@ -284,7 +284,7 @@ describe('ajan anahtarları (mint/list/revoke)', () => {
     const tokenId = mint.json().token.id as string;
 
     // editör üye 403 görür
-    const editor = await registerVerified(app, sent, { username: 'ed', password: 'sifre2', email: 'ed@t.com' });
+    const editor = await registerVerified(app, sent, { username: 'ed', password: 'sifre2guclu', email: 'ed@t.com' });
     await prisma.canvasMember.create({ data: { canvasId, userId: editor.res.json().user.id as string } });
     let res = await app.inject({ method: 'GET', url: `/api/canvases/${canvasId}/agent-tokens`, cookies: editor.cookies });
     expect(res.statusCode).toBe(403);
@@ -336,7 +336,7 @@ describe('ajan anahtarları (mint/list/revoke)', () => {
 describe('ajan anahtarı yenileme (rotate)', () => {
   async function cpSetup() {
     const ctx = await fresh();
-    const { cookies } = await registerVerified(ctx.app, ctx.sent, { username: 'ta', password: 'sifre1', email: 'ta@t.com' });
+    const { cookies } = await registerVerified(ctx.app, ctx.sent, { username: 'ta', password: 'sifre1guclu', email: 'ta@t.com' });
     const groupId = (await createGroup(ctx.app, cookies, 'CP', 'co-pronoia')).json().group.id as string;
     const canvasId = (await ctx.app.inject({
       method: 'POST', url: '/api/canvases', cookies,
@@ -378,7 +378,7 @@ describe('ajan anahtarı yenileme (rotate)', () => {
     expect((await prisma.planProposal.findUnique({ where: { id: proposalId } }))!.tokenId).toBe(minted.id);
 
     // editör rotate edemez
-    const editor = await registerVerified(app, sent, { username: 'ed', password: 'sifre2', email: 'ed@t.com' });
+    const editor = await registerVerified(app, sent, { username: 'ed', password: 'sifre2guclu', email: 'ed@t.com' });
     await prisma.canvasMember.create({ data: { canvasId, userId: editor.res.json().user.id as string } });
     let res = await app.inject({
       method: 'POST', url: `/api/canvases/${canvasId}/agent-tokens/${minted.id}/rotate`, cookies: editor.cookies,

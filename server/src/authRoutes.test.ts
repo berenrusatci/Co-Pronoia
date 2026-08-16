@@ -123,6 +123,81 @@ describe('kayıt e-posta doğrulama', () => {
     expect((await dene('dogrusifre')).statusCode).toBe(429);
   });
 
+  /**
+   * Üç kapı testi TEK app paylaşır: her `it` için ayrı `buildApp` kurmak bu süitte
+   * Postgres `max_connections`ı zorluyor (bkz. CLAUDE.md). Sayaçlar app'e bağlı olduğu
+   * için paylaşım güvenli — testler ayrı kullanıcı adları ve ayrı e-posta adresleri kullanır.
+   */
+  let ctx: Awaited<ReturnType<typeof freshApp>>;
+  beforeAll(async () => { ctx = await freshApp(); }, 30000);
+
+  it('ters proxy arkasında olmadıkça IP kovası işletilmez: yabancı denemeler masum kullanıcıyı kilitlemez', async () => {
+    // Regresyon: kova `req.ip`e açılıyordu ve `trustProxy` kapalıyken (ya da ters proxy
+    // arkasında AÇIKKEN değilken) `req.ip` bütün istekler için aynı adrestir — Render'da
+    // proxy'nin adresi, testte 127.0.0.1. Yani tek saldırganın LOGIN_MAX_IP kadar denemesi
+    // herkesi kilitliyordu. Artık IP anahtarı yalnız TRUST_PROXY açıkken kullanılıyor.
+    const { app, sent } = ctx;
+    await register(app, { username: 'masum', password: 'dogrusifre', email: 'masum@x.com' });
+    await app.inject({
+      method: 'POST', url: '/api/auth/verify-email',
+      payload: { email: 'masum@x.com', code: codeOf(sent[sent.length - 1]) },
+    });
+    // 40 başarısız deneme, hepsi ayrı kullanıcı adına (kullanıcı kovası hiç dolmuyor) ve
+    // aynı kaynak adresten — IP sınırı 30'du.
+    for (let i = 0; i < 40; i++) {
+      const res = await app.inject({
+        method: 'POST', url: '/api/auth/login', payload: { username: `hayalet${i}`, password: 'yanlis' },
+      });
+      expect(res.statusCode).toBe(401);
+    }
+    const ok = await app.inject({
+      method: 'POST', url: '/api/auth/login', payload: { username: 'masum', password: 'dogrusifre' },
+    });
+    expect(ok.statusCode).toBe(200);
+  });
+
+  it('parola alt sınırı: kısa parola kayıtta da şifre değiştirmede de reddedilir', async () => {
+    const { app, sent } = ctx;
+    const kisa = await register(app, { username: 'kisaci', password: 'abc1234', email: 'kisa@x.com' });
+    expect(kisa.statusCode).toBe(400);
+    expect(kisa.json().error).toContain('8 karakter');
+
+    await register(app, { username: 'uzunca', password: 'yeterince1', email: 'uzun@x.com' });
+    const verified = await app.inject({
+      method: 'POST', url: '/api/auth/verify-email',
+      payload: { email: 'uzun@x.com', code: codeOf(sent[sent.length - 1]) },
+    });
+    const cookies = verified.cookies.reduce<Record<string, string>>((acc, c) => ({ ...acc, [c.name]: c.value }), {});
+    const degistir = await app.inject({
+      method: 'POST', url: '/api/auth/password',
+      payload: { current: 'yeterince1', next: 'kisa123' }, cookies,
+    });
+    expect(degistir.statusCode).toBe(400);
+    expect(degistir.json().error).toContain('8 karakter');
+  });
+
+  it('doğrulama postası oran sınırı: aynı adrese sınırsız kod istenemez', async () => {
+    // Kayıt ve resend-code her istekte bir e-posta (SMTP maliyeti + alıcının gelen kutusu)
+    // ve kayıtta ayrıca bir scrypt hash'i doğuruyordu; ikisinde de kapı yoktu.
+    const { app, sent } = ctx;
+    const oncekiMail = sent.length;
+    const ilk = await register(app, { username: 'bombaci', password: 'sifre123', email: 'bomba@x.com' });
+    expect(ilk.statusCode).toBe(200);
+    const iste = () =>
+      app.inject({ method: 'POST', url: '/api/auth/resend-code', payload: { email: 'bomba@x.com' } });
+    // Kayıt bir kotayı tüketti; kalan 4 istek geçer, 6.'sı reddedilir.
+    for (let i = 0; i < 4; i++) expect((await iste()).statusCode).toBe(200);
+    const asim = await iste();
+    expect(asim.statusCode).toBe(429);
+    expect(sent.length - oncekiMail).toBe(5); // reddedilen istek mail üretmedi
+
+    // Kota adres başına: başka bir adres etkilenmez (bekleyen kaydı olmasa bile 200).
+    const baska = await app.inject({
+      method: 'POST', url: '/api/auth/resend-code', payload: { email: 'temiz@x.com' },
+    });
+    expect(baska.statusCode).toBe(200);
+  });
+
   it('süresi dolmuş kod reddedilir', async () => {
     const { app, prisma, sent } = await freshApp();
     await register(app, { username: 'efe', password: 'sifre123', email: 'efe@x.com' });
@@ -139,7 +214,7 @@ describe('kayıt e-posta doğrulama', () => {
     expect(await prisma.user.count()).toBe(1);
     const dupUser = await register(app, { username: 'fatma', password: 'sifre123', email: 'baska@x.com' });
     expect(dupUser.statusCode).toBe(409);
-    const dupEmail = await register(app, { username: 'baska', password: 'sifre123', email: 'fatma@x.com' });
+    const dupEmail = await register(app, { username: 'baskasifre', password: 'sifre123', email: 'fatma@x.com' });
     expect(dupEmail.statusCode).toBe(409);
   });
 

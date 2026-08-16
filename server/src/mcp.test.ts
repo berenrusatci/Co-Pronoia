@@ -67,7 +67,7 @@ async function callTool(app: App, secret: string, name: string, args?: unknown) 
 async function cpSetup() {
   const ctx = await fresh();
   const { app, sent } = ctx;
-  const owner = await registerVerified(app, sent, { username: 'sahip', password: 'sifre1', email: 's@t.com' });
+  const owner = await registerVerified(app, sent, { username: 'sahip', password: 'sifre1guclu', email: 's@t.com' });
   const cookies = owner.cookies;
   const groupId = (await app.inject({
     method: 'POST', url: '/api/groups', cookies, payload: { name: 'CP', type: 'co-pronoia' },
@@ -471,7 +471,7 @@ describe('Kanvas notu (brief): HTTP + MCP', () => {
     expect(res.json().brief).toMatchObject({ content: '# Hedef\nMVP ilk.', authorLabel: 'sahip', revisionCount: 1 });
 
     // viewer: okur ama yazamaz
-    const viewer = await registerVerified(app, sent, { username: 'izleyici', password: 'sifre1', email: 'v@t.com' });
+    const viewer = await registerVerified(app, sent, { username: 'izleyici', password: 'sifre1guclu', email: 'v@t.com' });
     const viewerId = viewer.res.json().user.id as string;
     await prisma.canvasMember.create({ data: { canvasId, userId: viewerId, role: 'viewer' } });
     res = await app.inject({ method: 'GET', url: `/api/canvases/${canvasId}/brief`, cookies: viewer.cookies });
@@ -482,7 +482,7 @@ describe('Kanvas notu (brief): HTTP + MCP', () => {
     expect(res.statusCode).toBe(403);
 
     // üye olmayan 404 (membership preHandler)
-    const outsider = await registerVerified(app, sent, { username: 'disarida', password: 'sifre1', email: 'd@t.com' });
+    const outsider = await registerVerified(app, sent, { username: 'disarida', password: 'sifre1guclu', email: 'd@t.com' });
     res = await app.inject({ method: 'GET', url: `/api/canvases/${canvasId}/brief`, cookies: outsider.cookies });
     expect(res.statusCode).toBe(404);
 

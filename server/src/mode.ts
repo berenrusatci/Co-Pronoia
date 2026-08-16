@@ -60,6 +60,24 @@ export function isLocal(): boolean {
   return LOCAL_BUILD || appMode() === 'local';
 }
 
+/**
+ * Ters proxy arkasında mıyız? Fastify'ın `trustProxy`si ve `req.ip`in anlamı buna bağlı.
+ *
+ * Öntanımlı **kapalı**, ve bu bilinçli: `trustProxy` açıkken Fastify `X-Forwarded-For`
+ * başlığına inanır: proxy YOKKEN açmak, istemciye kendi IP'sini seçme hakkı vermek olur ve
+ * IP başına oran sınırını tümüyle atlatılabilir kılar. Proxy VARKEN kapalı bırakmak da
+ * simetrik biçimde zararlıdır — `req.ip` herkes için proxy'nin adresi olur, tek bir kova
+ * bütün kullanıcıları paylaşır ve 30 başarısız giriş siteyi 15 dakika kilitler.
+ *
+ * Bu yüzden bayrağı ortam belirler (Render'da `render.yaml` `TRUST_PROXY=true` verir) ve
+ * kapalıyken IP kovaları hiç işletilmez (`authRoutes.ts`) — yanlış anahtarla sınırlamaktansa
+ * sınırlamamak yeğdir; kullanıcı adı başına kova zaten kaba kuvveti karşılıyor.
+ */
+export function trustProxy(): boolean {
+  const raw = (process.env.TRUST_PROXY ?? '').trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes';
+}
+
 /** Yerel kurulumun aktivasyon için konuşacağı bulut adresi (sondaki `/` atılır). */
 export function cloudUrl(): string {
   const raw = process.env.CLOUD_URL ?? 'https://co-pronoia.onrender.com';

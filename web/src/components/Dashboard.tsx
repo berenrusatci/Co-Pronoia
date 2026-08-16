@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import type { CanvasAccess, CanvasInfo, CanvasType, GroupInfo, GroupMemberInfo, GroupRoleDefInfo, GroupType } from '@co-pronoia/shared';
+import { MIN_PASSWORD_LENGTH, type CanvasAccess, type CanvasInfo, type CanvasType, type GroupInfo, type GroupMemberInfo, type GroupRoleDefInfo, type GroupType } from '@co-pronoia/shared';
 import { useCanvasStore } from '../store/canvasStore';
 import { useGroupStore } from '../store/groupStore';
 import { useAuthStore } from '../store/authStore';
@@ -578,10 +578,10 @@ function UserSettings() {
               onChange={(e) => setCurrent(e.target.value)}
             />
             <input
-              type="password" placeholder="Yeni şifre (en az 4 karakter)" value={next} autoComplete="new-password"
+              type="password" placeholder={`Yeni şifre (en az ${MIN_PASSWORD_LENGTH} karakter)`} value={next} autoComplete="new-password"
               onChange={(e) => setNext(e.target.value)}
             />
-            <button type="submit" className="login-btn" disabled={busy || !current || next.length < 4}>
+            <button type="submit" className="login-btn" disabled={busy || !current || next.length < MIN_PASSWORD_LENGTH}>
               Şifreyi güncelle
             </button>
             {msg && <div className={msg.ok ? 'settings-ok' : 'login-error'}>{msg.text}</div>}

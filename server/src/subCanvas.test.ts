@@ -43,8 +43,8 @@ const rootIdOf = async (app: App, cookies: Cookies, canvasId: string): Promise<s
 describe('kanvas oluşturma yetki matrisi (grup zorunlu + canCreateCanvas)', () => {
   it('grupsuz istek 400; üyelik/rol durumuna göre 403 ya da 200', async () => {
     const { app, prisma, sent } = await fresh();
-    const { cookies: admin } = await registerVerified(app, sent, { username: 'a1', password: 'sifre1', email: 'a1@t.com' });
-    const r2 = await registerVerified(app, sent, { username: 'u2', password: 'sifre2', email: 'u2@t.com' });
+    const { cookies: admin } = await registerVerified(app, sent, { username: 'a1', password: 'sifre1guclu', email: 'a1@t.com' });
+    const r2 = await registerVerified(app, sent, { username: 'u2', password: 'sifre2guclu', email: 'u2@t.com' });
     const u2 = r2.cookies;
     const u2Id = r2.res.json().user.id as string;
 
@@ -98,7 +98,7 @@ describe('kanvas oluşturma yetki matrisi (grup zorunlu + canCreateCanvas)', () 
 describe('linkedCanvasId doğrulaması', () => {
   it('aynı grup bağlanır; farklı grup / olmayan / self / grupsuz kaynak 400', async () => {
     const { app, prisma, serviceFor, sent } = await fresh();
-    const { cookies } = await registerVerified(app, sent, { username: 'b1', password: 'sifre1', email: 'b1@t.com' });
+    const { cookies } = await registerVerified(app, sent, { username: 'b1', password: 'sifre1guclu', email: 'b1@t.com' });
     const k1 = await createGroupCanvas(app, cookies, 'K1');
     const k2 = await createGroupCanvas(app, cookies, 'K2', k1.groupId); // aynı grup
     const k3 = await createGroupCanvas(app, cookies, 'K3'); // başka grup (kendi grubunu açar)
@@ -141,7 +141,7 @@ describe('linkedCanvasId doğrulaması', () => {
 
   it('auto-merge yolunda da doğrular; aynı alan çakışması dallanır, ayrı alanlar birleşir', async () => {
     const { app, sent } = await fresh();
-    const { cookies } = await registerVerified(app, sent, { username: 'c1', password: 'sifre1', email: 'c1@t.com' });
+    const { cookies } = await registerVerified(app, sent, { username: 'c1', password: 'sifre1guclu', email: 'c1@t.com' });
     const k1 = await createGroupCanvas(app, cookies, 'M1');
     const k2 = await createGroupCanvas(app, cookies, 'M2', k1.groupId);
     const root = await rootIdOf(app, cookies, k1.id);
@@ -180,7 +180,7 @@ describe('linkedCanvasId doğrulaması', () => {
 
   it('sarkan bağlantı: hedef silinince revert/restore yine çalışır (doğrulama atlanır)', async () => {
     const { app, prisma, serviceFor, sent } = await fresh();
-    const { cookies } = await registerVerified(app, sent, { username: 'd1', password: 'sifre1', email: 'd1@t.com' });
+    const { cookies } = await registerVerified(app, sent, { username: 'd1', password: 'sifre1guclu', email: 'd1@t.com' });
     const k1 = await createGroupCanvas(app, cookies, 'D1');
     const k2 = await createGroupCanvas(app, cookies, 'D2', k1.groupId);
     const root = await rootIdOf(app, cookies, k1.id);
@@ -208,9 +208,9 @@ describe('linkedCanvasId doğrulaması', () => {
 describe('GET /preview ve /info', () => {
   it('üyeye önizleme şekli; üye olmayana 404; view erişimli grup üyesine 200', async () => {
     const { app, prisma, sent } = await fresh();
-    const { cookies } = await registerVerified(app, sent, { username: 'e1', password: 'sifre1', email: 'e1@t.com' });
-    const { cookies: outsider } = await registerVerified(app, sent, { username: 'e2', password: 'sifre2', email: 'e2@t.com' });
-    const r3 = await registerVerified(app, sent, { username: 'e3', password: 'sifre3', email: 'e3@t.com' });
+    const { cookies } = await registerVerified(app, sent, { username: 'e1', password: 'sifre1guclu', email: 'e1@t.com' });
+    const { cookies: outsider } = await registerVerified(app, sent, { username: 'e2', password: 'sifre2guclu', email: 'e2@t.com' });
+    const r3 = await registerVerified(app, sent, { username: 'e3', password: 'sifre3guclu', email: 'e3@t.com' });
 
     const k1 = await createGroupCanvas(app, cookies, 'P1'); // seed root x:0,y:0
     await commit(app, cookies, k1.id, [

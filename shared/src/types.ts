@@ -362,3 +362,10 @@ export interface SiteAppearance {
   /** Giriş ekranındaki önizleme görselinin adresi; null ise paketle gelen örnek gösterilir. */
   loginPreview: string | null;
 }
+
+/**
+ * Parola alt sınırı. Sunucu (kayıt, şifre değiştirme, yönetici şifre atama) ve web'in üç formu
+ * aynı sayıyı yazdığı için burada duruyor — dört yere elle yazılınca kaçınılmaz olarak kayıyor.
+ * Yalnız YENİ parolalara uygulanır: mevcut hesaplar kısa parolalarıyla girmeye devam eder.
+ */
+export const MIN_PASSWORD_LENGTH = 8;

@@ -134,7 +134,7 @@ describe('agent', () => {
     const built = await buildApp(await db.fresh(), { emailSender: sender });
     opened.push(built);
     const { app } = built;
-    const { cookies } = await registerVerified(app, sent, { username: 'beren', password: 'sifre1', email: 'b@test.com' });
+    const { cookies } = await registerVerified(app, sent, { username: 'beren', password: 'sifre1guclu', email: 'b@test.com' });
     const canvasId = (await createGroupCanvas(app, cookies, 'Plan')).id as string;
 
     let res = await app.inject({ method: 'POST', url: `/api/canvases/${canvasId}/agent`, cookies, payload: {} });
@@ -162,7 +162,7 @@ describe('agent', () => {
     const built = await buildApp(await db.fresh(), { emailSender: sender });
     opened.push(built);
     const { app } = built;
-    const { cookies } = await registerVerified(app, sent, { username: 'kotaci', password: 'sifre1', email: 'k@test.com' });
+    const { cookies } = await registerVerified(app, sent, { username: 'kotaci', password: 'sifre1guclu', email: 'k@test.com' });
     const canvasId = (await createGroupCanvas(app, cookies, 'Plan')).id as string;
     const call = (prompt: string) =>
       app.inject({ method: 'POST', url: `/api/canvases/${canvasId}/agent`, cookies, payload: { prompt } });
