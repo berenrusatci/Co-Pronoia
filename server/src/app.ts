@@ -55,7 +55,15 @@ export async function buildApp(
   dbUrl: string,
   opts?: { emailSender?: EmailSender; cloudClient?: CloudClient },
 ) {
-  const adapter = new PrismaPg({ connectionString: dbUrl });
+  // Havuz üst sınırı açıkça verilir: barındırılan kurulum Postgres'i Supabase'in **session
+  // pooler**'ından (5432) kullanıyor ve oradaki bağlantı kotası tek bir Render kopyasının
+  // açabileceğinden düşük olabiliyor — sınırsız bırakılan havuz kotayı yiyip "too many
+  // clients" ile açılışta patlıyor. Aynı sınır test süitini de rahatlatıyor: her `buildApp`
+  // kendi havuzunu tuttuğu için dosya başına onlarca bağlantı birikebiliyordu (bkz. CLAUDE.md).
+  const adapter = new PrismaPg({
+    connectionString: dbUrl,
+    max: Number(process.env.DB_POOL_MAX ?? 10),
+  });
   const prisma = new PrismaClient({ adapter });
 
   // Mod bir kez, kurulum anında sabitlenir: tek süreçte iki app (testlerde bulut + yerel)

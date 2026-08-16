@@ -121,6 +121,13 @@ Yerel kurulumdan `GEMINI_API_KEY` istemek anlamsız (tek kullanıcılık, kurulu
 
 Modeller: `Activation` (yerel, tek satır `id='singleton'`), `CloudImport` + `CloudGroupImport` (yerel), `Instance` (bulut). Dağıtım: `Dockerfile` (`APP_MODE` build argümanı: öntanımlı `local`, Render'da `cloud`) + non-root + HEALTHCHECK, `deploy/docker-compose.yml` (GHCR imajı + Postgres, port **`127.0.0.1`e bağlı** — yerelde giriş ekranı olmadığı için ağa açmak bilinçli tercihtir), `.github/workflows/docker.yml` GHCR'a yayınlar, `render.yaml` `APP_MODE=cloud` verir.
 
+**Barındırılan kurulum: Render (uygulama) + Supabase (Postgres).** Üç sonucu var, üçü de kodda karşılığı olan kısıtlar:
+1. **Ters proxy vardır** → `TRUST_PROXY=true` (`render.yaml`). Oran sınırlarının IP kovaları buna bağlı; gerekçesi Auth bölümünde.
+2. **Bağlantı Supabase'in session pooler'ından** (`…pooler.supabase.com:5432`) gelir — direct adres artık IPv6 ve Render'dan erişilemez, transaction pooler (6543) ise `prisma db push` ve prepared statement tarafında ek ayar isterdi. Session kipi olduğu için ikisi de sorun değil. Havuz `DB_POOL_MAX` (öntanımlı 10) ile sınırlıdır: pooler kotası tek bir kopyanın sınırsız havuzundan düşük olabiliyor.
+3. **Tek kopya çalışır.** Süreç-yerel durum (`wsClients`, `CanvasEvents`, `serviceFor` kayıt defteri, giriş/e-posta oran sayaçları, `claimService` sayacı) bu yüzden bugün doğrudur — ama bu **belgelenmiş bir varsayımdır**, mimari bir garanti değil: ikinci bir kopya eklenirse sınırlar N katına çıkar ve WS yayını bölünür.
+
+Açılış `deploy/entrypoint.sh` üzerinden: `prisma db push` artan aralıklarla birkaç kez denenir (Supabase ücretsiz katmanı 7 gün hareketsizlikte projeyi duraklatır; tek denemede vazgeçmek konteyneri açılış döngüsüne sokuyordu), sonunda başarısızsa sunucu **başlatılmaz** — şemasız ayağa kalkmak, ilk isteğe kadar sağlıklı görünen bir kurulum demektir.
+
 ### Auth & WebSocket
 
 Session cookie (`tm_session`) auth: scrypt hashes in `server/src/auth.ts`, routes in `authRoutes.ts`, a global preHandler hook 401s every `/api` route except `/api/auth/*` and `/api/health`. Commits record `authorId` (a null author renders as "sistem").

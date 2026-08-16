@@ -77,6 +77,8 @@ COPY --from=build --chown=node:node /app/server/prisma.config.ts /app/server/pri
 COPY --from=build --chown=node:node /app/server/package.json /app/server/package.json
 COPY --from=build --chown=node:node /app/web/dist /app/web/dist
 COPY --from=build --chown=node:node /app/package.json /app/package.json
+# Çalıştırma biti git'te duruyor; `--chmod` kullanılmıyor ki eski (BuildKit'siz) derleyicilerde de çalışsın.
+COPY deploy/entrypoint.sh /app/entrypoint.sh
 
 USER node
 
@@ -86,5 +88,6 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3001)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 # npm workspace çözümlemesine girmeden doğrudan çalıştır: çalışma katmanında `shared/` ve
 # `web/` kaynakları yok, `npm run -w server` onları arayıp şikâyet edebilir. `prisma db push`
-# şemayı ve prisma.config.ts'i bulmak için server dizininde çalışmalı.
-CMD ["sh", "-c", "cd /app/server && /app/node_modules/.bin/prisma db push && exec node dist/server.mjs"]
+# şemayı ve prisma.config.ts'i bulmak için server dizininde çalışmalı — betik `cd` ediyor,
+# ayrıca duraklamış/henüz uyanmamış bir veritabanı için yeniden deniyor (gerekçe betiğin içinde).
+CMD ["/app/entrypoint.sh"]
