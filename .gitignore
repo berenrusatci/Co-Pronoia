@@ -17,3 +17,6 @@ server/data/
 
 # GPT Pro devir artefaktları (prompt, rapor, zip paketleri) — yerel kalır.
 gptpro/
+
+# Nix devShell yerel Postgres kümesi (pg-up)
+.pgdata/

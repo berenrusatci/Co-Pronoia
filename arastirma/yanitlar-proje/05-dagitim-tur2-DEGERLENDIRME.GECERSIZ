@@ -1,0 +1,80 @@
+# 05 Dağıtım — İkinci Tur Değerlendirmesi
+
+## Hüküm
+
+**Puan: 2/10 — Kaydedilen metin birinci turun neredeyse bütünüyle tekrarı olduğu için takip turunun somutlaştırma hedefi karşılanmadı.**
+
+Akış notu: İlk deneme yaklaşık sekiz dakika sonra detached-frame hatasıyla koptu.
+İkinci deneme 31.705 karakter bildirdi, fakat kaydettiği içerik yeni takip yanıtı değil ilk tur metniydi.
+Üçüncü deneme composer öğesi tıklanamadığı için sonuç üretmedi.
+Talimat uyarınca eldeki en uzun metin repoya taşındı; bu nedenle puan içerikten çok takip işlevinin başarısını yansıtır.
+
+## Takip istekleri
+
+1. **Karşılanmadı.**
+Compile-time eleme bölümü ilk turdaki Vue/esbuild anlatımını aynen tekrar ediyor.
+İstenen en az iki ek açık kaynak proje örneği verilmedi.
+Metafile, source-map, `docker save` ve SBOM için çalıştırılabilir CI komutları verilmedi.
+Yasaklı modül/string/package manifesti, yükseltme kapısı ve kesin OCI kabul ölçütü yok.
+
+2. **Karşılanmadı.**
+Git-benzeri senkron önerisi ilk turdaki kavramsal fetch/push sırasıyla sınırlı.
+Yeni tablo/alan/index şeması ve endpoint request/response sözleşmesi yok.
+Idempotency, retry, tombstone, attribution ve beş senaryolu çatışma matrisi yok.
+Sürüm bazlı migration/rollback ile ölçülebilir entegrasyon testleri yazılmamış.
+
+3. **Karşılanmadı.**
+Prisma Migrate bölümü yine baseline → deploy → expand-contract genel sırasını veriyor.
+Repo Prisma sürümü, package scriptleri ve gerçek `db push` çağrılarının tam envanteri çıkarılmamış.
+Çalıştırılabilir baseline/shadow DB/CI komutları ve migration artefact adları yok.
+Batch backfill sınırı, lock bütçesi, rollback karar ağacı ve contract eşiği verilmemiş.
+
+4. **Karşılanmadı.**
+Retention önerileri yine “Session sil, proposal 6–12 ay, Commit tut” seviyesinde.
+Arşiv formatı, cleanup job tasarımı ve gerçek SQL index tanımları yok.
+`EXPLAIN` başarı eşikleri ile partition/checkpoint sayısal tetikleyicileri verilmemiş.
+Template DB için `max_connections` formülü ve örnek worker hesabı yok.
+
+5. **Karşılanmadı.**
+Cross-process yarış teşhisi ve “Canvas row lock içine taşı” önerisi ilk turdan tekrar.
+İstenen pseudodiff, isolation seviyesi, deadlock/retry politikası ve ayrıntılı iki-client test matrisi yok.
+PG LISTEN/NOTIFY ile Redis karşılaştırması tekrar edilmiş, fakat iki replica için deploy kararı eksik.
+Notification kaybı, reconnect, sticky session ve presence tutarsızlığı için ölçülebilir sınır yok.
+
+6. **Karşılanmadı.**
+Rakip, activation ve fiyatlandırma bölümleri ilk turdaki tabloları ve örnekleri tekrar ediyor.
+Doğrudan URL/tarih/sürüm içeren kaynak envanteri ve “bulamadım” tarama yöntemi yok.
+v0.1–v0.3 activation funnel’ı, ilk 30 gün hedefi ve iptal eşikleri tanımlanmamış.
+İki sayısal fiyat/brüt marj senaryosu, hard cap ve overage hesabı yapılmamış.
+
+## Birinci tura göre gerçekten yeni bilgi
+
+**Yok.**
+Metin yapısı, yönetici özeti, 14 bulgu, tablolar, yol haritası, açık sorular ve sonuç birinci turla aynı.
+Yeni bir kaynak URL’si, yeni kod incelemesi, yeni eşik, yeni sürümleme kararı veya yeni hesap bulunmuyor.
+
+## Tekrar olarak işaretlenen başlıca içerik
+
+- Local bundle sembol testi ile final OCI artefact testi arasındaki boşluk.
+- Cross-process head/conflict yarışının Canvas row lock dışında kalması.
+- Cloud→local davranışın senkron değil tek seferlik import olması.
+- Git-benzeri event replication ve CRDT’yi presence/metinle sınırlama önerisi.
+- Prisma baseline ve expand-contract genel sırası.
+- Session temizliği, proposal indeksleri ve Commit geçmişini budamama önerisi.
+- Process-local WebSocket/presence/rate-limit sorunu ile LISTEN/NOTIFY önerisi.
+- CommitService Map’i için TTL/LRU ve template DB connection bütçesi uyarısı.
+- Governance/versioning ürün konumu, beş dakikalık onboarding ve hibrit fiyat modeli.
+
+## Kod atıflarının doğruluğu hakkında izlenim
+
+`server/src/mode.ts:17-27,36-51`, `server/src/app.ts:58-80` ve `server/src/commitService.ts:228-273,379-390,445-460` yerel repoda içerikle genel olarak uyuşuyor.
+Cross-process conflict teşhisi koddan makul bir çıkarım olarak işaretlenmiş ve ilgili satırlar bu izlenimi destekliyor.
+Ancak metindeki tüm `db/prisma/schema.prisma` atıfları şüpheli: yerel repoda şema `server/prisma/schema.prisma` altında bulunuyor.
+Bu sistematik yol uyuşmazlığı, zip içi farklı kök düzeni açıklanmadığı için atıf güvenini düşürüyor.
+Dış kaynaklar `Prisma +3`, `Miro +1`, `Notion +2` gibi arayüz etiketleri halinde; URL, tarih ve sürüm kanıtı olarak denetlenemiyor.
+Dolayısıyla kod atıflarının bir bölümü isabetli görünse de kaynaklandırma takip mesajındaki doğrulanabilirlik standardını karşılamıyor.
+
+## Tamamlanma kararı
+
+Bu başlık tamamlandı sayılamaz; üçüncü tur gereklidir.
+**Üçüncü tur sorusu:** Altı takip isteğini ilk tur metnini tekrar etmeden, repo koduna doğru dosya:satır atıfları, 2024+ doğrudan resmî URL’ler, çalıştırılabilir komut/şema/protokoller ve her karar için S/M/L eforu, yapılmama sonucu ile sayısal kabul kriteri vererek yanıtlar mısın?
