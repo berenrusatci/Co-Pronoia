@@ -35,7 +35,7 @@ somut takip sorusunun yanıtı.
 
 Son olay: `2026-08-15T23:27:30` — tasiyici/kaynak-guncelleme (kaynak güncelleme — luna turu) = **ok**
 
-Tam kayıt: `7 Log/olaylar.jsonl` · Denetim komutu: `python3 ~/.claude/skills/gpt-web-research/scripts/vlog.py ozet --vault "/home/beren/Projects/treemapper/arastirma/vault"`
+Tam kayıt: `7 Log/olaylar.jsonl` · Denetim komutu: `python3 ~/.claude/skills/gpt-web-research/scripts/vlog.py ozet --vault "arastirma/vault"`
 
 Roller: **yönetici** (Claude) konuyu belirler → **düzenleyici-2** (`gpt-5.6-sol`) prompt'u 
 yazar → **luna taşıyıcı** (`gpt-5.6-luna`) tarayıcıyı sürüp çıktıyı **birebir** kaydeder → 

@@ -1,4 +1,4 @@
-# https://chatgpt.com/c/6a7efffb-09b8-83eb-9a92-8836465f9bdd
+# (özel ChatGPT sohbeti)
 
 Yönetici özeti
 

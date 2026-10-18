@@ -7,7 +7,7 @@ baslik: Dağıtım, Veri ve Ürün
 tur: kod
 tur_no: 1
 kelime: 3870
-sohbet: https://chatgpt.com/g/g-p-6a7f040339d481918c9b17531913072f-co-pronoia-arastirma/c/6a7f09f0-1cf0-83ed-a8c2-568654cc3200
+sohbet: (özel ChatGPT sohbeti)/c/6a7f09f0-1cf0-83ed-a8c2-568654cc3200
 kaynak: 05-dagitim.md
 ---
 > [!abstract] ChatGPT Project yanıtı — Sources'taki gerçek koda `dosya:satır` atıflı

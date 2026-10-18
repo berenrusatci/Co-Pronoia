@@ -9,14 +9,14 @@ tur: duzen
 zaman: 2026-08-16T15:54:05
 karakter: 29979
 ham: false
-kaynak: /home/beren/Projects/treemapper/arastirma/vault/7 Log/ham/2026-08-16 1521 07-mcp-tehdit-modeli.md
+kaynak: arastirma/vault/7 Log/ham/2026-08-16 1521 07-mcp-tehdit-modeli.md
 ---
 
 # 07 — MCP dış ajan tehdit modeli — düzenlenmiş ve doğrulanmış sürüm
 
-Kaynak ham kayıt: `/home/beren/Projects/treemapper/arastirma/vault/7 Log/ham/2026-08-16 1521 07-mcp-tehdit-modeli.md`.
+Kaynak ham kayıt: `arastirma/vault/7 Log/ham/2026-08-16 1521 07-mcp-tehdit-modeli.md`.
 
-Doğrulama anı: 16 Ağustos 2026; canlı depo `/home/beren/Projects/treemapper` esas alındı.
+Doğrulama anı: 16 Ağustos 2026; canlı depo depo kökü esas alındı.
 
 ## D1 düzeltme kaydı
 

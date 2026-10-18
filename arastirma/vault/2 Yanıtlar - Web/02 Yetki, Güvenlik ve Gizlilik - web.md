@@ -7,7 +7,7 @@ baslik: Yetki, Güvenlik ve Gizlilik
 tur: web
 tur_no: 1
 kelime: 4426
-sohbet: https://chatgpt.com/c/6a7effe6-497c-83eb-9fae-90815fcc2067
+sohbet: (özel ChatGPT sohbeti)
 kaynak: 02-yetki-guvenlik.md
 ---
 > [!abstract] Web kaynaklı yanıt (koda atıfsız)

@@ -9,13 +9,13 @@ tur: ham
 zaman: 2026-08-15T22:33:14
 karakter: 31768
 ham: true
-sohbet: https://chatgpt.com/c/6a7f09f0-1cf0-83ed-a8c2-568654cc3200
+sohbet: (özel ChatGPT sohbeti)
 kaynak: read
 ---
 
 > [!warning] BİREBİR KOPYA — düzenlenmemiştir. Değiştiren, kaydı geçersiz kılar.
 
-# https://chatgpt.com/c/6a7f09f0-1cf0-83ed-a8c2-568654cc3200
+# (özel ChatGPT sohbeti)
 
 Co-Pronoia — Dağıtım, Veri Katmanı, Kalite ve Ürün Araştırması
 Yönetici özeti

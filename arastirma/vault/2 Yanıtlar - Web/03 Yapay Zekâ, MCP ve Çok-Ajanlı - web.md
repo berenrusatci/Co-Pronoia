@@ -7,7 +7,7 @@ baslik: Yapay Zekâ, MCP ve Çok-Ajanlı
 tur: web
 tur_no: 1
 kelime: 4181
-sohbet: https://chatgpt.com/c/6a7efffb-09b8-83eb-9a92-8836465f9bdd
+sohbet: (özel ChatGPT sohbeti)
 kaynak: 03-ai-mcp.md
 ---
 > [!abstract] Web kaynaklı yanıt (koda atıfsız)

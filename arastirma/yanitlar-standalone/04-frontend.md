@@ -1,4 +1,4 @@
-# https://chatgpt.com/c/6a7f0010-06f0-83eb-aeec-2392dc6ddee6
+# (özel ChatGPT sohbeti)
 
 Aşağıdaki değerlendirme 14 Ağustos 2026 itibarıyla güncel dokümantasyona göre yapıldı. Referans sürümler: React Flow 12.11.3 (12 Ağustos 2026), Zustand 5.0.15, D3 7.9.0, d3-hierarchy 3.1.2; ELK kullanılırsa güncel elkjs sürümü 0.12.0. 
 npm

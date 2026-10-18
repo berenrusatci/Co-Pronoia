@@ -19,7 +19,7 @@ Hüküm: **8/10 — Kod analizi ve maliyet aritmetiği güçlü; iki yanlış yo
 
 Ham kayıt 1.312 satırdır ve değiştirilmemiştir.
 D1, ham kayıttaki `dosya:satır` atıflarını tek tek envanterledi.
-Atıfların hedef yolu `/home/beren/Projects/treemapper` altında arandı.
+Atıfların hedef yolu depo kökü altında arandı.
 56 kod-konum atfının 56'sı gerçek dosya ve mevcut satır aralığına çözüldü.
 54 atıf baştan doğru yolu taşıyordu.
 2 atıf yanlış kökteydi: `db/prisma/schema.prisma`.

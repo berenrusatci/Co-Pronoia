@@ -1,4 +1,4 @@
-# https://chatgpt.com/c/6a7effce-fb2c-83eb-bda0-3ea9b614b37c
+# (özel ChatGPT sohbeti)
 
 Co-Pronoia — Event-Sourced Graf ve Commit/Dal Tabanlı Eşzamanlılık Araştırması
 Yönetici özeti

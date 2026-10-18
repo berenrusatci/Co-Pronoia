@@ -7,7 +7,7 @@ baslik: Dağıtım, Veri ve Ürün
 tur: web
 tur_no: 1
 kelime: 4469
-sohbet: https://chatgpt.com/c/6a7f0024-cb84-83eb-a2e5-9305d34bdee2
+sohbet: (özel ChatGPT sohbeti)
 kaynak: 05-dagitim.md
 ---
 > [!abstract] Web kaynaklı yanıt (koda atıfsız)

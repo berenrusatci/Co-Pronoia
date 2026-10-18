@@ -7,7 +7,7 @@ baslik: Frontend, Ölçek ve Erişilebilirlik
 tur: web
 tur_no: 1
 kelime: 3955
-sohbet: https://chatgpt.com/c/6a7f0010-06f0-83eb-aeec-2392dc6ddee6
+sohbet: (özel ChatGPT sohbeti)
 kaynak: 04-frontend.md
 ---
 > [!abstract] Web kaynaklı yanıt (koda atıfsız)

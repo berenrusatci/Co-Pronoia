@@ -1,4 +1,4 @@
-# https://chatgpt.com/c/6a7effe6-497c-83eb-9fae-90815fcc2067
+# (özel ChatGPT sohbeti)
 
 Co-Pronoia — Yetki, Kimlik, Sırlar, Gizlilik ve Audit Mimari Araştırması
 

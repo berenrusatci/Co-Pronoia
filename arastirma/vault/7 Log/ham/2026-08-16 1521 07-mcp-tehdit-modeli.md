@@ -9,13 +9,13 @@ tur: ham
 zaman: 2026-08-16T15:21:24
 karakter: 42517
 ham: true
-sohbet: https://chatgpt.com/g/g-p-6a7f040339d481918c9b17531913072f-co-pronoia-arastirma/c/6a81a781-590c-83ed-bd1b-03200cf2d857
+sohbet: (özel ChatGPT sohbeti)/c/6a81a781-590c-83ed-bd1b-03200cf2d857
 kaynak: proj_one.mjs
 ---
 
 > [!warning] BİREBİR KOPYA — düzenlenmemiştir. Değiştiren, kaydı geçersiz kılar.
 
-# https://chatgpt.com/g/g-p-6a7f040339d481918c9b17531913072f-co-pronoia-arastirma/c/6a81a781-590c-83ed-bd1b-03200cf2d857
+# (özel ChatGPT sohbeti)/c/6a81a781-590c-83ed-bd1b-03200cf2d857
 
 1. Yönetici özeti
 

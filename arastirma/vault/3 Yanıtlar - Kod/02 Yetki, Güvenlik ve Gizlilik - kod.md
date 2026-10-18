@@ -7,7 +7,7 @@ baslik: Yetki, Güvenlik ve Gizlilik
 tur: kod
 tur_no: 1
 kelime: 4315
-sohbet: https://chatgpt.com/c/6a80b414-fff4-83ed-9578-6142db4ffcfb
+sohbet: (özel ChatGPT sohbeti)
 kaynak: 02-yetki-guvenlik.md
 ---
 > [!abstract] ChatGPT Project yanıtı — Sources'taki gerçek koda `dosya:satır` atıflı

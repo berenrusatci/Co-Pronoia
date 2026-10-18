@@ -7,7 +7,7 @@ baslik: Çekirdek ve Eşzamanlılık
 tur: web
 tur_no: 1
 kelime: 3533
-sohbet: https://chatgpt.com/c/6a7effce-fb2c-83eb-bda0-3ea9b614b37c
+sohbet: (özel ChatGPT sohbeti)
 kaynak: 01-cekirdek.md
 ---
 > [!abstract] Web kaynaklı yanıt (koda atıfsız)

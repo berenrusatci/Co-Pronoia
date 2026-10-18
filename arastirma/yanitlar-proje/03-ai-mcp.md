@@ -1,4 +1,4 @@
-# https://chatgpt.com/g/g-p-6a7f040339d481918c9b17531913072f-co-pronoia-arastirma/c/6a7f12cf-a738-83eb-bee4-8b26a070d8e8
+# (özel ChatGPT sohbeti)/c/6a7f12cf-a738-83eb-bee4-8b26a070d8e8
 
 Edit
 Co-Pronoia Yetki, Kimlik ve Gizlilik Araştırması

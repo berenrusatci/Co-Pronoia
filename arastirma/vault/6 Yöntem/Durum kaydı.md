@@ -8,7 +8,7 @@ kaynak: DURUM.md
 # Araştırma durumu — 14 Ağustos 2026 (FINAL)
 
 ## ChatGPT Project (koda erişimli sohbetler)
-- Proje: **Co-Pronoia Araştırma** → https://chatgpt.com/g/g-p-6a7f040339d481918c9b17531913072f/project
+- Proje: **Co-Pronoia Araştırma** → (özel ChatGPT sohbeti)/project
 - Sources'a yüklenen kod bundle'ları: `arastirma/bundles/copronoia-{shared,server,web,db,docs}.zip`
 
 ## Dosya haritası (repoda kalıcı)
@@ -33,8 +33,8 @@ kaynak: DURUM.md
 > yanıtı üretmeden koptu (0 karakter), sıralı 3 denemede de. Araştırmanın kendisi eksik değil —
 > tam standalone yanıtları var. Kod-dayalı sürüm istenirse bu iki sohbet elle açılıp yeniden
 > gönderilebilir:
-> - 02: https://chatgpt.com/g/g-p-6a7f040339d481918c9b17531913072f-co-pronoia-arastirma/c/6a7f18b0-3ce4-83eb-9d21-b5b14bda80c5
-> - 04: https://chatgpt.com/g/g-p-6a7f040339d481918c9b17531913072f-co-pronoia-arastirma/c/6a7f1aa6-b658-83eb-8391-e3bdd7051017
+> - 02: (özel ChatGPT sohbeti)/c/6a7f18b0-3ce4-83eb-9d21-b5b14bda80c5
+> - 04: (özel ChatGPT sohbeti)/c/6a7f1aa6-b658-83eb-8391-e3bdd7051017
 
 ## Yöntem notu (skill'e de kaydedildi)
 - Aynı hesaptan 3+ eşzamanlı gönderim throttle yiyor → sıralı gönderim.

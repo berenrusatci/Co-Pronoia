@@ -20,3 +20,8 @@ gptpro/
 
 # Nix devShell yerel Postgres kümesi (pg-up)
 .pgdata/
+
+# Araştırma hattının yerel artefaktları: sohbet linkleri, kaynak zip paketleri, Obsidian ayarı
+arastirma/SOHBET-LINKLERI.md
+arastirma/bundles/
+arastirma/vault/.obsidian/

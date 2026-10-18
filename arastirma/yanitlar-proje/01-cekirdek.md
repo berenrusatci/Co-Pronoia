@@ -1,4 +1,4 @@
-# https://chatgpt.com/g/g-p-6a7f040339d481918c9b17531913072f-co-pronoia-arastirma/c/6a7f074e-3728-83ed-abf1-6319d857d60a
+# (özel ChatGPT sohbeti)/c/6a7f074e-3728-83ed-abf1-6319d857d60a
 
 İncelemeyi Project’e yüklenen gerçek shared/server/web/db/docs bundle’ları üzerinden yaptım. Aşağıdaki değerlendirmede dış kaynak araştırmasını doğrudan mevcut implementasyonla eşleştiriyorum.
 

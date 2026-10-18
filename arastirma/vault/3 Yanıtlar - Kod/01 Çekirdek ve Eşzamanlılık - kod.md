@@ -7,7 +7,7 @@ baslik: Çekirdek ve Eşzamanlılık
 tur: kod
 tur_no: 1
 kelime: 4310
-sohbet: https://chatgpt.com/g/g-p-6a7f040339d481918c9b17531913072f-co-pronoia-arastirma/c/6a7f074e-3728-83ed-abf1-6319d857d60a
+sohbet: (özel ChatGPT sohbeti)/c/6a7f074e-3728-83ed-abf1-6319d857d60a
 kaynak: 01-cekirdek.md
 ---
 > [!abstract] ChatGPT Project yanıtı — Sources'taki gerçek koda `dosya:satır` atıflı

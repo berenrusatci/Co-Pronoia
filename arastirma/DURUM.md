@@ -25,7 +25,7 @@ kopyalanmış. Bulgu 6 düzeltilirken aynı dokunuşta temizlenmeli.
 Güncellenen öncelik sırası `SENTEZ.md` → "Öncelik sırası" bölümünde.
 
 ## ChatGPT Project (koda erişimli sohbetler)
-- Proje: **Co-Pronoia Araştırma** → https://chatgpt.com/g/g-p-6a7f040339d481918c9b17531913072f/project
+- Proje: **Co-Pronoia Araştırma** → (özel ChatGPT sohbeti)/project
 - Sources bundle'ları: `arastirma/bundles/copronoia-{shared,server,web,db,docs}.zip`
   — **16 Ağustos'ta yeniden paketlendi** (iki yeni commit + güncellenmiş SENTEZ dahil).
 

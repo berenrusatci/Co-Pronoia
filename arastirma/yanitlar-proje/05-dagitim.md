@@ -1,4 +1,4 @@
-# https://chatgpt.com/g/g-p-6a7f040339d481918c9b17531913072f-co-pronoia-arastirma/c/6a7f09f0-1cf0-83ed-a8c2-568654cc3200
+# (özel ChatGPT sohbeti)/c/6a7f09f0-1cf0-83ed-a8c2-568654cc3200
 
 Co-Pronoia — Dağıtım, Veri Katmanı, Kalite ve Ürün Araştırması
 Yönetici özeti

@@ -24,7 +24,7 @@ Araştırmanın 12 sorusunun tamamı en azından ele alınmış:
 
 ## Gerçek dosya ve satır atıfları
 
-Yerel repo `/home/beren/Projects/treemapper` üzerinden örneklem değil, yanıtın kullandığı benzersiz kod atıflarının tamamı kontrol edildi.
+Yerel repo depo kökü üzerinden örneklem değil, yanıtın kullandığı benzersiz kod atıflarının tamamı kontrol edildi.
 
 Doğrulanan başlıca atıflar:
 

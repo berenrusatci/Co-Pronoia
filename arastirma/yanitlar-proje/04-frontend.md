@@ -1,4 +1,4 @@
-# https://chatgpt.com/g/g-p-6a7f040339d481918c9b17531913072f-co-pronoia-arastirma/c/6a80b58b-6790-83eb-8982-387d87d95950
+# (özel ChatGPT sohbeti)/c/6a80b58b-6790-83eb-8982-387d87d95950
 
 Yönetici özeti
 

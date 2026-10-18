@@ -7,7 +7,7 @@ baslik: Frontend, Ölçek ve Erişilebilirlik
 tur: kod
 tur_no: 1
 kelime: 2928
-sohbet: https://chatgpt.com/g/g-p-6a7f040339d481918c9b17531913072f-co-pronoia-arastirma/c/6a80b58b-6790-83eb-8982-387d87d95950
+sohbet: (özel ChatGPT sohbeti)/c/6a80b58b-6790-83eb-8982-387d87d95950
 kaynak: 04-frontend.md
 ---
 > [!abstract] ChatGPT Project yanıtı — Sources'taki gerçek koda `dosya:satır` atıflı

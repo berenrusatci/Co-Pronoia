@@ -1,4 +1,4 @@
-# https://chatgpt.com/c/6a7f0024-cb84-83eb-a2e5-9305d34bdee2
+# (özel ChatGPT sohbeti)
 
 Co-Pronoia — Dağıtım, Veri Katmanı, Kalite ve Ürün Araştırması
 

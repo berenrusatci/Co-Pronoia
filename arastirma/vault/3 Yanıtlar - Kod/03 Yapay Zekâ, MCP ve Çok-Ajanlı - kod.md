@@ -7,7 +7,7 @@ baslik: Yapay Zekâ, MCP ve Çok-Ajanlı
 tur: kod
 tur_no: 1
 kelime: 4977
-sohbet: https://chatgpt.com/g/g-p-6a7f040339d481918c9b17531913072f-co-pronoia-arastirma/c/6a7f12cf-a738-83eb-bee4-8b26a070d8e8
+sohbet: (özel ChatGPT sohbeti)/c/6a7f12cf-a738-83eb-bee4-8b26a070d8e8
 kaynak: 03-ai-mcp.md
 ---
 > [!abstract] ChatGPT Project yanıtı — Sources'taki gerçek koda `dosya:satır` atıflı
